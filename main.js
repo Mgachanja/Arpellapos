@@ -127,21 +127,72 @@ function createMainWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// ---- ✅ EXISTING IPC HANDLER: Get list of printers
-ipcMain.handle('get-printers', async () => {
+// Enhanced printer detection function
+async function getAllAvailablePrinters() {
   try {
     let printWindow = window.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    if (!printWindow) throw new Error('No active window available');
-    const list = await printWindow.webContents.getPrintersAsync();
-    log.info('Printer list retrieved:', list);
-    return list;
+    if (!printWindow) {
+      log.warn('No active window available for printer detection');
+      return [];
+    }
+
+    // Get printers from Electron
+    const electronPrinters = await printWindow.webContents.getPrintersAsync();
+    log.info('Electron detected printers:', electronPrinters.map(p => ({ name: p.name, status: p.status })));
+
+    // Additional printer detection for thermal printers
+    let allPrinters = [...electronPrinters];
+
+    // On Windows, try to get additional printers using system commands
+    if (process.platform === 'win32') {
+      try {
+        const { exec } = require('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+        
+        // Use PowerShell to get more detailed printer info
+        const { stdout } = await execAsync('powershell "Get-Printer | Select-Object Name, PrinterStatus, Type | ConvertTo-Json"');
+        const windowsPrinters = JSON.parse(stdout);
+        
+        if (Array.isArray(windowsPrinters)) {
+          windowsPrinters.forEach(winPrinter => {
+            if (!allPrinters.find(p => p.name === winPrinter.Name)) {
+              allPrinters.push({
+                name: winPrinter.Name,
+                displayName: winPrinter.Name,
+                status: winPrinter.PrinterStatus === 'Normal' ? 'idle' : 'unknown',
+                isDefault: false,
+                options: {}
+              });
+            }
+          });
+        }
+        log.info('Windows PowerShell detected additional printers:', windowsPrinters?.length || 0);
+      } catch (winError) {
+        log.warn('Windows printer detection failed:', winError.message);
+      }
+    }
+
+    return allPrinters;
+  } catch (error) {
+    log.error('Failed to get printers:', error);
+    return [];
+  }
+}
+
+// ---- ✅ ENHANCED IPC HANDLER: Get list of printers with better detection
+ipcMain.handle('get-printers', async () => {
+  try {
+    const printers = await getAllAvailablePrinters();
+    log.info('Total printers found:', printers.length);
+    return printers;
   } catch (error) {
     log.error('Failed to get printers:', error);
     return [];
   }
 });
 
-// ---- ✅ NEW IPC HANDLERS: Thermal Printer with electron-pos-printer
+// ---- ✅ FIXED IPC HANDLERS: Thermal Printer with proper styling
 ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -153,8 +204,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
       preview: false,
       silent: true,
       margin: '0 0 0 0',
-      timeOutPerLine: 200,
-      pageSize: '80mm'
+      timeOutPerLine: 400,
+      pageSize: 'A4', // Changed from '80mm' for better compatibility
+      copies: 1
     };
 
     if (printerName && printerName !== '') {
@@ -164,34 +216,56 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
       log.info('Testing default printer');
     }
 
-    await PosPrinter.print([
+    // Fixed: Use object-based styling instead of CSS strings
+    const printData = [
       {
         type: 'text',
         value: 'PRINTER TEST',
-        style: 'text-align:center;font-weight:bold;font-size:20px;',
+        style: {
+          fontWeight: 'bold',
+          textAlign: 'center',
+          fontSize: '20px'
+        }
       },
       {
         type: 'text',
         value: 'This is a test receipt.',
-        style: 'text-align:center;',
+        style: {
+          textAlign: 'center',
+          fontSize: '14px'
+        }
       },
       {
         type: 'text',
         value: `Test time: ${new Date().toLocaleString()}`,
-        style: 'text-align:center;font-size:12px;',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px'
+        }
       },
       {
         type: 'text',
         value: '==============================',
-        style: 'text-align:center;',
+        style: {
+          textAlign: 'center'
+        }
       },
-    ], options);
+      {
+        type: 'text',
+        value: 'Test completed successfully!',
+        style: {
+          textAlign: 'center',
+          fontWeight: 'bold'
+        }
+      }
+    ];
 
-    log.info('Test print completed successfully');
+    await PosPrinter.print(printData, options);
+    log.info('Test print completed successfully for printer:', printerName || 'default');
     return { success: true, message: 'Test print successful' };
   } catch (error) {
     log.error('Test print failed:', error);
-    return { success: false, message: error.message };
+    return { success: false, message: `Print failed: ${error.message}` };
   }
 });
 
@@ -219,32 +293,91 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
     };
 
-    const items = [
+    // Fixed: Use object-based styling for all elements
+    const printData = [
       {
         type: 'text',
         value: storeSettings.storeName || 'Arpella Store',
-        style: 'text-align:center;font-weight:bold;font-size:20px;',
+        style: {
+          textAlign: 'center',
+          fontWeight: 'bold',
+          fontSize: '18px'
+        }
       },
       {
         type: 'text',
         value: `${storeSettings.storeAddress || 'Ngong, Mtasia'}`,
-        style: 'text-align:center;font-size:12px;',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px'
+        }
       },
       {
         type: 'text',
         value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`,
-        style: 'text-align:center;font-size:12px;',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px'
+        }
       },
-      { type: 'text', value: '==============================', style: 'text-align:center;' },
-      { type: 'text', value: 'SALES RECEIPT', style: 'text-align:center;font-weight:bold;' },
-      { type: 'text', value: '==============================', style: 'text-align:center;' },
-      { type: 'text', value: `Date: ${new Date().toLocaleString('en-KE')}` },
-      { type: 'text', value: `Order #: ${orderNumber}` },
-      { type: 'text', value: `Customer: ${customerPhone || 'N/A'}` },
-      { type: 'text', value: `Served by: ${user?.userName || user?.name || 'Staff'}` },
-      { type: 'text', value: '--------------------------------', style: 'text-align:center;' },
-      { type: 'text', value: 'ITEM                 QTY   TOTAL', style: 'font-weight:bold;' },
-      { type: 'text', value: '--------------------------------', style: 'text-align:center;' },
+      {
+        type: 'text',
+        value: '==============================',
+        style: { textAlign: 'center' }
+      },
+      {
+        type: 'text',
+        value: 'SALES RECEIPT',
+        style: {
+          textAlign: 'center',
+          fontWeight: 'bold',
+          fontSize: '16px'
+        }
+      },
+      {
+        type: 'text',
+        value: '==============================',
+        style: { textAlign: 'center' }
+      },
+      {
+        type: 'text',
+        value: `Date: ${new Date().toLocaleString('en-KE')}`,
+        style: { fontSize: '12px' }
+      },
+      {
+        type: 'text',
+        value: `Order #: ${orderNumber}`,
+        style: { fontSize: '12px' }
+      },
+      {
+        type: 'text',
+        value: `Customer: ${customerPhone || 'N/A'}`,
+        style: { fontSize: '12px' }
+      },
+      {
+        type: 'text',
+        value: `Served by: ${user?.userName || user?.name || 'Staff'}`,
+        style: { fontSize: '12px' }
+      },
+      {
+        type: 'text',
+        value: '--------------------------------',
+        style: { textAlign: 'center' }
+      },
+      {
+        type: 'text',
+        value: 'ITEM                 QTY   TOTAL',
+        style: {
+          fontWeight: 'bold',
+          fontSize: '12px',
+          fontFamily: 'monospace'
+        }
+      },
+      {
+        type: 'text',
+        value: '--------------------------------',
+        style: { textAlign: 'center' }
+      }
     ];
 
     // Add cart items
@@ -253,84 +386,171 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       const qty = item.quantity || item.qty || 1;
       const price = item.salePrice || item.price || 0;
       const total = qty * price;
-      const paddedName = name.length > 20 ? name.slice(0, 20) : name.padEnd(20);
-      items.push({
+      
+      // Format for receipt printing with fixed width
+      const truncatedName = name.length > 20 ? name.slice(0, 17) + '...' : name;
+      const paddedName = truncatedName.padEnd(20);
+      const qtyStr = qty.toString().padStart(3);
+      const totalStr = formatCurrency(total);
+      
+      printData.push({
         type: 'text',
-        value: `${paddedName} ${qty.toString().padStart(3)} ${formatCurrency(total)}`,
+        value: `${paddedName} ${qtyStr} ${totalStr}`,
+        style: {
+          fontSize: '11px',
+          fontFamily: 'monospace'
+        }
       });
     }
 
-    items.push({ type: 'text', value: '--------------------------------' });
-    items.push({
-      type: 'text',
-      value: `TOTAL: ${formatCurrency(cartTotal)}`,
-      style: 'font-weight:bold;',
-    });
+    // Add totals and payment info
+    printData.push(
+      {
+        type: 'text',
+        value: '--------------------------------',
+        style: { textAlign: 'center' }
+      },
+      {
+        type: 'text',
+        value: `TOTAL: ${formatCurrency(cartTotal)}`,
+        style: {
+          fontWeight: 'bold',
+          fontSize: '14px'
+        }
+      }
+    );
 
     if (paymentType.toLowerCase() === 'cash') {
-      items.push({ type: 'text', value: `Cash Given: ${formatCurrency(cashAmount)}` });
+      printData.push({
+        type: 'text',
+        value: `Cash Given: ${formatCurrency(cashAmount)}`,
+        style: { fontSize: '12px' }
+      });
+      
       if (change > 0) {
-        items.push({
+        printData.push({
           type: 'text',
           value: `CHANGE: ${formatCurrency(change)}`,
-          style: 'font-weight:bold;',
+          style: {
+            fontWeight: 'bold',
+            fontSize: '14px'
+          }
         });
       }
     }
 
-    items.push({ type: 'text', value: `Payment: ${paymentType.toUpperCase()}` });
-    items.push({ type: 'text', value: '==============================', style: 'text-align:center;' });
-    items.push({
-      type: 'text',
-      value: storeSettings.receiptFooter || 'Thank you for your business!',
-      style: 'text-align:center;',
-    });
-    items.push({
-      type: 'text',
-      value: `Printed: ${new Date().toLocaleString('en-KE')}`,
-      style: 'text-align:center;font-size:10px;',
-    });
+    printData.push(
+      {
+        type: 'text',
+        value: `Payment: ${paymentType.toUpperCase()}`,
+        style: { fontSize: '12px' }
+      },
+      {
+        type: 'text',
+        value: '==============================',
+        style: { textAlign: 'center' }
+      },
+      {
+        type: 'text',
+        value: storeSettings.receiptFooter || 'Thank you for your business!',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px'
+        }
+      },
+      {
+        type: 'text',
+        value: `Printed: ${new Date().toLocaleString('en-KE')}`,
+        style: {
+          textAlign: 'center',
+          fontSize: '10px'
+        }
+      }
+    );
 
     const options = {
       preview: false,
       silent: true,
       margin: '0 0 0 0',
-      timeOutPerLine: 200,
-      pageSize: '80mm'
+      timeOutPerLine: 400,
+      pageSize: 'A4', // Better compatibility than '80mm'
+      copies: 1
     };
 
     if (printerName && printerName !== '') {
       options.printerName = printerName;
-      log.info('Printing to specific printer:', printerName);
+      log.info('Printing receipt to specific printer:', printerName);
     } else {
-      log.info('Printing to default printer');
+      log.info('Printing receipt to default printer');
     }
 
-    await PosPrinter.print(items, options);
-    log.info('Receipt printed successfully');
+    await PosPrinter.print(printData, options);
+    log.info('Receipt printed successfully to:', printerName || 'default printer');
     return { success: true, message: 'Receipt printed successfully' };
   } catch (error) {
     log.error('Print receipt failed:', error);
-    return { success: false, message: error.message };
+    return { success: false, message: `Print failed: ${error.message}` };
   }
 });
 
+// Enhanced printer status check
 ipcMain.handle('check-printer-status', async (event, printerName) => {
   try {
-    let printWindow = window.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    if (!printWindow) throw new Error('No active window available');
-    
-    const printers = await printWindow.webContents.getPrintersAsync();
+    const printers = await getAllAvailablePrinters();
     
     if (!printerName) {
-      return { available: printers.length > 0, printers };
+      return { 
+        available: printers.length > 0, 
+        printers,
+        count: printers.length
+      };
     }
     
     const found = printers.find(p => p.name === printerName);
-    return { available: !!found, printers };
+    return { 
+      available: !!found, 
+      printers,
+      printer: found,
+      status: found ? found.status : 'not_found'
+    };
   } catch (error) {
     log.error('Failed to check printer status:', error);
-    return { available: false, printers: [] };
+    return { 
+      available: false, 
+      printers: [],
+      error: error.message 
+    };
+  }
+});
+
+// Additional IPC handler for printer capabilities
+ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
+  try {
+    const printers = await getAllAvailablePrinters();
+    const printer = printers.find(p => p.name === printerName);
+    
+    if (!printer) {
+      return { success: false, message: 'Printer not found' };
+    }
+
+    // Basic capability info
+    const capabilities = {
+      name: printer.name,
+      status: printer.status,
+      isDefault: printer.isDefault || false,
+      canPrint: printer.status === 'idle',
+      supportsThermal: printer.name.toLowerCase().includes('thermal') || 
+                      printer.name.toLowerCase().includes('pos') ||
+                      printer.name.toLowerCase().includes('epson') ||
+                      printer.name.toLowerCase().includes('star'),
+      ...printer.options
+    };
+
+    log.info('Printer capabilities for', printerName, ':', capabilities);
+    return { success: true, capabilities };
+  } catch (error) {
+    log.error('Failed to get printer capabilities:', error);
+    return { success: false, message: error.message };
   }
 });
 

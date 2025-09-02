@@ -1,3 +1,4 @@
+// src/screens/Index.js (or wherever your POS component lives)
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Modal, Button, Form } from 'react-bootstrap';
@@ -26,7 +27,6 @@ import {
 import api from '../../services/api';
 import { selectUser } from '../../redux/slices/userSlice';
 
-// Import thermal printer service
 import { printOrderReceipt } from '../thermalPrinter/thermalPrinter'; 
 
 const CTA = { background: '#FF7F50', color: '#fff' };
@@ -40,7 +40,6 @@ function useDebouncedCallback(fn, wait) {
   }, [fn, wait]);
 }
 
-// Enhanced Product Card Component
 function ProductCard({ product, cartQuantity, onQuantityChange }) {
   const productId = product.id || product._id;
 
@@ -52,7 +51,7 @@ function ProductCard({ product, cartQuantity, onQuantityChange }) {
     if (cartQuantity > 1) {
       onQuantityChange(productId, cartQuantity - 1);
     } else if (cartQuantity === 1) {
-      onQuantityChange(productId, 0); // This will remove from cart
+      onQuantityChange(productId, 0);
     }
   };
 
@@ -78,7 +77,6 @@ function ProductCard({ product, cartQuantity, onQuantityChange }) {
         e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
       }}
     >
-      {/* Product Info */}
       <div className="flex-grow-1 mb-3">
         <h6 className="product-name fw-semibold text-dark mb-2 lh-sm"
             style={{ fontSize: '0.9rem', minHeight: '2.4rem' }}>
@@ -88,9 +86,15 @@ function ProductCard({ product, cartQuantity, onQuantityChange }) {
              style={{ fontSize: '1rem' }}>
           {KSH(product.salePrice || product.price || 0)}
         </div>
+        {/* Show barcode if available */}
+        {product.barcode && (
+          <div className="text-muted small mt-1" style={{ fontSize: '0.75rem' }}>
+            <i className="fas fa-barcode me-1"></i>
+            {product.barcode}
+          </div>
+        )}
       </div>
 
-      {/* Quantity Controls */}
       <div className="quantity-controls">
         {cartQuantity > 0 ? (
           <div className="d-flex align-items-center justify-content-center">
@@ -141,15 +145,15 @@ export default function POS() {
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchType, setSearchType] = useState(''); // Track if search was by name or barcode
 
   const [checkoutVisible, setCheckoutVisible] = useState(false);
   const [paymentType, setPaymentType] = useState('');
   const [paymentData, setPaymentData] = useState({ cashAmount: '', mpesaPhone: '' });
 
-  // Loading states for individual products during validation
   const [loadingProducts, setLoadingProducts] = useState(new Set());
 
-  // coordinates (non-blocking; fallback to 0,0)
+  // Geolocation coordinates with fallback to (0,0)
   const [coords, setCoords] = useState({ lat: 0, lng: 0 });
 
   const dispatch = useDispatch();
@@ -165,7 +169,6 @@ export default function POS() {
     return acc;
   }, {});
 
-  // Helper to extract inventoryId from product
   const getInventoryId = useCallback((product) => {
     return (
       product.inventoryId ||
@@ -178,7 +181,6 @@ export default function POS() {
     );
   }, []);
 
-  // Fetch initial data
   useEffect(() => {
     dispatch(fetchAndIndexAllProducts({ pageSize: 200, force: false }))
       .unwrap()
@@ -189,47 +191,186 @@ export default function POS() {
       .catch(() => toast.error('Failed to sync products'));
   }, [dispatch]);
 
-  // Search function - only by name and barcodes
+  // Helper function to detect if search term is likely a barcode
+  const isLikelyBarcode = useCallback((term) => {
+    if (!term) return false;
+    // Check if it's all numbers and reasonable barcode length
+    const numericOnly = /^\d+$/.test(term.trim());
+    const length = term.trim().length;
+    // Common barcode lengths: UPC (12), EAN (13), Code 128 (variable), etc.
+    return numericOnly && (length >= 8 && length <= 20);
+  }, []);
+
   const performSearch = useCallback(async (term) => {
     if (!term || term.trim().length === 0) {
       setFilteredProducts([]);
       setHasSearched(false);
+      setSearchType('');
       return;
     }
 
     setHasSearched(true);
-    const searchTerm = term.toLowerCase().trim();
+    const searchTermLower = term.toLowerCase().trim();
+    const originalTerm = term.trim();
 
     try {
-      // Search by name using IndexedDB
-      const nameResults = await indexedDb.searchByName(searchTerm, 100);
+      let allResults = [];
+      let foundByBarcode = false;
 
-      // Search by barcode using IndexedDB
-      const barcodeResult = await indexedDb.getProductByBarcode(term);
-
-      // Combine results and remove duplicates
-      const allResults = [...nameResults];
-      if (barcodeResult && !allResults.find(p => (p.id || p._id) === (barcodeResult.id || barcodeResult._id))) {
-        allResults.unshift(barcodeResult); // Add barcode match at the beginning
+      // First try barcode search - exact match
+      console.log('Searching for barcode:', originalTerm);
+      const barcodeResult = await indexedDb.getProductByBarcode(originalTerm);
+      
+      if (barcodeResult) {
+        console.log('Found product by barcode:', barcodeResult);
+        allResults.push(barcodeResult);
+        foundByBarcode = true;
+        setSearchType('barcode');
       }
 
+      // If no barcode match found, or we want to show name matches too, search by name
+      if (!foundByBarcode || !isLikelyBarcode(originalTerm)) {
+        console.log('Searching by name:', searchTermLower);
+        const nameResults = await indexedDb.searchByName(searchTermLower, 100);
+        console.log('Found products by name:', nameResults.length);
+        
+        // Add name results, avoiding duplicates
+        nameResults.forEach(product => {
+          const productId = product.id || product._id;
+          const exists = allResults.find(p => (p.id || p._id) === productId);
+          if (!exists) {
+            allResults.push(product);
+          }
+        });
+
+        if (!foundByBarcode) {
+          setSearchType('name');
+        } else {
+          setSearchType('both');
+        }
+      }
+
+      console.log('Total results found:', allResults.length);
       setFilteredProducts(allResults);
+
+      // Show appropriate feedback
+      if (foundByBarcode && allResults.length === 1) {
+        toast.success(`Product found by barcode: ${barcodeResult.name}`);
+      } else if (allResults.length === 0) {
+        if (isLikelyBarcode(originalTerm)) {
+          toast.warning('No product found with this barcode');
+        }
+      }
+
     } catch (error) {
       console.error('Search error:', error);
       toast.error('Search failed');
       setFilteredProducts([]);
+      setSearchType('');
     }
-  }, []);
+  }, [isLikelyBarcode]);
 
-  // Debounced search
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
 
-  // Handle search input change
   useEffect(() => {
     debouncedSearch(searchTerm);
   }, [searchTerm, debouncedSearch]);
 
-  // Refresh products
+  // Enhanced barcode scanner detection logic
+  const searchInputRef = useRef(null);
+  const scannerRef = useRef({
+    buffer: '',
+    firstTime: 0,
+    lastTime: 0,
+    timer: null
+  });
+
+  useEffect(() => {
+    const THRESHOLD_AVG_MS = 80; // Faster typing threshold for scanner detection
+    const CLEAR_TIMEOUT = 800;
+    const MIN_BARCODE_LENGTH = 8; // Minimum characters for barcode
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+
+      const now = Date.now();
+      const s = scannerRef.current;
+      const active = document.activeElement;
+      const activeIsEditable = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+
+      // Only intercept if not focused on a different input
+      if (activeIsEditable && searchInputRef.current !== active) {
+        return;
+      }
+
+      if (e.key === 'Enter') {
+        if (s.buffer.length >= MIN_BARCODE_LENGTH) {
+          const totalTime = now - (s.firstTime || now);
+          const avg = totalTime / Math.max(1, s.buffer.length);
+
+          // If typed fast enough (like a scanner), treat as barcode scan
+          if (avg < THRESHOLD_AVG_MS) {
+            const code = s.buffer;
+            console.log('Barcode scanned:', code, 'Average typing speed:', avg + 'ms per char');
+            
+            setSearchTerm(code);
+            performSearch(code);
+
+            if (searchInputRef.current) {
+              searchInputRef.current.value = code;
+              try { 
+                searchInputRef.current.focus(); 
+                searchInputRef.current.select(); // Select the text for easy clearing
+              } catch (_) {}
+            }
+
+            // Show scan feedback
+            toast.info(`Barcode scanned: ${code}`);
+
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+        
+        // Clear buffer
+        clearTimeout(s.timer);
+        s.buffer = '';
+        s.firstTime = 0;
+        s.lastTime = 0;
+        s.timer = null;
+        return;
+      }
+
+      // Capture character input
+      if (e.key.length === 1) {
+        // Reset buffer if too much time has passed
+        if (s.lastTime && (now - s.lastTime) > 150) {
+          s.buffer = '';
+          s.firstTime = now;
+        }
+        
+        if (!s.firstTime) s.firstTime = now;
+        s.buffer += e.key;
+        s.lastTime = now;
+
+        // Auto-clear buffer after timeout
+        clearTimeout(s.timer);
+        s.timer = setTimeout(() => {
+          s.buffer = '';
+          s.firstTime = 0;
+          s.lastTime = 0;
+          s.timer = null;
+        }, CLEAR_TIMEOUT);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      clearTimeout(scannerRef.current.timer);
+    };
+  }, [performSearch]);
+
   const refresh = async () => {
     try {
       await dispatch(fetchAndIndexAllProducts({ pageSize: 200, force: true })).unwrap();
@@ -241,7 +382,6 @@ export default function POS() {
     }
   };
 
-  // Set loading state for a product
   const setProductLoading = (productId, isLoading) => {
     setLoadingProducts(prev => {
       const newSet = new Set(prev);
@@ -254,12 +394,10 @@ export default function POS() {
     });
   };
 
-  // Handle quantity changes with inventory validation
   const handleQuantityChange = async (productId, newQuantity) => {
     try {
       console.log('handleQuantityChange called:', { productId, newQuantity });
 
-      // Find the product to get inventoryId
       const product = filteredProducts.find(p => (p.id || p._id) === productId);
       if (!product) {
         console.error('Product not found:', productId);
@@ -270,7 +408,6 @@ export default function POS() {
       console.log('Found product:', product);
 
       if (newQuantity === 0) {
-        // Remove from cart - no validation needed
         console.log('Removing from cart');
         dispatch(removeItemFromCart(productId));
         toast.success('Removed from cart');
@@ -289,11 +426,9 @@ export default function POS() {
       console.log('Current cart quantity:', currentCartQty);
       console.log('Inventory ID:', inventoryId);
 
-      // Set loading state
       setProductLoading(productId, true);
 
       if (newQuantity > currentCartQty) {
-        // Adding items - validate with server using inventoryId
         const qtyToAdd = newQuantity - currentCartQty;
         console.log('Adding quantity:', qtyToAdd);
 
@@ -320,10 +455,8 @@ export default function POS() {
 
         if (validation.status === 'warning') {
           toast.warning(validation.message);
-          // Continue with the operation despite warning
         }
       } else {
-        // Reducing quantity - validate with cached/local data if available
         const validation = await validateCartQuantityChange({
           productId,
           inventoryId,
@@ -347,12 +480,10 @@ export default function POS() {
       }
 
       if (currentCartQty > 0) {
-        // Update existing item quantity
         console.log('Updating cart item. Current:', currentCartQty, 'New:', newQuantity);
         dispatch(updateCartItemQuantity({ productId, quantity: newQuantity }));
         toast.success('Cart updated');
       } else {
-        // Add new item to cart
         console.log('Adding new item to cart');
         dispatch(addItemToCart({
           product: { ...product, id: productId },
@@ -369,7 +500,6 @@ export default function POS() {
     }
   };
 
-  // Remove specific item from cart
   const handleRemoveItem = (productId, productName) => {
     if (window.confirm(`Remove "${productName}" from cart?`)) {
       dispatch(removeItemFromCart(productId));
@@ -377,7 +507,6 @@ export default function POS() {
     }
   };
 
-  // Clear entire cart
   const handleClearCart = () => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
@@ -390,13 +519,12 @@ export default function POS() {
     }
   };
 
-  // Attempt to obtain browser geolocation once (non-blocking)
+  // Get current position for order location tracking
   useEffect(() => {
     if (navigator && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (p) => setCoords({ lat: p.coords.latitude, lng: p.coords.longitude }),
         (err) => {
-          // fail silently; coords remain 0,0
           console.warn('Geolocation unavailable:', err?.message || err);
         },
         { timeout: 3000 }
@@ -404,7 +532,6 @@ export default function POS() {
     }
   }, []);
 
-  // Complete checkout with thermal printing
   const completeCheckout = async () => {
     if (!paymentType) {
       toast.error('Please select a payment method');
@@ -424,9 +551,8 @@ export default function POS() {
       return;
     }
 
-    // Build the payload
+    // Build order payload - exclude userId for cash payments
     const payload = {
-      userId: (user && (user.phone || user.userName)) || 'unknown',
       orderPaymentType: paymentType === 'cash' ? 'Cash' : 'Mpesa',
       phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || '',
       buyerPin: 'N/A',
@@ -438,15 +564,23 @@ export default function POS() {
       }))
     };
 
+    // Add userId only for M-Pesa payments
+    if (paymentType === 'mpesa') {
+      payload.userId = (user && (user.phone || user.userName)) || '';
+    }
+
     try {
       toast.info('Processing payment...');
 
-      // Perform POST to /orders with the exact payload
-      const res = await api.post('/order', payload);
+      const res = await api.post('/order', payload , {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
 
       toast.success('Order completed successfully!');
 
-      // Prepare data for thermal printer
+      // Prepare receipt data for thermal printing
       const orderData = {
         cart: cart,
         cartTotal: cartTotal,
@@ -461,7 +595,7 @@ export default function POS() {
         customerPhone: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : ''
       };
 
-      // Print receipt using thermal printer
+      // Print thermal receipt
       try {
         await printOrderReceipt(orderData);
         toast.success('Receipt printed successfully!');
@@ -470,10 +604,8 @@ export default function POS() {
         toast.warning('Order completed but receipt printing failed. Check printer connection.');
       }
 
-      // Clear cart
       dispatch(clearCart());
 
-      // reset checkout modal & form
       setCheckoutVisible(false);
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '' });
@@ -487,9 +619,18 @@ export default function POS() {
       }
     } catch (err) {
       console.error('Checkout failed', err);
-      // prefer backend message if provided
       const msg = err?.response?.data?.message || err?.message || 'Checkout failed. Please try again.';
       toast.error(msg);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchTerm('');
+    setFilteredProducts([]);
+    setHasSearched(false);
+    setSearchType('');
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
     }
   };
 
@@ -500,24 +641,42 @@ export default function POS() {
       maxWidth: '100%',
       overflow: 'hidden'
     }}>
-      {/* Header Section */}
       <div className="row mb-4">
         <div className="col-12">
           <div className="d-flex flex-column flex-md-row gap-3 align-items-center">
             <div className="flex-grow-1">
               <div className="input-group input-group-lg">
                 <span className="input-group-text bg-white border-end-0">
-                  <i className="fas fa-search text-muted"></i>
+                  <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} text-muted`}></i>
                 </span>
                 <input
+                  ref={searchInputRef}
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search products by name or barcode..."
-                  className="form-control border-start-0 ps-0"
+                  className="form-control border-start-0 border-end-0 ps-0"
                   style={{ fontSize: '1rem' }}
                 />
+                {searchTerm && (
+                  <button
+                    className="btn btn-outline-secondary border-start-0"
+                    type="button"
+                    onClick={clearSearch}
+                    title="Clear search"
+                  >
+                    <i className="fas fa-times"></i>
+                  </button>
+                )}
               </div>
+              {searchType && (
+                <div className="small text-muted mt-1">
+                  <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : searchType === 'both' ? 'fa-search-plus' : 'fa-search'} me-1`}></i>
+                  {searchType === 'barcode' && 'Searched by barcode'}
+                  {searchType === 'name' && 'Searched by name'}
+                  {searchType === 'both' && 'Found by barcode + name matches'}
+                </div>
+              )}
             </div>
             <button
               className="btn btn-lg px-4"
@@ -541,22 +700,35 @@ export default function POS() {
         </div>
       </div>
 
-      {/* Products Grid */}
       <div className="row" style={{ maxWidth: '100%', margin: 0 }}>
         {!hasSearched ? (
           <div className="col-12">
             <div className="text-center py-5">
-              <i className="fas fa-search fa-3x text-muted mb-3"></i>
+              <div className="mb-4">
+                <i className="fas fa-search fa-3x text-muted mb-2"></i>
+                <i className="fas fa-barcode fa-3x text-muted"></i>
+              </div>
               <h5 className="text-muted">Search for products</h5>
-              <p className="text-muted">Enter a product name or scan/type a barcode to find products</p>
+              <p className="text-muted">
+                Enter a product name or scan/type a barcode to find products
+                <br />
+                <small>Barcode scanner supported - just scan or type quickly</small>
+              </p>
             </div>
           </div>
         ) : filteredProducts.length === 0 ? (
           <div className="col-12">
             <div className="text-center py-5">
-              <i className="fas fa-exclamation-circle fa-3x text-muted mb-3"></i>
-              <h5 className="text-muted">No products found</h5>
-              <p className="text-muted">Try a different search term or barcode</p>
+              <i className={`fas ${isLikelyBarcode(searchTerm) ? 'fa-barcode' : 'fa-exclamation-circle'} fa-3x text-muted mb-3`}></i>
+              <h5 className="text-muted">
+                {isLikelyBarcode(searchTerm) ? 'No product found with this barcode' : 'No products found'}
+              </h5>
+              <p className="text-muted">
+                {isLikelyBarcode(searchTerm) 
+                  ? `Barcode "${searchTerm}" not found in inventory`
+                  : 'Try a different search term or barcode'
+                }
+              </p>
             </div>
           </div>
         ) : (
@@ -593,18 +765,18 @@ export default function POS() {
         )}
       </div>
 
-      {/* Results Info */}
       {hasSearched && filteredProducts.length > 0 && (
         <div className="row mt-3">
           <div className="col-12">
             <div className="text-center text-muted">
+              <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} me-1`}></i>
               Found {filteredProducts.length} products for "{searchTerm}"
+              {searchType === 'barcode' && <span className="badge bg-info ms-2">Barcode Match</span>}
             </div>
           </div>
         </div>
       )}
 
-      {/* Checkout Modal */}
       <Modal
         show={checkoutVisible}
         onHide={() => setCheckoutVisible(false)}
@@ -619,7 +791,6 @@ export default function POS() {
           </Modal.Title>
         </Modal.Header>
         <Modal.Body style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-          {/* Cart Items Table */}
           <div className="mb-4">
             <div className="d-flex justify-content-between align-items-center mb-3">
               <h6 className="fw-semibold mb-0">Order Summary</h6>
@@ -664,6 +835,12 @@ export default function POS() {
                           <td style={{ fontSize: '0.85rem', maxWidth: '180px' }}>
                             <div className="text-truncate" title={item.name}>
                               <strong>{item.name}</strong>
+                              {item.barcode && (
+                                <div className="text-muted small">
+                                  <i className="fas fa-barcode me-1"></i>
+                                  {item.barcode}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="text-center" style={{ fontSize: '0.85rem' }}>
@@ -711,7 +888,6 @@ export default function POS() {
             )}
           </div>
 
-          {/* Payment Method - Only show if cart has items */}
           {cart.length > 0 && (
             <>
               <hr className="my-4" />
@@ -731,7 +907,6 @@ export default function POS() {
                 </Form.Select>
               </Form.Group>
 
-              {/* Cash Payment Fields */}
               {paymentType === 'cash' && (
                 <Form.Group className="mb-3">
                   <Form.Label className="fw-semibold">Cash Amount Given</Form.Label>
@@ -761,7 +936,6 @@ export default function POS() {
                 </Form.Group>
               )}
 
-              {/* M-Pesa Payment Fields */}
               {paymentType === 'mpesa' && (
                 <Form.Group className="mb-3">
                   <Form.Label className="fw-semibold">M-Pesa Phone Number</Form.Label>
@@ -817,7 +991,6 @@ export default function POS() {
         )}
       </Modal>
 
-      {/* Floating Cart Button */}
       {cartItemCount > 0 && (
         <div className="position-fixed bottom-0 end-0 m-4" style={{ zIndex: 999 }}>
           <button
@@ -849,7 +1022,6 @@ export default function POS() {
         </div>
       )}
 
-      {/* Add Font Awesome for icons */}
       <style jsx>{`
         @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css');
 
@@ -863,6 +1035,32 @@ export default function POS() {
 
         .product-card:hover {
           border-color: #007bff !important;
+        }
+
+        /* Barcode scanner animation */
+        .input-group-text i.fa-barcode {
+          animation: barcodeGlow 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes barcodeGlow {
+          from { color: #6c757d; }
+          to { color: #007bff; }
+        }
+
+        /* Search input focus styles */
+        .form-control:focus {
+          border-color: #007bff;
+          box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+
+        /* Product card barcode styling */
+        .product-card .text-muted.small {
+          opacity: 0.7;
+          transition: opacity 0.2s;
+        }
+
+        .product-card:hover .text-muted.small {
+          opacity: 1;
         }
       `}</style>
     </div>

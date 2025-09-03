@@ -652,7 +652,7 @@ export default function POS() {
     // Build order payload - exclude userId for cash payments
     const payload = {
       orderPaymentType: paymentType === 'cash' ? 'Cash' : 'Mpesa',
-      phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || '',
+      phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || 'N/A',
       buyerPin: 'N/A',
       latitude: coords?.lat ?? 0,
       longitude: coords?.lng ?? 0,

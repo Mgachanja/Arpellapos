@@ -68,7 +68,7 @@ export default function DashboardLayout() {
   }
 
   /* ----------------- AutoLogout component (embedded) ----------------- */
-  function AutoLogout({ timeoutMs = 30 * 60 * 1000, warningMs = 5 * 60 * 1000 }) {
+  function AutoLogout({ timeoutMs = 30 * 60 * 1000, warningMs =  60 * 1000 }) {
     // Configurable: timeoutMs = inactivity timeout, warningMs = how long before expiry to show modal
     const dispatch = useDispatch();
     const navigate = useNavigate();
@@ -266,7 +266,7 @@ export default function DashboardLayout() {
     );
   } // end AutoLogout
 
-  /* ----------------- render layout (unchanged) ----------------- */
+  /* ----------------- render layout ----------------- */
 
   return (
     <div className="position-relative" style={{ minHeight: '100vh', backgroundColor: COLORS.bg }}>
@@ -441,7 +441,7 @@ export default function DashboardLayout() {
         {/* Main content */}
         <main className="flex-grow-1" style={{ overflow: 'auto', minHeight: 'calc(100vh - 70px)', backgroundColor: COLORS.bg, padding: 18 }}>
           {/* AutoLogout runs here so it's active while dashboard layout is mounted */}
-          <AutoLogout timeoutMs={5 * 60 * 1000} warningMs={60 * 1000} />
+          <AutoLogout timeoutMs={30 * 60 * 1000} warningMs={60 * 1000} />
           <Outlet />
         </main>
       </div>

@@ -201,6 +201,111 @@ export default function POS() {
     return numericOnly && (length >= 8 && length <= 20);
   }, []);
 
+  // New function to handle barcode scan and auto-add to cart
+  const handleBarcodeScanned = async (barcode) => {
+    try {
+      console.log('Processing scanned barcode:', barcode);
+      
+      const product = await indexedDb.getProductByBarcode(barcode);
+      
+      if (!product) {
+        toast.error(`No product found with barcode: ${barcode}`);
+        // Still show the barcode in search for manual verification
+        setSearchTerm(barcode);
+        performSearch(barcode);
+        return;
+      }
+
+      const productId = product.id || product._id;
+      const currentCartQty = cartMap[productId] || 0;
+      const newQuantity = currentCartQty + 1;
+
+      console.log('Found product by barcode:', product.name);
+      console.log('Current cart quantity:', currentCartQty, 'New quantity:', newQuantity);
+
+      // Validate and add to cart
+      const inventoryId = getInventoryId(product);
+      
+      if (!inventoryId) {
+        console.error('No inventory ID found for product:', product);
+        toast.error(`Cannot add ${product.name} - inventory ID missing`);
+        return;
+      }
+
+      setProductLoading(productId, true);
+
+      const validation = await validateAndAddToCart({
+        productId,
+        inventoryId,
+        qty: 1,
+        currentCartQty
+      });
+
+      console.log('Validation result:', validation);
+
+      if (validation.status === 'conflict') {
+        toast.error(validation.message);
+        setProductLoading(productId, false);
+        return;
+      }
+
+      if (validation.status === 'error') {
+        toast.error(validation.message);
+        setProductLoading(productId, false);
+        return;
+      }
+
+      if (validation.status === 'warning') {
+        toast.warning(validation.message);
+      }
+
+      // Add/update cart
+      if (currentCartQty > 0) {
+        console.log('Updating existing cart item quantity');
+        dispatch(updateCartItemQuantity({ productId, quantity: newQuantity }));
+        toast.success(`${product.name} quantity increased to ${newQuantity}`, {
+          icon: '📦',
+          position: 'top-center',
+          autoClose: 2000
+        });
+      } else {
+        console.log('Adding new item to cart');
+        dispatch(addItemToCart({
+          product: { ...product, id: productId },
+          quantity: 1
+        }));
+        toast.success(`${product.name} added to cart!`, {
+          icon: '🛒',
+          position: 'top-center',
+          autoClose: 2000
+        });
+      }
+
+      // Update search to show the product that was added
+      setSearchTerm(barcode);
+      setFilteredProducts([product]);
+      setHasSearched(true);
+      setSearchType('barcode');
+
+      // Clear search input but keep the result visible
+      if (searchInputRef.current) {
+        searchInputRef.current.value = '';
+        searchInputRef.current.focus();
+      }
+
+      setProductLoading(productId, false);
+
+    } catch (error) {
+      console.error('Barcode scan processing failed:', error);
+      toast.error(`Failed to process barcode: ${error.message}`);
+      setLoadingProducts(prev => {
+        const newSet = new Set(prev);
+        newSet.clear();
+        return newSet;
+      });
+    }
+  };
+
   const performSearch = useCallback(async (term) => {
     if (!term || term.trim().length === 0) {
       setFilteredProducts([]);
@@ -253,15 +358,6 @@ export default function POS() {
       console.log('Total results found:', allResults.length);
       setFilteredProducts(allResults);
 
-      // Show appropriate feedback
-      if (foundByBarcode && allResults.length === 1) {
-        toast.success(`Product found by barcode: ${barcodeResult.name}`);
-      } else if (allResults.length === 0) {
-        if (isLikelyBarcode(originalTerm)) {
-          toast.warning('No product found with this barcode');
-        }
-      }
-
     } catch (error) {
       console.error('Search error:', error);
       toast.error('Search failed');
@@ -276,7 +372,7 @@ export default function POS() {
     debouncedSearch(searchTerm);
   }, [searchTerm, debouncedSearch]);
 
-  // Enhanced barcode scanner detection logic
+  // Enhanced barcode scanner detection logic with auto-add functionality
   const searchInputRef = useRef(null);
   const scannerRef = useRef({
     buffer: '',
@@ -313,19 +409,21 @@ export default function POS() {
             const code = s.buffer;
             console.log('Barcode scanned:', code, 'Average typing speed:', avg + 'ms per char');
             
-            setSearchTerm(code);
-            performSearch(code);
+            // Auto-add to cart instead of just searching
+            handleBarcodeScanned(code);
 
-            if (searchInputRef.current) {
-              searchInputRef.current.value = code;
-              try { 
-                searchInputRef.current.focus(); 
-                searchInputRef.current.select(); // Select the text for easy clearing
-              } catch (_) {}
-            }
-
-            // Show scan feedback
-            toast.info(`Barcode scanned: ${code}`);
+            // Show scan feedback with cart icon
+            toast.info(
+              <div className="d-flex align-items-center">
+                <i className="fas fa-barcode me-2"></i>
+                <span>Barcode scanned: {code}</span>
+              </div>,
+              {
+                position: 'top-center',
+                autoClose: 1500,
+                hideProgressBar: true
+              }
+            );
 
             e.preventDefault();
             e.stopPropagation();
@@ -369,7 +467,7 @@ export default function POS() {
       window.removeEventListener('keydown', onKeyDown);
       clearTimeout(scannerRef.current.timer);
     };
-  }, [performSearch]);
+  }, [cartMap, getInventoryId, dispatch]); // Added dependencies for handleBarcodeScanned
 
   const refresh = async () => {
     try {
@@ -654,7 +752,7 @@ export default function POS() {
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search products by name or barcode..."
+                  placeholder="Search products by name or scan barcode to add..."
                   className="form-control border-start-0 border-end-0 ps-0"
                   style={{ fontSize: '1rem' }}
                 />
@@ -672,7 +770,7 @@ export default function POS() {
               {searchType && (
                 <div className="small text-muted mt-1">
                   <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : searchType === 'both' ? 'fa-search-plus' : 'fa-search'} me-1`}></i>
-                  {searchType === 'barcode' && 'Searched by barcode'}
+                  {searchType === 'barcode' && 'Found by barcode scan'}
                   {searchType === 'name' && 'Searched by name'}
                   {searchType === 'both' && 'Found by barcode + name matches'}
                 </div>
@@ -707,12 +805,16 @@ export default function POS() {
               <div className="mb-4">
                 <i className="fas fa-search fa-3x text-muted mb-2"></i>
                 <i className="fas fa-barcode fa-3x text-muted"></i>
+                <i className="fas fa-shopping-cart fa-3x text-success"></i>
               </div>
-              <h5 className="text-muted">Search for products</h5>
+              <h5 className="text-muted">Search for products or scan barcodes</h5>
               <p className="text-muted">
-                Enter a product name or scan/type a barcode to find products
+                Enter a product name to search or scan/type a barcode to automatically add to cart
                 <br />
-                <small>Barcode scanner supported - just scan or type quickly</small>
+                <small className="text-success">
+                  <i className="fas fa-magic me-1"></i>
+                  <strong>Barcode scanner ready:</strong> Scan any barcode to instantly add items to your cart!
+                </small>
               </p>
             </div>
           </div>
@@ -771,7 +873,7 @@ export default function POS() {
             <div className="text-center text-muted">
               <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} me-1`}></i>
               Found {filteredProducts.length} products for "{searchTerm}"
-              {searchType === 'barcode' && <span className="badge bg-info ms-2">Barcode Match</span>}
+              {searchType === 'barcode' && <span className="badge bg-success ms-2">Auto-Added to Cart</span>}
             </div>
           </div>
         </div>
@@ -1037,14 +1139,20 @@ export default function POS() {
           border-color: #007bff !important;
         }
 
-        /* Barcode scanner animation */
+        /* Enhanced barcode scanner animation */
         .input-group-text i.fa-barcode {
-          animation: barcodeGlow 1s ease-in-out infinite alternate;
+          animation: barcodeGlow 1.5s ease-in-out infinite alternate;
         }
 
         @keyframes barcodeGlow {
-          from { color: #6c757d; }
-          to { color: #007bff; }
+          from { 
+            color: #28a745; 
+            transform: scale(1);
+          }
+          to { 
+            color: #007bff; 
+            transform: scale(1.1);
+          }
         }
 
         /* Search input focus styles */
@@ -1061,6 +1169,32 @@ export default function POS() {
 
         .product-card:hover .text-muted.small {
           opacity: 1;
+        }
+
+        /* Toast notification enhancements for barcode scanning */
+        .Toastify__toast--info {
+          background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+        }
+
+        .Toastify__toast--success {
+          background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+
+        /* Cart button pulse animation when items are added */
+        @keyframes cartPulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.15); }
+          100% { transform: scale(1); }
+        }
+
+        .cart-added {
+          animation: cartPulse 0.3s ease-in-out;
+        }
+
+        /* Scanning indicator */
+        .scanning-active {
+          box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+          border-color: #28a745 !important;
         }
       `}</style>
     </div>

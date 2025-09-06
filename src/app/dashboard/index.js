@@ -6,6 +6,7 @@ import { MdPointOfSale, MdListAlt, MdBarChart, MdPerson, MdMenu, MdPrint } from 
 import logo from '../../assets/logo.jpeg';
 import { useSelector, useDispatch } from 'react-redux';
 import { selectUser, logout as logoutAction } from '../../redux/slices/userSlice';
+
 /**
  * Dashboard layout with auto-logout on inactivity.
  *
@@ -67,15 +68,16 @@ export default function DashboardLayout() {
     );
   }
 
-  /* ----------------- AutoLogout component (embedded) ----------------- */
-  function AutoLogout({ timeoutMs = 30 * 60 * 1000, warningMs =  60 * 1000 }) {
+  /* ----------------- AutoLogout component (embedded) - FIXED ----------------- */
+  function AutoLogout({ timeoutMs = 30 * 60 * 1000, warningMs = 60 * 1000 }) {
     // Configurable: timeoutMs = inactivity timeout, warningMs = how long before expiry to show modal
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const [showWarning, setShowWarning] = useState(false);
-    const [secondsLeft, setSecondsLeft] = useState(Math.ceil(warningMs / 1000));
+    const [secondsLeft, setSecondsLeft] = useState(0);
     const warningTimerRef = useRef(null);
     const logoutTimerRef = useRef(null);
+    const countdownTimerRef = useRef(null);
     const lastActivityKey = 'arpella:lastActivity';
 
     // helper: get now in ms
@@ -102,9 +104,11 @@ export default function DashboardLayout() {
 
     // clear timers
     const clearAll = useCallback(() => {
-      if (warningTimerRef.current) { clearInterval(warningTimerRef.current); warningTimerRef.current = null; }
+      if (warningTimerRef.current) { clearTimeout(warningTimerRef.current); warningTimerRef.current = null; }
       if (logoutTimerRef.current) { clearTimeout(logoutTimerRef.current); logoutTimerRef.current = null; }
+      if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null; }
       setShowWarning(false);
+      setSecondsLeft(0);
     }, []);
 
     // perform logout
@@ -132,19 +136,37 @@ export default function DashboardLayout() {
 
       // schedule logout
       logoutTimerRef.current = setTimeout(() => {
-        // showWarning may already be visible if logout fired after warning countdown
         clearAll();
         performLogout();
       }, timeLeft);
 
       // schedule the warning (if warningMs > 0)
-      if (warningMs > 0) {
-        // start a timeout to show warning then a countdown interval
-        setTimeout(() => {
+      if (warningMs > 0 && timeLeft <= warningMs) {
+        // Show warning immediately if we're already in warning period
+        setShowWarning(true);
+        const actualSecondsLeft = Math.ceil(timeLeft / 1000);
+        setSecondsLeft(actualSecondsLeft);
+        
+        // Start countdown
+        countdownTimerRef.current = setInterval(() => {
+          setSecondsLeft((s) => {
+            if (s <= 1) {
+              clearAll();
+              performLogout();
+              return 0;
+            }
+            return s - 1;
+          });
+        }, 1000);
+      } else if (warningMs > 0) {
+        // Schedule warning to appear later
+        warningTimerRef.current = setTimeout(() => {
           setShowWarning(true);
-          setSecondsLeft(Math.ceil(warningMs / 1000));
-          // countdown interval
-          warningTimerRef.current = setInterval(() => {
+          const actualSecondsLeft = Math.ceil(warningMs / 1000);
+          setSecondsLeft(actualSecondsLeft);
+          
+          // Start countdown
+          countdownTimerRef.current = setInterval(() => {
             setSecondsLeft((s) => {
               if (s <= 1) {
                 clearAll();
@@ -223,8 +245,7 @@ export default function DashboardLayout() {
 
     // Expose "stay signed in" to cancel timers and reset
     const staySignedIn = () => {
-      setShowWarning(false);
-      setSecondsLeft(Math.ceil(warningMs / 1000));
+      clearAll();
       resetActivity(now());
     };
 
@@ -251,7 +272,7 @@ export default function DashboardLayout() {
                 </div>
 
                 <div style={{ color: '#333', marginBottom: 14 }}>
-                  No activity detected. You will be logged out in <strong>{secondsLeft}s</strong>.
+                  No activity detected. You will be logged out in <strong>{secondsLeft} second{secondsLeft !== 1 ? 's' : ''}</strong>.
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

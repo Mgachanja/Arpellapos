@@ -201,7 +201,7 @@ export default function POS() {
     return numericOnly && (length >= 8 && length <= 20);
   }, []);
 
-  // New function to handle barcode scan and auto-add to cart
+  // Enhanced function to handle barcode scan and auto-add to cart
   const handleBarcodeScanned = async (barcode) => {
     try {
       console.log('Processing scanned barcode:', barcode);
@@ -210,9 +210,6 @@ export default function POS() {
       
       if (!product) {
         toast.error(`No product found with barcode: ${barcode}`);
-        // Still show the barcode in search for manual verification
-        setSearchTerm(barcode);
-        performSearch(barcode);
         return;
       }
 
@@ -263,35 +260,20 @@ export default function POS() {
       if (currentCartQty > 0) {
         console.log('Updating existing cart item quantity');
         dispatch(updateCartItemQuantity({ productId, quantity: newQuantity }));
-        toast.success(`${product.name} quantity increased to ${newQuantity}`, {
-          icon: '📦',
-          position: 'top-center',
-          autoClose: 2000
-        });
+        toast.success(`${product.name} quantity updated to ${newQuantity}`);
       } else {
         console.log('Adding new item to cart');
         dispatch(addItemToCart({
           product: { ...product, id: productId },
           quantity: 1
         }));
-        toast.success(`${product.name} added to cart!`, {
-          icon: '🛒',
-          position: 'top-center',
-          autoClose: 2000
-        });
+        toast.success(`${product.name} added to cart`);
       }
 
       // Update search to show the product that was added
-      setSearchTerm(barcode);
       setFilteredProducts([product]);
       setHasSearched(true);
       setSearchType('barcode');
-
-      // Clear search input but keep the result visible
-      if (searchInputRef.current) {
-        searchInputRef.current.value = '';
-        searchInputRef.current.focus();
-      }
 
       setProductLoading(productId, false);
 
@@ -372,7 +354,7 @@ export default function POS() {
     debouncedSearch(searchTerm);
   }, [searchTerm, debouncedSearch]);
 
-  // Enhanced barcode scanner detection logic with auto-add functionality
+  // Enhanced barcode scanner detection with improved clearing logic
   const searchInputRef = useRef(null);
   const scannerRef = useRef({
     buffer: '',
@@ -409,21 +391,15 @@ export default function POS() {
             const code = s.buffer;
             console.log('Barcode scanned:', code, 'Average typing speed:', avg + 'ms per char');
             
-            // Auto-add to cart instead of just searching
+            // Auto-add to cart and clear input immediately
             handleBarcodeScanned(code);
 
-            // Show scan feedback with cart icon
-            toast.info(
-              <div className="d-flex align-items-center">
-                <i className="fas fa-barcode me-2"></i>
-                <span>Barcode scanned: {code}</span>
-              </div>,
-              {
-                position: 'top-center',
-                autoClose: 1500,
-                hideProgressBar: true
-              }
-            );
+            // Clear the search input immediately for next scan
+            setSearchTerm('');
+            if (searchInputRef.current) {
+              searchInputRef.current.value = '';
+              searchInputRef.current.focus();
+            }
 
             e.preventDefault();
             e.stopPropagation();
@@ -467,7 +443,7 @@ export default function POS() {
       window.removeEventListener('keydown', onKeyDown);
       clearTimeout(scannerRef.current.timer);
     };
-  }, [cartMap, getInventoryId, dispatch]); // Added dependencies for handleBarcodeScanned
+  }, [cartMap, getInventoryId, dispatch]);
 
   const refresh = async () => {
     try {
@@ -630,6 +606,21 @@ export default function POS() {
     }
   }, []);
 
+  // Add Enter key handler for checkout modal
+  useEffect(() => {
+    const handleCheckoutEnter = (e) => {
+      if (e.key === 'Enter' && checkoutVisible && paymentType && cart.length > 0) {
+        e.preventDefault();
+        completeCheckout();
+      }
+    };
+
+    if (checkoutVisible) {
+      window.addEventListener('keydown', handleCheckoutEnter);
+      return () => window.removeEventListener('keydown', handleCheckoutEnter);
+    }
+  }, [checkoutVisible, paymentType, cart.length, cartTotal, paymentData]);
+
   const completeCheckout = async () => {
     if (!paymentType) {
       toast.error('Please select a payment method');
@@ -676,7 +667,7 @@ export default function POS() {
         }
       });
 
-      toast.success('Order completed successfully!');
+      toast.success('Order completed successfully');
 
       // Prepare receipt data for thermal printing
       const orderData = {
@@ -696,7 +687,7 @@ export default function POS() {
       // Print thermal receipt
       try {
         await printOrderReceipt(orderData);
-        toast.success('Receipt printed successfully!');
+        toast.success('Receipt printed successfully');
       } catch (printError) {
         console.error('Failed to print receipt:', printError);
         toast.warning('Order completed but receipt printing failed. Check printer connection.');
@@ -873,7 +864,6 @@ export default function POS() {
             <div className="text-center text-muted">
               <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} me-1`}></i>
               Found {filteredProducts.length} products for "{searchTerm}"
-              {searchType === 'barcode' && <span className="badge bg-success ms-2">Auto-Added to Cart</span>}
             </div>
           </div>
         </div>
@@ -1004,8 +994,8 @@ export default function POS() {
                   size="lg"
                 >
                   <option value="">Select payment method</option>
-                  <option value="cash">💵 Cash</option>
-                  <option value="mpesa">📱 M-Pesa</option>
+                  <option value="cash">Cash</option>
+                  <option value="mpesa">M-Pesa</option>
                 </Form.Select>
               </Form.Group>
 
@@ -1051,6 +1041,13 @@ export default function POS() {
                     />
                   </div>
                 </Form.Group>
+              )}
+
+              {paymentType && (
+                <div className="alert alert-info d-flex align-items-center">
+                  <i className="fas fa-keyboard me-2"></i>
+                  <small>Press <kbd>Enter</kbd> to complete checkout quickly</small>
+                </div>
               )}
             </>
           )}
@@ -1139,29 +1136,11 @@ export default function POS() {
           border-color: #007bff !important;
         }
 
-        /* Enhanced barcode scanner animation */
-        .input-group-text i.fa-barcode {
-          animation: barcodeGlow 1.5s ease-in-out infinite alternate;
-        }
-
-        @keyframes barcodeGlow {
-          from { 
-            color: #28a745; 
-            transform: scale(1);
-          }
-          to { 
-            color: #007bff; 
-            transform: scale(1.1);
-          }
-        }
-
-        /* Search input focus styles */
         .form-control:focus {
           border-color: #007bff;
           box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
         }
 
-        /* Product card barcode styling */
         .product-card .text-muted.small {
           opacity: 0.7;
           transition: opacity 0.2s;
@@ -1171,30 +1150,12 @@ export default function POS() {
           opacity: 1;
         }
 
-        /* Toast notification enhancements for barcode scanning */
-        .Toastify__toast--info {
-          background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-        }
-
-        .Toastify__toast--success {
-          background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-        }
-
-        /* Cart button pulse animation when items are added */
-        @keyframes cartPulse {
-          0% { transform: scale(1); }
-          50% { transform: scale(1.15); }
-          100% { transform: scale(1); }
-        }
-
-        .cart-added {
-          animation: cartPulse 0.3s ease-in-out;
-        }
-
-        /* Scanning indicator */
-        .scanning-active {
-          box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
-          border-color: #28a745 !important;
+        kbd {
+          background-color: #f8f9fa;
+          border: 1px solid #dee2e6;
+          border-radius: 3px;
+          padding: 2px 6px;
+          font-size: 0.875em;
         }
       `}</style>
     </div>

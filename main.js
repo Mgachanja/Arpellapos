@@ -49,6 +49,63 @@ function resolveIconPath() {
   return path.join(process.resourcesPath, 'icon.ico');
 }
 
+// Function to resolve logo path for receipts
+function resolveLogoPath() {
+  const candidates = [
+    // Development paths
+    path.join(__dirname, 'assets', 'receipt-logo.png'),
+    path.join(__dirname, 'src', 'assets', 'receipt-logo.png'),
+    path.join(__dirname, 'public', 'assets', 'receipt-logo.png'),
+    path.join(__dirname, 'build', 'assets', 'receipt-logo.png'),
+  ];
+
+  // Production paths
+  if (process.resourcesPath) {
+    candidates.push(
+      path.join(process.resourcesPath, 'app.asar', 'assets', 'receipt-logo.png'),
+      path.join(process.resourcesPath, 'app.asar', 'src', 'assets', 'receipt-logo.png'),
+      path.join(process.resourcesPath, 'app.asar', 'build', 'assets', 'receipt-logo.png'),
+      path.join(process.resourcesPath, 'assets', 'receipt-logo.png'),
+      path.join(process.resourcesPath, 'build', 'assets', 'receipt-logo.png')
+    );
+  }
+
+  for (const logoPath of candidates) {
+    try {
+      if (fs.existsSync(logoPath)) {
+        log.info('Found receipt logo at:', logoPath);
+        return logoPath;
+      }
+    } catch (error) {
+      // Continue searching
+    }
+  }
+
+  log.warn('Receipt logo not found in any of the expected locations:', candidates);
+  return null;
+}
+
+// Function to convert image to base64
+function getLogoBase64() {
+  try {
+    const logoPath = resolveLogoPath();
+    if (!logoPath) {
+      log.warn('No logo found for receipt printing');
+      return null;
+    }
+
+    const imageBuffer = fs.readFileSync(logoPath);
+    const base64Image = imageBuffer.toString('base64');
+    const mimeType = logoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    
+    log.info('Logo converted to base64, size:', imageBuffer.length, 'bytes');
+    return `data:${mimeType};base64,${base64Image}`;
+  } catch (error) {
+    log.error('Failed to load logo for receipt:', error);
+    return null;
+  }
+}
+
 function findIndexHtmlCandidates() {
   const candidates = [
     path.join(__dirname, 'build', 'index.html'),
@@ -192,7 +249,7 @@ ipcMain.handle('get-printers', async () => {
   }
 });
 
-// ---- ✅ ENHANCED THERMAL PRINTER TEST WITH IMPROVED STYLING
+// ---- ✅ ENHANCED THERMAL PRINTER TEST WITH LOGO
 ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -203,9 +260,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     const options = {
       preview: false,
       silent: true,
-      margin: '10 10 10 10', // Better margins for centering
+      margin: '10 10 10 10',
       timeOutPerLine: 400,
-      pageSize: '80mm', // Proper thermal printer size
+      pageSize: '80mm',
       copies: 1
     };
 
@@ -216,8 +273,25 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
       log.info('Testing default printer');
     }
 
-    // Enhanced test print with better styling and centering
-    const printData = [
+    const printData = [];
+
+    // Add logo if available
+    const logoBase64 = getLogoBase64();
+    if (logoBase64) {
+      printData.push({
+        type: 'image',
+        url: logoBase64,
+        position: 'center',
+        width: '120px',
+        height: '60px',
+        style: {
+          marginBottom: '10px'
+        }
+      });
+    }
+
+    // Add test content
+    printData.push(
       {
         type: 'text',
         value: '================================',
@@ -328,7 +402,7 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
           marginBottom: '20px'
         }
       }
-    ];
+    );
 
     await PosPrinter.print(printData, options);
     log.info('Test print completed successfully for printer:', printerName || 'default');
@@ -339,7 +413,7 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   }
 });
 
-// ---- ✅ ENHANCED RECEIPT PRINTING WITH IMPROVED STYLING AND CENTERING
+// ---- ✅ ENHANCED RECEIPT PRINTING WITH LOGO AND IMPROVED STYLING
 ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSettings) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -364,13 +438,12 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
     };
 
-    // Enhanced print options for better centering and quality
     const options = {
       preview: false,
       silent: true,
-      margin: '15 15 15 15', // Increased margins for better centering
+      margin: '15 15 15 15',
       timeOutPerLine: 500,
-      pageSize: '80mm', // Standard thermal printer width
+      pageSize: '80mm',
       copies: 1
     };
 
@@ -381,31 +454,38 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       log.info('Printing receipt to default printer');
     }
 
-    // Enhanced receipt design with better styling and centering
-    const printData = [
-      // Header Section with better spacing
-      {
-        type: 'text',
-        value: '================================',
+    const printData = [];
+
+    // Add logo at the top if available
+    const logoBase64 = getLogoBase64();
+    if (logoBase64) {
+      printData.push({
+        type: 'image',
+        url: logoBase64,
+        position: 'center',
+        width: '150px',
+        height: '75px',
         style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
+          marginBottom: '8px'
         }
-      },
+      });
+    }
+
+    // Store information
+    printData.push(
       {
         type: 'text',
         value: storeSettings.storeName || 'ARPELLA STORE',
         style: {
           textAlign: 'center',
           fontWeight: 'bold',
-          fontSize: '20px',
+          fontSize: '16px',
           marginBottom: '5px'
         }
       },
       {
         type: 'text',
-        value: storeSettings.storeAddress || 'Ngong, Mtasia',
+        value: storeSettings.storeAddress || 'Ngong, Matasia',
         style: {
           textAlign: 'center',
           fontSize: '14px',
@@ -414,10 +494,10 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`,
+        value: `TELEPHONE NO: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`,
         style: {
           textAlign: 'center',
-          fontSize: '14px',
+          fontSize: '12px',
           marginBottom: '5px'
         }
       },
@@ -438,7 +518,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         style: {
           textAlign: 'center',
           fontWeight: 'bold',
-          fontSize: '16px',
+          fontSize: '15px',
           marginBottom: '8px'
         }
       },
@@ -482,7 +562,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: `Cashier: ${user?.userName || user?.name || 'Staff'}`,
+        value: `Served By: ${user?.userName || user?.name || 'Staff'}`,
         style: {
           fontSize: '13px',
           marginBottom: '8px',
@@ -507,7 +587,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           fontWeight: 'bold',
           fontSize: '13px',
           fontFamily: 'monospace',
-          textAlign: 'center',
+          textAlign: 'left',
           marginBottom: '3px'
         }
       },
@@ -520,165 +600,152 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           marginBottom: '5px'
         }
       }
-    ];
+    );
 
     // Add cart items with improved formatting
-    for (const item of cart) {
-      const name = item.name || item.productName || 'Item';
-      const qty = item.quantity || item.qty || 1;
-      const price = item.salePrice || item.price || 0;
-      const total = qty * price;
-      
-      // Enhanced item formatting for better alignment
-      const truncatedName = name.length > 18 ? name.slice(0, 15) + '...' : name;
-      const paddedName = truncatedName.padEnd(18);
-      const qtyStr = qty.toString().padStart(4);
-      const totalStr = formatCurrency(total).padStart(8);
-      
-      printData.push({
-        type: 'text',
-        value: `${paddedName} ${qtyStr} ${totalStr}`,
-        style: {
-          fontSize: '12px',
-          fontFamily: 'monospace',
-          textAlign: 'left',
-          marginBottom: '2px'
-        }
-      });
-    }
-
-    // Totals Section with enhanced styling
-    printData.push(
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginTop: '5px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `SUBTOTAL: ${formatCurrency(cartTotal)}`,
-        style: {
-          fontSize: '14px',
-          textAlign: 'right',
-          marginBottom: '3px',
-          fontWeight: 'bold'
-        }
-      },
-      {
-        type: 'text',
-        value: `TOTAL: ${formatCurrency(cartTotal)}`,
-        style: {
-          fontWeight: 'bold',
-          fontSize: '16px',
-          textAlign: 'center',
-          marginBottom: '8px'
-        }
+  for (const item of cart) {
+    const name = item.name || item.productName || 'Item';
+    const qty = item.quantity || item.qty || 1;
+    const price = item.salePrice || item.price || 0;
+    const total = qty * price;
+    
+    // Truncate name to fit in 20 characters (matching header spacing)
+    const truncatedName = name.length > 20 ? name.slice(0, 17) + '...' : name;
+    const paddedName = truncatedName.padEnd(20);  // Changed from 18 to 20
+    const qtyStr = qty.toString().padStart(3);    // Changed from 4 to 3
+    const totalStr = formatCurrency(total).padStart(7); // Changed from 8 to 7
+    
+    printData.push({
+      type: 'text',
+      value: `${paddedName} ${qtyStr} ${totalStr}`,
+      style: {
+        fontSize: '12px',
+        fontFamily: 'monospace',
+        textAlign: 'left',
+        marginBottom: '2px'
       }
-    );
+    });
+  }
 
-    // Payment Information
-    if (paymentType.toLowerCase() === 'cash') {
-      printData.push(
-        {
-          type: 'text',
-          value: `Cash Received: ${formatCurrency(cashAmount)}`,
-          style: {
-            fontSize: '13px',
-            textAlign: 'center',
-            marginBottom: '3px'
-          }
-        }
-      );
-      
-      if (change > 0) {
-        printData.push({
-          type: 'text',
-          value: `CHANGE: ${formatCurrency(change)}`,
-          style: {
-            fontWeight: 'bold',
-            fontSize: '15px',
-            textAlign: 'center',
-            marginBottom: '5px'
-          }
-        });
+    // Totals Section
+// Professional Totals and Footer Section
+printData.push(
+  // Clean separator
+  {
+    type: 'text',
+    value: '================================',
+    style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' }
+  },
+  
+  // Subtotal
+  {
+    type: 'text',
+    value: `SUBTOTAL                ${formatCurrency(cartTotal)}`,
+    style: { 
+      fontSize: '14px', 
+      fontFamily: 'monospace',
+      textAlign: 'left',
+      marginBottom: '3px' 
+    }
+  },
+  
+  // Total (emphasized)
+  {
+    type: 'text',
+    value: `TOTAL                   ${formatCurrency(cartTotal)}`,
+    style: { 
+      fontWeight: 'bold', 
+      fontSize: '16px', 
+      fontFamily: 'monospace',
+      textAlign: 'left',
+      marginBottom: '10px' 
+    }
+  }
+);
+
+// Payment Information (cleaner layout)
+if (paymentType.toLowerCase() === 'cash') {
+  printData.push(
+    {
+      type: 'text',
+      value: `CASH PAID               ${formatCurrency(cashAmount)}`,
+      style: { 
+        fontSize: '13px', 
+        fontFamily: 'monospace',
+        textAlign: 'left',
+        marginBottom: '3px' 
       }
     }
-
-    printData.push(
-      {
-        type: 'text',
-        value: `Payment Method: ${paymentType.toUpperCase()}`,
-        style: {
-          fontSize: '13px',
-          textAlign: 'center',
-          marginBottom: '10px'
-        }
+  );
+  
+  if (change > 0) {
+    printData.push({
+      type: 'text',
+      value: `CHANGE                  ${formatCurrency(change)}`,
+      style: { 
+        fontWeight: 'bold', 
+        fontSize: '14px',
+        fontFamily: 'monospace',
+        textAlign: 'left',
+        marginBottom: '8px' 
       }
-    );
+    });
+  }
+} else {
+  printData.push({
+    type: 'text',
+    value: `PAYMENT: ${paymentType.toUpperCase()}`,
+    style: { 
+      fontSize: '13px', 
+      textAlign: 'center',
+      marginBottom: '8px' 
+    }
+  });
+}
 
-    // Footer Section
-    printData.push(
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.receiptFooter || 'Thank you for your business!',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          fontWeight: 'bold',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'Visit us again soon!',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Powered by Arpella `,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Print Time: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '15px'
-        }
-      }
-    );
+// Professional Footer
+printData.push(
+  // Final separator
+  {
+    type: 'text',
+    value: '================================',
+    style: { textAlign: 'center', fontSize: '12px', marginTop: '5px', marginBottom: '8px' }
+  },
+  
+  // Thank you message
+  {
+    type: 'text',
+    value: storeSettings.receiptFooter || 'Thank you for your business!',
+    style: { 
+      textAlign: 'center', 
+      fontSize: '14px', 
+      fontWeight: 'bold',
+      marginBottom: '5px' 
+    }
+  },
+  
+  // Simple closing
+  {
+    type: 'text',
+    value: 'Please come again',
+    style: { 
+      textAlign: 'center', 
+      fontSize: '12px',
+      marginBottom: '10px' 
+    }
+  },
+  
+  // Minimal branding
+  {
+    type: 'text',
+    value: '~ Powered by Arpella ~',
+    style: { 
+      textAlign: 'center', 
+      fontSize: '10px',
+      marginBottom: '20px' 
+    }
+  }
+);
 
     await PosPrinter.print(printData, options);
     log.info('Receipt printed successfully to:', printerName || 'default printer');
@@ -686,6 +753,26 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
   } catch (error) {
     log.error('Print receipt failed:', error);
     return { success: false, message: `Print failed: ${error.message}` };
+  }
+});
+
+// New IPC handler to check logo availability
+ipcMain.handle('check-receipt-logo', async () => {
+  try {
+    const logoPath = resolveLogoPath();
+    const logoBase64 = getLogoBase64();
+    
+    return {
+      available: !!logoBase64,
+      path: logoPath,
+      size: logoBase64 ? logoBase64.length : 0
+    };
+  } catch (error) {
+    log.error('Failed to check receipt logo:', error);
+    return {
+      available: false,
+      error: error.message
+    };
   }
 });
 
@@ -729,7 +816,6 @@ ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
       return { success: false, message: 'Printer not found' };
     }
 
-    // Basic capability info
     const capabilities = {
       name: printer.name,
       status: printer.status,

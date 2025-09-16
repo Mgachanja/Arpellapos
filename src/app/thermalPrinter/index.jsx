@@ -1,5 +1,5 @@
 // src/app/thermalPrinter/index.jsx - Updated settings component
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import {
   getThermalPrinters,
@@ -123,12 +123,26 @@ export default function ThermalPrinterSettings({ show, onHide }) {
     savePrinterPreference(newPrinter);
   };
 
-  const handleStoreSettingsChange = (field, value) => {
-    setStoreSettings(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
+  // Create individual handlers for each field to prevent re-renders
+  const handleStoreNameChange = useCallback((e) => {
+    const value = e.target.value;
+    setStoreSettings(prev => ({ ...prev, storeName: value }));
+  }, []);
+
+  const handleStoreAddressChange = useCallback((e) => {
+    const value = e.target.value;
+    setStoreSettings(prev => ({ ...prev, storeAddress: value }));
+  }, []);
+
+  const handleStorePhoneChange = useCallback((e) => {
+    const value = e.target.value;
+    setStoreSettings(prev => ({ ...prev, storePhone: value }));
+  }, []);
+
+  const handleReceiptFooterChange = useCallback((e) => {
+    const value = e.target.value;
+    setStoreSettings(prev => ({ ...prev, receiptFooter: value }));
+  }, []);
 
   const saveStoreSettings = () => {
     try {
@@ -258,7 +272,8 @@ export default function ThermalPrinterSettings({ show, onHide }) {
     </div>
   );
 
-  const StoreSettingsPanel = () => (
+  // Memoize components to prevent unnecessary re-renders
+  const StoreSettingsPanel = useMemo(() => (
     <div className="border rounded-3 p-3">
       <div className="row g-3">
         <div className="col-12">
@@ -267,7 +282,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
             type="text" 
             className="form-control" 
             value={storeSettings.storeName} 
-            onChange={e => handleStoreSettingsChange('storeName', e.target.value)}
+            onChange={handleStoreNameChange}
             placeholder="Enter your store name"
           />
         </div>
@@ -277,7 +292,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
             className="form-control" 
             rows="3" 
             value={storeSettings.storeAddress} 
-            onChange={e => handleStoreSettingsChange('storeAddress', e.target.value)}
+            onChange={handleStoreAddressChange}
             placeholder="Enter your store address"
           />
         </div>
@@ -287,7 +302,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
             type="text" 
             className="form-control" 
             value={storeSettings.storePhone} 
-            onChange={e => handleStoreSettingsChange('storePhone', e.target.value)}
+            onChange={handleStorePhoneChange}
             placeholder="+254 XXX XXX XXX"
           />
         </div>
@@ -297,7 +312,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
             className="form-control" 
             rows="2" 
             value={storeSettings.receiptFooter} 
-            onChange={e => handleStoreSettingsChange('receiptFooter', e.target.value)}
+            onChange={handleReceiptFooterChange}
             placeholder="Thank you message"
           />
         </div>
@@ -312,7 +327,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
         </div>
       </div>
     </div>
-  );
+  ), [storeSettings.storeName, storeSettings.storeAddress, storeSettings.storePhone, storeSettings.receiptFooter, handleStoreNameChange, handleStoreAddressChange, handleStorePhoneChange, handleReceiptFooterChange, saveStoreSettings]);
 
   // Render mode: modal or page
   if (isModal) {
@@ -341,7 +356,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
             </div>
             <div className="mb-4">
               <Header title="Store Information" />
-              <StoreSettingsPanel />
+              {StoreSettingsPanel}
             </div>
             <div className="d-flex justify-content-end">
               <button className="btn btn-secondary" onClick={onHide}>
@@ -367,7 +382,7 @@ export default function ThermalPrinterSettings({ show, onHide }) {
           
           <div className="mb-4">
             <h5 className="mb-3">Store Information</h5>
-            <StoreSettingsPanel />
+            {StoreSettingsPanel}
           </div>
         </div>
       </div>

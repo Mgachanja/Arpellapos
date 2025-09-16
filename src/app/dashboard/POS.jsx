@@ -1,7 +1,7 @@
 // src/screens/Index.js (or wherever your POS component lives)
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { Modal, Button, Form } from 'react-bootstrap';
+import { Button, Form } from 'react-bootstrap';
 import { toast } from 'react-toastify';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -147,7 +147,6 @@ export default function POS() {
   const [hasSearched, setHasSearched] = useState(false);
   const [searchType, setSearchType] = useState(''); // Track if search was by name or barcode
 
-  const [checkoutVisible, setCheckoutVisible] = useState(false);
   const [paymentType, setPaymentType] = useState('');
   const [paymentData, setPaymentData] = useState({ cashAmount: '', mpesaPhone: '' });
 
@@ -606,20 +605,24 @@ export default function POS() {
     }
   }, []);
 
-  // Add Enter key handler for checkout modal
+  // Add Enter key handler for checkout
   useEffect(() => {
     const handleCheckoutEnter = (e) => {
-      if (e.key === 'Enter' && checkoutVisible && paymentType && cart.length > 0) {
-        e.preventDefault();
-        completeCheckout();
+      if (e.key === 'Enter' && paymentType && cart.length > 0) {
+        // Only if we're not typing in an input field
+        const activeElement = document.activeElement;
+        const isTypingInInput = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
+        
+        if (!isTypingInInput) {
+          e.preventDefault();
+          completeCheckout();
+        }
       }
     };
 
-    if (checkoutVisible) {
-      window.addEventListener('keydown', handleCheckoutEnter);
-      return () => window.removeEventListener('keydown', handleCheckoutEnter);
-    }
-  }, [checkoutVisible, paymentType, cart.length, cartTotal, paymentData]);
+    window.addEventListener('keydown', handleCheckoutEnter);
+    return () => window.removeEventListener('keydown', handleCheckoutEnter);
+  }, [paymentType, cart.length, cartTotal, paymentData]);
 
   const completeCheckout = async () => {
     if (!paymentType) {
@@ -695,7 +698,6 @@ export default function POS() {
 
       dispatch(clearCart());
 
-      setCheckoutVisible(false);
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '' });
 
@@ -726,166 +728,175 @@ export default function POS() {
   return (
     <div className="container-fluid py-4" style={{
       background: '#f8f9fa',
-      minHeight: '100vh',
+      minHeight: '100vh -200vh',
       maxWidth: '100%',
       overflow: 'hidden'
     }}>
-      <div className="row mb-4">
-        <div className="col-12">
-          <div className="d-flex flex-column flex-md-row gap-3 align-items-center">
-            <div className="flex-grow-1">
-              <div className="input-group input-group-lg">
-                <span className="input-group-text bg-white border-end-0">
-                  <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} text-muted`}></i>
-                </span>
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search products by name or scan barcode to add..."
-                  className="form-control border-start-0 border-end-0 ps-0"
-                  style={{ fontSize: '1rem' }}
-                />
-                {searchTerm && (
-                  <button
-                    className="btn btn-outline-secondary border-start-0"
-                    type="button"
-                    onClick={clearSearch}
-                    title="Clear search"
-                  >
-                    <i className="fas fa-times"></i>
-                  </button>
-                )}
-              </div>
-              {searchType && (
-                <div className="small text-muted mt-1">
-                  <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : searchType === 'both' ? 'fa-search-plus' : 'fa-search'} me-1`}></i>
-                  {searchType === 'barcode' && 'Found by barcode scan'}
-                  {searchType === 'name' && 'Searched by name'}
-                  {searchType === 'both' && 'Found by barcode + name matches'}
-                </div>
-              )}
-            </div>
-            <button
-              className="btn btn-lg px-4"
-              onClick={refresh}
-              style={{ ...CTA, minWidth: '120px' }}
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <span className="spinner-border spinner-border-sm me-2"></span>
-                  Syncing...
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-sync-alt me-2"></i>
-                  Refresh
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="row" style={{ maxWidth: '100%', margin: 0 }}>
-        {!hasSearched ? (
-          <div className="col-12">
-            <div className="text-center py-5">
-              <div className="mb-4">
-                <i className="fas fa-search fa-3x text-muted mb-2"></i>
-                <i className="fas fa-barcode fa-3x text-muted"></i>
-                <i className="fas fa-shopping-cart fa-3x text-success"></i>
-              </div>
-              <h5 className="text-muted">Search for products or scan barcodes</h5>
-              <p className="text-muted">
-                Enter a product name to search or scan/type a barcode to automatically add to cart
-                <br />
-                <small className="text-success">
-                  <i className="fas fa-magic me-1"></i>
-                  <strong>Barcode scanner ready:</strong> Scan any barcode to instantly add items to your cart!
-                </small>
-              </p>
-            </div>
-          </div>
-        ) : filteredProducts.length === 0 ? (
-          <div className="col-12">
-            <div className="text-center py-5">
-              <i className={`fas ${isLikelyBarcode(searchTerm) ? 'fa-barcode' : 'fa-exclamation-circle'} fa-3x text-muted mb-3`}></i>
-              <h5 className="text-muted">
-                {isLikelyBarcode(searchTerm) ? 'No product found with this barcode' : 'No products found'}
-              </h5>
-              <p className="text-muted">
-                {isLikelyBarcode(searchTerm) 
-                  ? `Barcode "${searchTerm}" not found in inventory`
-                  : 'Try a different search term or barcode'
-                }
-              </p>
-            </div>
-          </div>
-        ) : (
-          filteredProducts.map((product) => {
-            const productId = product.id || product._id;
-            const isLoading = loadingProducts.has(productId);
-
-            return (
-              <div key={productId} className="col-6 col-sm-4 col-md-3 col-lg-2 col-xl-2 mb-3">
-                <div style={{ position: 'relative' }}>
-                  <ProductCard
-                    product={product}
-                    cartQuantity={cartMap[productId] || 0}
-                    onQuantityChange={handleQuantityChange}
+      <div className="row h-100" style={{ minHeight: 'calc(100vh - 2rem)' }}>
+        {/* Left side - Products */}
+        <div className="col-lg-8 col-12 mb-4">
+          {/* Search Header */}
+          <div className="mb-4">
+            <div className="d-flex flex-column flex-md-row gap-3 align-items-center">
+              <div className="flex-grow-1">
+                <div className="input-group input-group-lg">
+                  <span className="input-group-text bg-white border-end-0">
+                    <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} text-muted`}></i>
+                  </span>
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search products by name or scan barcode to add..."
+                    className="form-control border-start-0 border-end-0 ps-0"
+                    style={{ fontSize: '1rem' }}
                   />
-                  {isLoading && (
-                    <div
-                      className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
-                      style={{
-                        backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                        borderRadius: '12px',
-                        zIndex: 10
-                      }}
+                  {searchTerm && (
+                    <button
+                      className="btn btn-outline-secondary border-start-0"
+                      type="button"
+                      onClick={clearSearch}
+                      title="Clear search"
                     >
-                      <div className="spinner-border text-primary" style={{ width: '2rem', height: '2rem' }}>
-                        <span className="visually-hidden">Loading...</span>
-                      </div>
-                    </div>
+                      <i className="fas fa-times"></i>
+                    </button>
                   )}
                 </div>
+                {searchType && (
+                  <div className="small text-muted mt-1">
+                    <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : searchType === 'both' ? 'fa-search-plus' : 'fa-search'} me-1`}></i>
+                    {searchType === 'barcode' && 'Found by barcode scan'}
+                    {searchType === 'name' && 'Searched by name'}
+                    {searchType === 'both' && 'Found by barcode + name matches'}
+                  </div>
+                )}
               </div>
-            );
-          })
-        )}
-      </div>
-
-      {hasSearched && filteredProducts.length > 0 && (
-        <div className="row mt-3">
-          <div className="col-12">
-            <div className="text-center text-muted">
-              <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} me-1`}></i>
-              Found {filteredProducts.length} products for "{searchTerm}"
+              <button
+                className="btn btn-lg px-4"
+                onClick={refresh}
+                style={{ ...CTA, minWidth: '120px' }}
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2"></span>
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <i className="fas fa-sync-alt me-2"></i>
+                    Refresh
+                  </>
+                )}
+              </button>
             </div>
           </div>
-        </div>
-      )}
 
-      <Modal
-        show={checkoutVisible}
-        onHide={() => setCheckoutVisible(false)}
-        centered
-        size="lg"
-      >
-        <Modal.Header closeButton>
-          <Modal.Title className="d-flex align-items-center">
-            <i className="fas fa-shopping-cart me-2"></i>
-            Checkout
-            <span className="badge bg-primary ms-2">{cartItemCount} items</span>
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-          <div className="mb-4">
-            <div className="d-flex justify-content-between align-items-center mb-3">
-              <h6 className="fw-semibold mb-0">Order Summary</h6>
+          {/* Products Grid */}
+          <div className="products-container" style={{ maxHeight: 'calc(100vh - 200px)', overflowY: 'hidden', paddingRight: '20px' }}>
+            <div className="row">
+              {!hasSearched ? (
+                <div className="col-12">
+                  <div className="text-center py-5">
+                    <div className="mb-4">
+                      <i className="fas fa-search fa-3x text-muted mb-2"></i>
+                      <i className="fas fa-barcode fa-3x text-muted"></i>
+                      <i className="fas fa-shopping-cart fa-3x text-success"></i>
+                    </div>
+                    <h5 className="text-muted">Search for products or scan barcodes</h5>
+                    <p className="text-muted">
+                      Enter a product name to search or scan/type a barcode to automatically add to cart
+                      <br />
+                      <small className="text-success">
+                        <i className="fas fa-magic me-1"></i>
+                        <strong>Barcode scanner ready:</strong> Scan any barcode to instantly add items to your cart!
+                      </small>
+                    </p>
+                  </div>
+                </div>
+              ) : filteredProducts.length === 0 ? (
+                <div className="col-12">
+                  <div className="text-center py-5">
+                    <i className={`fas ${isLikelyBarcode(searchTerm) ? 'fa-barcode' : 'fa-exclamation-circle'} fa-3x text-muted mb-3`}></i>
+                    <h5 className="text-muted">
+                      {isLikelyBarcode(searchTerm) ? 'No product found with this barcode' : 'No products found'}
+                    </h5>
+                    <p className="text-muted">
+                      {isLikelyBarcode(searchTerm) 
+                        ? `Barcode "${searchTerm}" not found in inventory`
+                        : 'Try a different search term or barcode'
+                      }
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                filteredProducts.map((product) => {
+                  const productId = product.id || product._id;
+                  const isLoading = loadingProducts.has(productId);
+
+                  return (
+                    <div key={productId} className="col-6 col-sm-4 col-md-6 col-lg-4 col-xl-3 mb-3">
+                      <div style={{ position: 'relative' }}>
+                        <ProductCard
+                          product={product}
+                          cartQuantity={cartMap[productId] || 0}
+                          onQuantityChange={handleQuantityChange}
+                        />
+                        {isLoading && (
+                          <div
+                            className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+                            style={{
+                              backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                              borderRadius: '12px',
+                              zIndex: 10
+                            }}
+                          >
+                            <div className="spinner-border text-primary" style={{ width: '2rem', height: '2rem' }}>
+                              <span className="visually-hidden">Loading...</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {hasSearched && filteredProducts.length > 0 && (
+              <div className="row mt-3">
+                <div className="col-12">
+                  <div className="text-center text-muted">
+                    <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} me-1`}></i>
+                    Found {filteredProducts.length} products for "{searchTerm}"
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right side - Cart */}
+        <div className="col-lg-4 col-12">
+          <div 
+            className="cart-sidebar h-100 bg-white rounded-3 shadow-sm p-4 position-sticky"
+            style={{ 
+              top: '20px',
+              maxHeight: 'calc(100vh - 100px)',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            {/* Cart Header */}
+            <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+              <h5 className="fw-semibold mb-0 d-flex align-items-center">
+                <i className="fas fa-shopping-cart me-2"></i>
+                Cart
+                {cartItemCount > 0 && (
+                  <span className="badge bg-primary ms-2">{cartItemCount} items</span>
+                )}
+              </h5>
               {cartItemCount > 0 && (
                 <button
                   className="btn btn-outline-danger btn-sm"
@@ -893,233 +904,183 @@ export default function POS() {
                   title="Clear all items"
                 >
                   <i className="fas fa-trash me-1"></i>
-                  Clear Cart
+                  Clear
                 </button>
               )}
             </div>
 
-            {cart.length === 0 ? (
-              <div className="text-center py-4">
-                <i className="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
-                <h6 className="text-muted">Your cart is empty</h6>
-                <p className="text-muted mb-0">Add some products to get started</p>
-              </div>
-            ) : (
-              <div className="table-responsive">
-                <table className="table table-sm table-hover">
-                  <thead className="table-light">
-                    <tr>
-                      <th style={{ fontSize: '0.9rem' }}>Product</th>
-                      <th style={{ fontSize: '0.9rem' }} className="text-center">Qty</th>
-                      <th style={{ fontSize: '0.9rem' }} className="text-end">Price</th>
-                      <th style={{ fontSize: '0.9rem' }} className="text-end">Total</th>
-                      <th style={{ fontSize: '0.9rem', width: '60px' }} className="text-center">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cart.map((item) => {
-                      const itemPrice = item.salePrice || item.price || 0;
-                      const itemTotal = itemPrice * (item.quantity || 1);
-                      const itemId = item.id || item._id;
+            {/* Cart Items */}
+            <div className="cart-items flex-grow-1" style={{ overflowY: 'auto', marginBottom: '20px' }}>
+              {cart.length === 0 ? (
+                <div className="text-center py-5">
+                  <i className="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
+                  <h6 className="text-muted">Your cart is empty</h6>
+                  <p className="text-muted mb-0 small">Add some products to get started</p>
+                </div>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-sm table-hover">
+                    <thead className="table-light">
+                      <tr>
+                        <th style={{ fontSize: '0.8rem' }}>Product</th>
+                        <th style={{ fontSize: '0.8rem' }} className="text-center">Qty</th>
+                        <th style={{ fontSize: '0.8rem' }} className="text-end">Total</th>
+                        <th style={{ fontSize: '0.8rem', width: '40px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cart.map((item) => {
+                        const itemPrice = item.salePrice || item.price || 0;
+                        const itemTotal = itemPrice * (item.quantity || 1);
+                        const itemId = item.id || item._id;
 
-                      return (
-                        <tr key={itemId}>
-                          <td style={{ fontSize: '0.85rem', maxWidth: '180px' }}>
-                            <div className="text-truncate" title={item.name}>
-                              <strong>{item.name}</strong>
-                              {item.barcode && (
-                                <div className="text-muted small">
-                                  <i className="fas fa-barcode me-1"></i>
-                                  {item.barcode}
+                        return (
+                          <tr key={itemId}>
+                            <td style={{ fontSize: '0.75rem' }}>
+                              <div className="text-truncate" style={{ maxWidth: '600px' ,fontSize: '1.01rem' }} title={item.name}>
+                                <strong>{item.name}</strong>
+                                <div className="text-success small">
+                                  {KSH(itemPrice)}
                                 </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="text-center" style={{ fontSize: '0.85rem' }}>
-                            <span className="badge bg-secondary px-2 py-1">
-                              {item.quantity || 1}
-                            </span>
-                          </td>
-                          <td className="text-end" style={{ fontSize: '0.85rem' }}>
-                            {KSH(itemPrice)}
-                          </td>
-                          <td className="text-end fw-semibold" style={{ fontSize: '0.85rem' }}>
-                            {KSH(itemTotal)}
-                          </td>
-                          <td className="text-center">
-                            <button
-                              className="btn btn-outline-danger btn-sm rounded-circle"
-                              onClick={() => handleRemoveItem(itemId, item.name)}
-                              title={`Remove ${item.name}`}
-                              style={{ width: '28px', height: '28px', padding: '0' }}
-                            >
-                              <i className="fas fa-times" style={{ fontSize: '0.7rem' }}></i>
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="table-light">
-                    <tr>
-                      <td colSpan="2" className="fw-semibold">
-                        <i className="fas fa-shopping-bag me-1"></i>
-                        Total Items: {cartItemCount}
-                      </td>
-                      <td className="text-end fw-bold fs-6">
-                        Grand Total:
-                      </td>
-                      <td className="text-end fw-bold fs-5 text-success">
-                        {KSH(cartTotal)}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                </table>
+                                {item.barcode && (
+                                  <div className="text-muted" style={{ fontSize: '0.65rem' }}>
+                                    <i className="fas fa-barcode me-1"></i>
+                                    {item.barcode}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="text-center" style={{ fontSize: '0.75rem' }}>
+                              <span className="badge bg-secondary px-2 py-1">
+                                {item.quantity || 1}
+                              </span>
+                            </td>
+                            <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>
+                              {KSH(itemTotal)}
+                            </td>
+                            <td className="text-center">
+                              <button
+                                className="btn btn-outline-danger btn-sm rounded-circle"
+                                onClick={() => handleRemoveItem(itemId, item.name)}
+                                title={`Remove ${item.name}`}
+                                style={{ width: '24px', height: '24px', padding: '0', fontSize: '0.6rem' }}
+                              >
+                                <i className="fas fa-times"></i>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Cart Total & Checkout */}
+            {cart.length > 0 && (
+              <div className="cart-checkout border-top pt-3">
+                {/* Total */}
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                  <span className="fw-bold fs-4">
+                    <i className="fas fa-shopping-bag me-1"></i>
+                    Total:
+                  </span>
+                  <span className="fw-bold fs-3 text-success">
+                    {KSH(cartTotal)}
+                  </span>
+                </div>
+
+                {/* Payment Method */}
+                <Form.Group className="mb-3">
+                  <Form.Label className="fw-semibold small">
+                    <i className="fas fa-credit-card me-2"></i>
+                    Payment Method
+                  </Form.Label>
+                  <Form.Select
+                    value={paymentType}
+                    onChange={(e) => setPaymentType(e.target.value)}
+                    size="sm"
+                  >
+                    <option value="">Select payment method</option>
+                    <option value="cash">Cash</option>
+                    <option value="mpesa">M-Pesa</option>
+                  </Form.Select>
+                </Form.Group>
+
+                {/* Payment Details */}
+                {paymentType === 'cash' && (
+                  <Form.Group className="mb-3">
+                    <Form.Label className="fw-semibold small">Cash Amount Given</Form.Label>
+                    <div className="input-group input-group-sm">
+                      <span className="input-group-text">Ksh</span>
+                      <Form.Control
+                        type="number"
+                        value={paymentData.cashAmount}
+                        onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })}
+                        placeholder="Enter amount received"
+                        min={cartTotal}
+                      />
+                    </div>
+                    {paymentData.cashAmount && Number(paymentData.cashAmount) >= cartTotal && (
+                      <div className="mt-2 p-2 bg-success bg-opacity-10 rounded border-start border-success border-3">
+                        <div className="d-flex justify-content-between align-items-center">
+                          <span className="text-success fw-semibold small">
+                            <i className="fas fa-check-circle me-1"></i>
+                            Change:
+                          </span>
+                          <span className="text-success fw-bold">
+                            {KSH(Number(paymentData.cashAmount) - cartTotal)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </Form.Group>
+                )}
+
+                {paymentType === 'mpesa' && (
+                  <Form.Group className="mb-3">
+                    <Form.Label className="fw-semibold small">M-Pesa Phone Number</Form.Label>
+                    <div className="input-group input-group-sm">
+                      <span className="input-group-text">📱</span>
+                      <Form.Control
+                        type="tel"
+                        placeholder="07XXXXXXXX"
+                        value={paymentData.mpesaPhone}
+                        onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })}
+                      />
+                    </div>
+                  </Form.Group>
+                )}
+
+                {/* Checkout Button */}
+                <Button
+                  style={{
+                    ...CTA,
+                    width: '100%',
+                    padding: '12px',
+                    fontSize: '1rem',
+                    fontWeight: '600'
+                  }}
+                  onClick={completeCheckout}
+                  disabled={!paymentType}
+                  size="lg"
+                >
+                  <i className="fas fa-check me-2"></i>
+                  Complete Order - {KSH(cartTotal)}
+                </Button>
+
+                {paymentType && (
+                  <div className="alert alert-info mt-3 py-2 mb-0">
+                    <i className="fas fa-keyboard me-2"></i>
+                    <small>Press <kbd>Enter</kbd> to complete checkout quickly</small>
+                  </div>
+                )}
               </div>
             )}
           </div>
-
-          {cart.length > 0 && (
-            <>
-              <hr className="my-4" />
-              <Form.Group className="mb-3">
-                <Form.Label className="fw-semibold">
-                  <i className="fas fa-credit-card me-2"></i>
-                  Payment Method
-                </Form.Label>
-                <Form.Select
-                  value={paymentType}
-                  onChange={(e) => setPaymentType(e.target.value)}
-                  size="lg"
-                >
-                  <option value="">Select payment method</option>
-                  <option value="cash">Cash</option>
-                  <option value="mpesa">M-Pesa</option>
-                </Form.Select>
-              </Form.Group>
-
-              {paymentType === 'cash' && (
-                <Form.Group className="mb-3">
-                  <Form.Label className="fw-semibold">Cash Amount Given</Form.Label>
-                  <div className="input-group input-group-lg">
-                    <span className="input-group-text">Ksh</span>
-                    <Form.Control
-                      type="number"
-                      value={paymentData.cashAmount}
-                      onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })}
-                      placeholder="Enter amount received"
-                      min={cartTotal}
-                    />
-                  </div>
-                  {paymentData.cashAmount && Number(paymentData.cashAmount) >= cartTotal && (
-                    <div className="mt-2 p-3 bg-success bg-opacity-10 rounded border-start border-success border-4">
-                      <div className="d-flex justify-content-between align-items-center">
-                        <span className="text-success fw-semibold">
-                          <i className="fas fa-check-circle me-1"></i>
-                          Change to give:
-                        </span>
-                        <span className="text-success fw-bold fs-5">
-                          {KSH(Number(paymentData.cashAmount) - cartTotal)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </Form.Group>
-              )}
-
-              {paymentType === 'mpesa' && (
-                <Form.Group className="mb-3">
-                  <Form.Label className="fw-semibold">M-Pesa Phone Number</Form.Label>
-                  <div className="input-group input-group-lg">
-                    <span className="input-group-text">📱</span>
-                    <Form.Control
-                      type="tel"
-                      placeholder="07XXXXXXXX or 2547XXXXXXXX"
-                      value={paymentData.mpesaPhone}
-                      onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })}
-                    />
-                  </div>
-                </Form.Group>
-              )}
-
-              {paymentType && (
-                <div className="alert alert-info d-flex align-items-center">
-                  <i className="fas fa-keyboard me-2"></i>
-                  <small>Press <kbd>Enter</kbd> to complete checkout quickly</small>
-                </div>
-              )}
-            </>
-          )}
-        </Modal.Body>
-
-        {cart.length > 0 && (
-          <Modal.Footer className="bg-light">
-            <Button
-              variant="outline-secondary"
-              onClick={() => setCheckoutVisible(false)}
-              size="lg"
-            >
-              <i className="fas fa-arrow-left me-2"></i>
-              Continue Shopping
-            </Button>
-            <Button
-              style={CTA}
-              onClick={completeCheckout}
-              disabled={!paymentType}
-              size="lg"
-              className="px-4"
-            >
-              <i className="fas fa-check me-2"></i>
-              Complete Order - {KSH(cartTotal)}
-            </Button>
-          </Modal.Footer>
-        )}
-
-        {cart.length === 0 && (
-          <Modal.Footer>
-            <Button
-              variant="primary"
-              onClick={() => setCheckoutVisible(false)}
-              size="lg"
-            >
-              <i className="fas fa-arrow-left me-2"></i>
-              Back to Shopping
-            </Button>
-          </Modal.Footer>
-        )}
-      </Modal>
-
-      {cartItemCount > 0 && (
-        <div className="position-fixed bottom-0 end-0 m-4" style={{ zIndex: 999 }}>
-          <button
-            className="btn btn-success rounded-circle shadow-lg border-0"
-            onClick={() => setCheckoutVisible(true)}
-            title="View Cart & Checkout"
-            style={{
-              width: '70px',
-              height: '70px',
-              fontSize: '1.2rem',
-              fontWeight: 'bold',
-              background: 'linear-gradient(135deg, #28a745 0%, #20c997 100%)',
-              transition: 'all 0.3s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'scale(1.1)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-            }}
-          >
-            <div className="position-relative">
-              <i className="fas fa-shopping-cart"></i>
-              <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
-                {cartItemCount}
-              </span>
-            </div>
-          </button>
         </div>
-      )}
+      </div>
 
       <style jsx>{`
         @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css');
@@ -1150,12 +1111,64 @@ export default function POS() {
           opacity: 1;
         }
 
+        .cart-sidebar {
+          border: 1px solid #e9ecef;
+        }
+
+        .cart-items {
+          min-height: 200px;
+        }
+
+        .cart-items::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .cart-items::-webkit-scrollbar-track {
+          background: #f8f9fa;
+          border-radius: 3px;
+        }
+
+        .cart-items::-webkit-scrollbar-thumb {
+          background: #dee2e6;
+          border-radius: 3px;
+        }
+
+        .cart-items::-webkit-scrollbar-thumb:hover {
+          background: #ced4da;
+        }
+
+        .products-container::-webkit-scrollbar {
+          width: 8px;
+        }
+
+        .products-container::-webkit-scrollbar-track {
+          background: #f8f9fa;
+          border-radius: 4px;
+        }
+
+        .products-container::-webkit-scrollbar-thumb {
+          background: #dee2e6;
+          border-radius: 4px;
+        }
+
+        .products-container::-webkit-scrollbar-thumb:hover {
+          background: #ced4da;
+        }
+
         kbd {
           background-color: #f8f9fa;
           border: 1px solid #dee2e6;
           border-radius: 3px;
           padding: 2px 6px;
           font-size: 0.875em;
+        }
+
+        @media (max-width: 991.98px) {
+          .cart-sidebar {
+            position: relative !important;
+            max-height: none !important;
+            margin-top: 20px;
+          }
         }
       `}</style>
     </div>

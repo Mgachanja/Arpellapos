@@ -3,6 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
 
+// Auto-updater import
+const { autoUpdater } = require('electron-updater');
+
+// Configure auto-updater logging
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
+
 // Add electron-pos-printer import
 let PosPrinter = null;
 try {
@@ -33,6 +40,149 @@ try {
 } catch (err) {
   log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
 }
+
+// Auto-updater configuration and event handlers
+// ---------- Auto-updater configuration (replace your existing setupAutoUpdater and quit-and-install) ----------
+function setupAutoUpdater() {
+  try {
+    // ensure auto-download is enabled
+    autoUpdater.autoDownload = true;
+
+    // Prefer checkForUpdatesAndNotify for automatic behavior on startup,
+    // but we keep explicit check logic for manual checks via IPC.
+    log.info('AutoUpdater: configured. autoDownload=' + !!autoUpdater.autoDownload);
+
+    // Event: checking-for-update
+    autoUpdater.on('checking-for-update', () => {
+      log.info('AutoUpdater: checking-for-update');
+      // granular channel
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-checking');
+      }
+      // backward-compatible text channel
+      sendUpdateMessage('Checking for updates...');
+    });
+
+    // Event: update-available
+    autoUpdater.on('update-available', (info) => {
+      log.info('AutoUpdater: update-available', info);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', info);
+      }
+      sendUpdateMessage(`Update available: v${info.version}`);
+    });
+
+    // Event: update-not-available
+    autoUpdater.on('update-not-available', (info) => {
+      log.info('AutoUpdater: update-not-available', info);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-not-available', info);
+      }
+      sendUpdateMessage('Update not available - you are running the latest version');
+    });
+
+    // Event: error
+    autoUpdater.on('error', (err) => {
+      log.error('AutoUpdater: error', err);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-error', { message: err?.message || String(err) });
+      }
+      sendUpdateMessage(`Update error: ${err?.message || String(err)}`);
+    });
+
+    // Event: download-progress (granular progress object)
+    autoUpdater.on('download-progress', (progressObj) => {
+      const msg = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
+      log.info('AutoUpdater: download-progress', msg);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        // emit the granular channel your renderer listens to
+        mainWindow.webContents.send('update-download-progress', progressObj);
+        // keep the old 'download-progress' channel for compatibility
+        mainWindow.webContents.send('download-progress', progressObj);
+      }
+    });
+
+    // Event: update-downloaded
+    autoUpdater.on('update-downloaded', (info) => {
+      log.info('AutoUpdater: update-downloaded', info);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-downloaded', info);
+      }
+      sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
+      // You may optionally prompt user here (you already send a message)
+    });
+
+    // If you want an initial automatic check on setup (you already call checkForUpdatesAndNotify)
+    try {
+      autoUpdater.checkForUpdatesAndNotify();
+    } catch (e) {
+      log.warn('AutoUpdater initial check failed:', e);
+    }
+  } catch (e) {
+    log.error('setupAutoUpdater error:', e);
+  }
+}
+
+// Backwards-compatible sendUpdateMessage() already in your file — it sends 'update-message'.
+// ensure it still exists and unchanged:
+// function sendUpdateMessage(message) { ... }
+
+// IPC: keep quit-and-install (existing) AND add install-update alias to match renderer
+ipcMain.handle('quit-and-install', async () => {
+  try {
+    log.info('IPC: quit-and-install invoked');
+    // quitAndInstall(forceRunAfter: boolean, isSilent: boolean) — leave defaults
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (error) {
+    log.error('Quit and install failed:', error);
+    return { success: false, error: error.message || String(error) };
+  }
+});
+
+// New alias handler for renderer code that calls 'install-update'
+ipcMain.handle('install-update', async () => {
+  try {
+    log.info('IPC: install-update invoked (alias for quit-and-install)');
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (error) {
+    log.error('install-update failed:', error);
+    return { success: false, error: error.message || String(error) };
+  }
+});
+
+
+function sendUpdateMessage(message) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-message', message);
+  }
+}
+
+// IPC handlers for auto-updater
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { success: true, result };
+  } catch (error) {
+    log.error('Manual update check failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('quit-and-install', async () => {
+  try {
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (error) {
+    log.error('Quit and install failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
 
 function resolveIconPath() {
   if (!app.isPackaged) {
@@ -180,7 +330,20 @@ function createMainWindow() {
     log.info('ELECTRON_DEBUG detected — DevTools opened');
   }
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    
+    // Initialize auto-updater after window is ready
+    if (!isDev) {
+      log.info('Initializing auto-updater...');
+      setTimeout(() => {
+        setupAutoUpdater();
+      }, 3000); // Wait 3 seconds after app is ready
+    } else {
+      log.info('Development mode - skipping auto-updater');
+    }
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 

@@ -1,0 +1,175 @@
+name: Build and Release Arpella POS
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.x
+          cache: 'npm'
+
+      - name: Prepare build tools (Windows)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+            choco install python --version=3.11.4 -y || Write-Host "choco install python failed or choco missing"
+          }
+          python --version
+          python -m pip install --upgrade pip setuptools wheel
+          python -c "
+          import sys
+          try:
+            import distutils
+            print('distutils OK')
+          except Exception as e:
+            print('distutils FAIL', e)
+            sys.exit(1)
+          "
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate icons
+        run: npm run make-icons
+
+      - name: Build React app
+        run: npm run build:web
+        env:
+          CI: false
+
+      - name: Build Electron (Windows)
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ env.GH_TOKEN }}
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            dist/*.exe
+            dist/*.nsis.*
+            dist/latest*.yml
+            dist/*.zip
+
+  test-autoupdate:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test auto-updater configuration
+        run: |
+          if npm list electron-updater >/dev/null 2>&1; then
+            echo "✅ electron-updater dependency found"
+          else
+            echo "❌ electron-updater not found in dependencies"
+            exit 1
+          fi
+          if grep -q '"publish"' package.json; then
+            echo "✅ publish configuration found in package.json"
+          else
+            echo "⚠️  publish configuration not found in package.json"
+          fi
+          if [ -f "main.js" ] && grep -q "electron-updater" main.js; then
+            echo "✅ electron-updater integration found in main.js"
+          else
+            echo "⚠️  electron-updater integration not found in main.js"
+          fi
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "✅ Version format is valid: $VERSION"
+          else
+            echo "⚠️  Version format should be semantic (x.y.z): $VERSION"
+          fi
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          find artifacts/ -type f \( -iname "*.exe" -o -iname "*.zip" -o -iname "latest*.yml" -o -iname "*.nsis.*" \) -exec cp {} release-files/ \;
+          
+          # Rename files to match electron-updater expectations
+          cd release-files
+          for file in *.exe; do
+            if [[ "$file" == Arpella.POS.Setup.*.exe ]]; then
+              # Extract version from filename (everything between last dot before .exe)
+              version=$(echo "$file" | sed 's/Arpella.POS.Setup.\(.*\).exe/\1/')
+              newname="Arpella-POS-Setup-${version}.exe"
+              if [ "$file" != "$newname" ]; then
+                mv "$file" "$newname"
+                echo "Renamed: $file -> $newname"
+              fi
+            fi
+          done
+          
+          ls -la
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-files/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## Changes in this Release
+
+            ### Auto-Update Support
+            This release includes auto-update functionality. The app will automatically check for updates and notify users when new versions are available.
+
+            ### Installation Notes
+            - **Windows**: Run the `.exe` installer
+            
+            ### Files
+            - Setup installer with auto-update capability
+            - Portable version available
+            - Auto-update metadata included
+
+            ### What's New
+            - Enhanced printer support
+            - Improved receipt formatting
+            - Background auto-update functionality
+            - Better error handling and logging
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

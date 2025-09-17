@@ -157,7 +157,7 @@ export default function LoginPage() {
               <h3 className="mb-1 fw-bold" style={{ color: '#2c3e50' }}>
                 Welcome Back
               </h3>
-              <p className="text-muted mb-0">Sign in to Arpella POS</p>
+              <p className="text-muted mb-0">Sign in to Arpella POSpush.     </p>
             </div>
 
             {/* Desktop header */}

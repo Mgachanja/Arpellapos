@@ -3,6 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
 
+// Auto-updater import
+const { autoUpdater } = require('electron-updater');
+
+// Configure auto-updater logging
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
+
 // Add electron-pos-printer import
 let PosPrinter = null;
 try {
@@ -33,6 +40,80 @@ try {
 } catch (err) {
   log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
 }
+
+// Auto-updater configuration and event handlers
+function setupAutoUpdater() {
+  // Configure auto-updater
+  autoUpdater.checkForUpdatesAndNotify();
+  
+  // Auto-updater events
+  autoUpdater.on('checking-for-update', () => {
+    log.info('Checking for update...');
+    sendUpdateMessage('Checking for updates...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    log.info('Update available:', info);
+    sendUpdateMessage(`Update available: v${info.version}`);
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    log.info('Update not available:', info);
+    sendUpdateMessage('Update not available - you are running the latest version');
+  });
+
+  autoUpdater.on('error', (err) => {
+    log.error('Error in auto-updater:', err);
+    sendUpdateMessage(`Update error: ${err.message}`);
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    let log_message = `Download speed: ${progressObj.bytesPerSecond}`;
+    log_message += ` - Downloaded ${progressObj.percent}%`;
+    log_message += ` (${progressObj.transferred}/${progressObj.total})`;
+    log.info(log_message);
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download-progress', progressObj);
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('Update downloaded:', info);
+    sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
+  });
+}
+
+function sendUpdateMessage(message) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-message', message);
+  }
+}
+
+// IPC handlers for auto-updater
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { success: true, result };
+  } catch (error) {
+    log.error('Manual update check failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('quit-and-install', async () => {
+  try {
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (error) {
+    log.error('Quit and install failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
 
 function resolveIconPath() {
   if (!app.isPackaged) {
@@ -180,7 +261,20 @@ function createMainWindow() {
     log.info('ELECTRON_DEBUG detected — DevTools opened');
   }
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    
+    // Initialize auto-updater after window is ready
+    if (!isDev) {
+      log.info('Initializing auto-updater...');
+      setTimeout(() => {
+        setupAutoUpdater();
+      }, 3000); // Wait 3 seconds after app is ready
+    } else {
+      log.info('Development mode - skipping auto-updater');
+    }
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 

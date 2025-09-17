@@ -132,7 +132,7 @@ export default function LoginPage() {
               Arpella POS
             </h2>
             <p className="text-muted fs-5">
-              Your complete point-of-sale solution
+              Your complete point-of-sale solution test push update
             </p>
           </div>
         </Col>

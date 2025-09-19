@@ -42,150 +42,79 @@ try {
   log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
 }
 
-// -----------------------------------------------------------------------------
-// Auto-updater: ensure idempotent registration and single initialization
-// -----------------------------------------------------------------------------
-let __autoUpdaterInitialized = false;
-
+// Auto-updater configuration and event handlers
 function setupAutoUpdater() {
-  if (__autoUpdaterInitialized) {
-    log.info('AutoUpdater already initialized - skipping re-setup');
-    return;
-  }
-  __autoUpdaterInitialized = true;
+  // Configure auto-updater
+  autoUpdater.checkForUpdatesAndNotify();
+  
+  // Auto-updater events
+  autoUpdater.on('checking-for-update', () => {
+    log.info('Checking for update...');
+    sendUpdateMessage('Checking for updates...');
+  });
 
-  try {
-    // ensure auto-download is enabled
-    autoUpdater.autoDownload = true;
+  autoUpdater.on('update-available', (info) => {
+    log.info('Update available:', info);
+    sendUpdateMessage(`Update available: v${info.version}`);
+  });
 
-    log.info('AutoUpdater: configured. autoDownload=' + !!autoUpdater.autoDownload);
+  autoUpdater.on('update-not-available', (info) => {
+    log.info('Update not available:', info);
+    sendUpdateMessage('Update not available - you are running the latest version');
+  });
 
-    // Event: checking-for-update
-    autoUpdater.on('checking-for-update', () => {
-      log.info('AutoUpdater: checking-for-update');
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-checking');
-      }
-      sendUpdateMessage('Checking for updates...');
-    });
+  autoUpdater.on('error', (err) => {
+    log.error('Error in auto-updater:', err);
+    sendUpdateMessage(`Update error: ${err.message}`);
+  });
 
-    // Event: update-available
-    autoUpdater.on('update-available', (info) => {
-      log.info('AutoUpdater: update-available', info);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-available', info);
-      }
-      sendUpdateMessage(`Update available: v${info.version}`);
-    });
-
-    // Event: update-not-available
-    autoUpdater.on('update-not-available', (info) => {
-      log.info('AutoUpdater: update-not-available', info);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-not-available', info);
-      }
-      sendUpdateMessage('Update not available - you are running the latest version');
-    });
-
-    // Event: error
-    autoUpdater.on('error', (err) => {
-      log.error('AutoUpdater: error', err);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-error', { message: err?.message || String(err) });
-      }
-      sendUpdateMessage(`Update error: ${err?.message || String(err)}`);
-    });
-
-    // Event: download-progress (granular progress object)
-    autoUpdater.on('download-progress', (progressObj) => {
-      const msg = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
-      log.info('AutoUpdater: download-progress', msg);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-download-progress', progressObj);
-        // keep legacy channel for compatibility
-        mainWindow.webContents.send('download-progress', progressObj);
-      }
-    });
-
-    // Event: update-downloaded
-    autoUpdater.on('update-downloaded', (info) => {
-      log.info('AutoUpdater: update-downloaded', info);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-downloaded', info);
-      }
-      sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
-    });
-
-    // Run an initial check/notify in a safe try
-    try {
-      autoUpdater.checkForUpdatesAndNotify();
-    } catch (e) {
-      log.warn('AutoUpdater initial check failed:', e);
+  autoUpdater.on('download-progress', (progressObj) => {
+    let log_message = `Download speed: ${progressObj.bytesPerSecond}`;
+    log_message += ` - Downloaded ${progressObj.percent}%`;
+    log_message += ` (${progressObj.transferred}/${progressObj.total})`;
+    log.info(log_message);
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download-progress', progressObj);
     }
-  } catch (e) {
-    log.error('setupAutoUpdater error:', e);
-  }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('Update downloaded:', info);
+    sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
+  });
 }
 
-// Backwards-compatible sendUpdateMessage()
 function sendUpdateMessage(message) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-message', message);
   }
 }
 
-// -----------------------------------------------------------------------------
-// IPC handlers for auto-updater (register once, defensive remove before set)
-// -----------------------------------------------------------------------------
-function registerAutoUpdaterIpcHandlers() {
-  // Defensive: remove prior handlers if present (prevents duplicate registration errors)
-  try { ipcMain.removeHandler('check-for-updates'); } catch (e) {}
-  try { ipcMain.removeHandler('quit-and-install'); } catch (e) {}
-  try { ipcMain.removeHandler('install-update'); } catch (e) {}
-  try { ipcMain.removeHandler('get-app-version'); } catch (e) {}
+// IPC handlers for auto-updater
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { success: true, result };
+  } catch (error) {
+    log.error('Manual update check failed:', error);
+    return { success: false, error: error.message };
+  }
+});
 
-  ipcMain.handle('check-for-updates', async () => {
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      return { success: true, result };
-    } catch (error) {
-      log.error('Manual update check failed:', error);
-      return { success: false, error: error.message || String(error) };
-    }
-  });
+ipcMain.handle('quit-and-install', async () => {
+  try {
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (error) {
+    log.error('Quit and install failed:', error);
+    return { success: false, error: error.message };
+  }
+});
 
-  // Single install handler used for both channel names
-  const installHandler = async () => {
-    try {
-      log.info('IPC: install update invoked');
-      // quitAndInstall(forceRunAfter: boolean, isSilent: boolean)
-      autoUpdater.quitAndInstall(false, true);
-      return { success: true };
-    } catch (error) {
-      log.error('Install/update failed:', error);
-      return { success: false, error: error.message || String(error) };
-    }
-  };
-
-  ipcMain.handle('quit-and-install', installHandler);
-  ipcMain.handle('install-update', installHandler);
-
-  ipcMain.handle('get-app-version', () => {
-    try {
-      return app.getVersion();
-    } catch (e) {
-      log.error('get-app-version failed:', e);
-      return '';
-    }
-  });
-}
-
-// Register these IPC handlers immediately so renderer can call them anytime
-registerAutoUpdaterIpcHandlers();
-
-// -----------------------------------------------------------------------------
-// Rest of your code (unchanged, but duplicates removed)
-// -----------------------------------------------------------------------------
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
 
 function resolveIconPath() {
   if (!app.isPackaged) {
@@ -340,11 +269,7 @@ function createMainWindow() {
     if (!isDev) {
       log.info('Initializing auto-updater...');
       setTimeout(() => {
-        try {
-          setupAutoUpdater();
-        } catch (e) {
-          log.error('setupAutoUpdater call failed', e);
-        }
+        setupAutoUpdater();
       }, 3000); // Wait 3 seconds after app is ready
     } else {
       log.info('Development mode - skipping auto-updater');

@@ -1,9 +1,8 @@
-// src/screens/Index.js (or wherever your POS component lives)
+// src/screens/Index.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Button, Form } from 'react-bootstrap';
 import { toast } from 'react-toastify';
-import { v4 as uuidv4 } from 'uuid';
 
 import {
   fetchAndIndexAllProducts,
@@ -20,14 +19,13 @@ import {
 import indexedDb from '../../services/indexedDB';
 import {
   validateAndAddToCart,
-  validateCartQuantityChange,
-  checkoutOrder
+  validateCartQuantityChange
 } from '../../services/cartService';
 
 import api from '../../services/api';
 import { selectUser } from '../../redux/slices/userSlice';
 
-import { printOrderReceipt } from '../thermalPrinter/thermalPrinter'; 
+import { printOrderReceipt } from '../thermalPrinter/thermalPrinter';
 
 const CTA = { background: '#FF7F50', color: '#fff' };
 const KSH = (amt) => `Ksh ${Number(amt).toLocaleString()}`;
@@ -43,21 +41,12 @@ function useDebouncedCallback(fn, wait) {
 function ProductCard({ product, cartQuantity, onQuantityChange }) {
   const productId = product.id || product._id;
 
-  const handleIncrement = () => {
-    onQuantityChange(productId, (cartQuantity || 0) + 1);
-  };
-
+  const handleIncrement = () => onQuantityChange(productId, (cartQuantity || 0) + 1);
   const handleDecrement = () => {
-    if (cartQuantity > 1) {
-      onQuantityChange(productId, cartQuantity - 1);
-    } else if (cartQuantity === 1) {
-      onQuantityChange(productId, 0);
-    }
+    if (cartQuantity > 1) onQuantityChange(productId, cartQuantity - 1);
+    else if (cartQuantity === 1) onQuantityChange(productId, 0);
   };
-
-  const handleAddToCart = () => {
-    onQuantityChange(productId, 1);
-  };
+  const handleAddToCart = () => onQuantityChange(productId, 1);
 
   return (
     <div
@@ -78,15 +67,12 @@ function ProductCard({ product, cartQuantity, onQuantityChange }) {
       }}
     >
       <div className="flex-grow-1 mb-3">
-        <h6 className="product-name fw-semibold text-dark mb-2 lh-sm"
-            style={{ fontSize: '0.9rem', minHeight: '2.4rem' }}>
+        <h6 className="product-name fw-semibold text-dark mb-2 lh-sm" style={{ fontSize: '0.9rem', minHeight: '2.4rem' }}>
           {product.name}
         </h6>
-        <div className="product-price fw-bold text-success mb-0"
-             style={{ fontSize: '1rem' }}>
+        <div className="product-price fw-bold text-success mb-0" style={{ fontSize: '1rem' }}>
           {KSH(product.salePrice || product.price || 0)}
         </div>
-        {/* Show barcode if available */}
         {product.barcode && (
           <div className="text-muted small mt-1" style={{ fontSize: '0.75rem' }}>
             <i className="fas fa-barcode me-1"></i>
@@ -106,8 +92,7 @@ function ProductCard({ product, cartQuantity, onQuantityChange }) {
               <i className="fas fa-minus" style={{ fontSize: '0.75rem' }}></i>
             </button>
 
-            <div className="mx-3 fw-bold text-center"
-                 style={{ minWidth: '30px', fontSize: '1.1rem', color: '#495057' }}>
+            <div className="mx-3 fw-bold text-center" style={{ minWidth: '30px', fontSize: '1.1rem', color: '#495057' }}>
               {cartQuantity}
             </div>
 
@@ -145,14 +130,17 @@ export default function POS() {
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [searchType, setSearchType] = useState(''); // Track if search was by name or barcode
+  const [searchType, setSearchType] = useState('');
 
+  // paymentData supports hybrid now (mpesaAmount)
   const [paymentType, setPaymentType] = useState('');
-  const [paymentData, setPaymentData] = useState({ cashAmount: '', mpesaPhone: '' });
+  const [paymentData, setPaymentData] = useState({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
   const [loadingProducts, setLoadingProducts] = useState(new Set());
+  const [processingOrder, setProcessingOrder] = useState(false);
+  const [currentOrderId, setCurrentOrderId] = useState(null);
+  const [checkingPayment, setCheckingPayment] = useState(false);
 
-  // Geolocation coordinates with fallback to (0,0)
   const [coords, setCoords] = useState({ lat: 0, lng: 0 });
 
   const dispatch = useDispatch();
@@ -162,7 +150,6 @@ export default function POS() {
   const loading = useSelector(selectProductsLoading);
   const user = useSelector(selectUser);
 
-  // Create cart map for quick quantity lookup
   const cartMap = cart.reduce((acc, cur) => {
     acc[cur.id || cur._id] = cur.quantity || 1;
     return acc;
@@ -190,23 +177,16 @@ export default function POS() {
       .catch(() => toast.error('Failed to sync products'));
   }, [dispatch]);
 
-  // Helper function to detect if search term is likely a barcode
   const isLikelyBarcode = useCallback((term) => {
     if (!term) return false;
-    // Check if it's all numbers and reasonable barcode length
     const numericOnly = /^\d+$/.test(term.trim());
     const length = term.trim().length;
-    // Common barcode lengths: UPC (12), EAN (13), Code 128 (variable), etc.
     return numericOnly && (length >= 8 && length <= 20);
   }, []);
 
-  // Enhanced function to handle barcode scan and auto-add to cart
   const handleBarcodeScanned = async (barcode) => {
     try {
-      console.log('Processing scanned barcode:', barcode);
-      
       const product = await indexedDb.getProductByBarcode(barcode);
-      
       if (!product) {
         toast.error(`No product found with barcode: ${barcode}`);
         return;
@@ -216,14 +196,8 @@ export default function POS() {
       const currentCartQty = cartMap[productId] || 0;
       const newQuantity = currentCartQty + 1;
 
-      console.log('Found product by barcode:', product.name);
-      console.log('Current cart quantity:', currentCartQty, 'New quantity:', newQuantity);
-
-      // Validate and add to cart
       const inventoryId = getInventoryId(product);
-      
       if (!inventoryId) {
-        console.error('No inventory ID found for product:', product);
         toast.error(`Cannot add ${product.name} - inventory ID missing`);
         return;
       }
@@ -236,8 +210,6 @@ export default function POS() {
         qty: 1,
         currentCartQty
       });
-
-      console.log('Validation result:', validation);
 
       if (validation.status === 'conflict') {
         toast.error(validation.message);
@@ -255,13 +227,10 @@ export default function POS() {
         toast.warning(validation.message);
       }
 
-      // Add/update cart
       if (currentCartQty > 0) {
-        console.log('Updating existing cart item quantity');
         dispatch(updateCartItemQuantity({ productId, quantity: newQuantity }));
         toast.success(`${product.name} quantity updated to ${newQuantity}`);
       } else {
-        console.log('Adding new item to cart');
         dispatch(addItemToCart({
           product: { ...product, id: productId },
           quantity: 1
@@ -269,16 +238,12 @@ export default function POS() {
         toast.success(`${product.name} added to cart`);
       }
 
-      // Update search to show the product that was added
       setFilteredProducts([product]);
       setHasSearched(true);
       setSearchType('barcode');
-
       setProductLoading(productId, false);
-
     } catch (error) {
-      console.error('Barcode scan processing failed:', error);
-      toast.error(`Failed to process barcode: ${error.message}`);
+      toast.error(`Failed to process barcode: ${error?.message || 'Unexpected error'}`);
       setLoadingProducts(prev => {
         const newSet = new Set(prev);
         newSet.clear();
@@ -303,44 +268,27 @@ export default function POS() {
       let allResults = [];
       let foundByBarcode = false;
 
-      // First try barcode search - exact match
-      console.log('Searching for barcode:', originalTerm);
       const barcodeResult = await indexedDb.getProductByBarcode(originalTerm);
-      
       if (barcodeResult) {
-        console.log('Found product by barcode:', barcodeResult);
         allResults.push(barcodeResult);
         foundByBarcode = true;
         setSearchType('barcode');
       }
 
-      // If no barcode match found, or we want to show name matches too, search by name
       if (!foundByBarcode || !isLikelyBarcode(originalTerm)) {
-        console.log('Searching by name:', searchTermLower);
         const nameResults = await indexedDb.searchByName(searchTermLower, 100);
-        console.log('Found products by name:', nameResults.length);
-        
-        // Add name results, avoiding duplicates
         nameResults.forEach(product => {
           const productId = product.id || product._id;
           const exists = allResults.find(p => (p.id || p._id) === productId);
-          if (!exists) {
-            allResults.push(product);
-          }
+          if (!exists) allResults.push(product);
         });
 
-        if (!foundByBarcode) {
-          setSearchType('name');
-        } else {
-          setSearchType('both');
-        }
+        if (!foundByBarcode) setSearchType('name');
+        else setSearchType('both');
       }
 
-      console.log('Total results found:', allResults.length);
       setFilteredProducts(allResults);
-
     } catch (error) {
-      console.error('Search error:', error);
       toast.error('Search failed');
       setFilteredProducts([]);
       setSearchType('');
@@ -348,64 +296,42 @@ export default function POS() {
   }, [isLikelyBarcode]);
 
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
+  useEffect(() => { debouncedSearch(searchTerm); }, [searchTerm, debouncedSearch]);
 
-  useEffect(() => {
-    debouncedSearch(searchTerm);
-  }, [searchTerm, debouncedSearch]);
-
-  // Enhanced barcode scanner detection with improved clearing logic
   const searchInputRef = useRef(null);
-  const scannerRef = useRef({
-    buffer: '',
-    firstTime: 0,
-    lastTime: 0,
-    timer: null
-  });
+  const scannerRef = useRef({ buffer: '', firstTime: 0, lastTime: 0, timer: null });
 
   useEffect(() => {
-    const THRESHOLD_AVG_MS = 80; // Faster typing threshold for scanner detection
+    const THRESHOLD_AVG_MS = 80;
     const CLEAR_TIMEOUT = 800;
-    const MIN_BARCODE_LENGTH = 8; // Minimum characters for barcode
+    const MIN_BARCODE_LENGTH = 8;
 
     const onKeyDown = (e) => {
-      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
 
       const now = Date.now();
       const s = scannerRef.current;
       const active = document.activeElement;
       const activeIsEditable = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
 
-      // Only intercept if not focused on a different input
-      if (activeIsEditable && searchInputRef.current !== active) {
-        return;
-      }
+      if (activeIsEditable && searchInputRef.current !== active) return;
 
       if (e.key === 'Enter') {
         if (s.buffer.length >= MIN_BARCODE_LENGTH) {
           const totalTime = now - (s.firstTime || now);
           const avg = totalTime / Math.max(1, s.buffer.length);
-
-          // If typed fast enough (like a scanner), treat as barcode scan
           if (avg < THRESHOLD_AVG_MS) {
             const code = s.buffer;
-            console.log('Barcode scanned:', code, 'Average typing speed:', avg + 'ms per char');
-            
-            // Auto-add to cart and clear input immediately
             handleBarcodeScanned(code);
-
-            // Clear the search input immediately for next scan
             setSearchTerm('');
             if (searchInputRef.current) {
               searchInputRef.current.value = '';
               searchInputRef.current.focus();
             }
-
             e.preventDefault();
             e.stopPropagation();
           }
         }
-        
-        // Clear buffer
         clearTimeout(s.timer);
         s.buffer = '';
         s.firstTime = 0;
@@ -414,19 +340,15 @@ export default function POS() {
         return;
       }
 
-      // Capture character input
       if (e.key.length === 1) {
-        // Reset buffer if too much time has passed
         if (s.lastTime && (now - s.lastTime) > 150) {
           s.buffer = '';
           s.firstTime = now;
         }
-        
         if (!s.firstTime) s.firstTime = now;
         s.buffer += e.key;
         s.lastTime = now;
 
-        // Auto-clear buffer after timeout
         clearTimeout(s.timer);
         s.timer = setTimeout(() => {
           s.buffer = '';
@@ -458,30 +380,21 @@ export default function POS() {
   const setProductLoading = (productId, isLoading) => {
     setLoadingProducts(prev => {
       const newSet = new Set(prev);
-      if (isLoading) {
-        newSet.add(productId);
-      } else {
-        newSet.delete(productId);
-      }
+      if (isLoading) newSet.add(productId);
+      else newSet.delete(productId);
       return newSet;
     });
   };
 
   const handleQuantityChange = async (productId, newQuantity) => {
     try {
-      console.log('handleQuantityChange called:', { productId, newQuantity });
-
       const product = filteredProducts.find(p => (p.id || p._id) === productId);
       if (!product) {
-        console.error('Product not found:', productId);
         toast.error('Product not found');
         return;
       }
 
-      console.log('Found product:', product);
-
       if (newQuantity === 0) {
-        console.log('Removing from cart');
         dispatch(removeItemFromCart(productId));
         toast.success('Removed from cart');
         return;
@@ -489,22 +402,15 @@ export default function POS() {
 
       const currentCartQty = cartMap[productId] || 0;
       const inventoryId = getInventoryId(product);
-
       if (!inventoryId) {
-        console.error('No inventory ID found for product:', product);
         toast.error('Cannot validate stock - inventory ID missing');
         return;
       }
-
-      console.log('Current cart quantity:', currentCartQty);
-      console.log('Inventory ID:', inventoryId);
 
       setProductLoading(productId, true);
 
       if (newQuantity > currentCartQty) {
         const qtyToAdd = newQuantity - currentCartQty;
-        console.log('Adding quantity:', qtyToAdd);
-
         const validation = await validateAndAddToCart({
           productId,
           inventoryId,
@@ -512,15 +418,7 @@ export default function POS() {
           currentCartQty
         });
 
-        console.log('Validation result:', validation);
-
-        if (validation.status === 'conflict') {
-          toast.error(validation.message);
-          setProductLoading(productId, false);
-          return;
-        }
-
-        if (validation.status === 'error') {
+        if (validation.status === 'conflict' || validation.status === 'error') {
           toast.error(validation.message);
           setProductLoading(productId, false);
           return;
@@ -537,15 +435,7 @@ export default function POS() {
           currentCartQty
         });
 
-        console.log('Quantity change validation:', validation);
-
-        if (validation.status === 'conflict') {
-          toast.error(validation.message);
-          setProductLoading(productId, false);
-          return;
-        }
-
-        if (validation.status === 'error') {
+        if (validation.status === 'conflict' || validation.status === 'error') {
           toast.error(validation.message);
           setProductLoading(productId, false);
           return;
@@ -553,11 +443,9 @@ export default function POS() {
       }
 
       if (currentCartQty > 0) {
-        console.log('Updating cart item. Current:', currentCartQty, 'New:', newQuantity);
         dispatch(updateCartItemQuantity({ productId, quantity: newQuantity }));
         toast.success('Cart updated');
       } else {
-        console.log('Adding new item to cart');
         dispatch(addItemToCart({
           product: { ...product, id: productId },
           quantity: newQuantity
@@ -567,8 +455,7 @@ export default function POS() {
 
       setProductLoading(productId, false);
     } catch (error) {
-      console.error('Cart operation failed:', error);
-      toast.error(`Failed to update cart: ${error.message}`);
+      toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
       setProductLoading(productId, false);
     }
   };
@@ -589,41 +476,134 @@ export default function POS() {
     if (window.confirm('Are you sure you want to clear all items from the cart?')) {
       dispatch(clearCart());
       toast.success('Cart cleared successfully');
+      setCurrentOrderId(null);
     }
   };
 
-  // Get current position for order location tracking
   useEffect(() => {
     if (navigator && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (p) => setCoords({ lat: p.coords.latitude, lng: p.coords.longitude }),
-        (err) => {
-          console.warn('Geolocation unavailable:', err?.message || err);
-        },
+        () => { /* silent fail */ },
         { timeout: 3000 }
       );
     }
   }, []);
 
-  // Add Enter key handler for checkout
   useEffect(() => {
     const handleCheckoutEnter = (e) => {
-      if (e.key === 'Enter' && paymentType && cart.length > 0) {
-        // Only if we're not typing in an input field
+      if (e.key === 'Enter' && paymentType && cart.length > 0 && !processingOrder) {
         const activeElement = document.activeElement;
         const isTypingInInput = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
-        
         if (!isTypingInInput) {
           e.preventDefault();
-          completeCheckout();
+          if (paymentType === 'both') createOrder();
+          else completeCheckout();
         }
       }
     };
 
     window.addEventListener('keydown', handleCheckoutEnter);
     return () => window.removeEventListener('keydown', handleCheckoutEnter);
-  }, [paymentType, cart.length, cartTotal, paymentData]);
+  }, [paymentType, cart.length, cartTotal, paymentData, processingOrder]);
 
+  // createOrder -> used for hybrid (both)
+  const createOrder = async () => {
+    if (!paymentType) {
+      toast.error('Please select a payment method');
+      return;
+    }
+
+    if (paymentType === 'both') {
+      const cashVal = Number(paymentData.cashAmount) || 0;
+      const mpesaVal = Number(paymentData.mpesaAmount) || 0;
+
+      if (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0) {
+        toast.error('Please enter M-Pesa phone number');
+        return;
+      }
+
+      if (mpesaVal <= 0) {
+        toast.error('Please enter a valid M-Pesa amount');
+        return;
+      }
+
+      if ((cashVal + mpesaVal) < cartTotal) {
+        toast.error('Total payment amount must be >= cart total');
+        return;
+      }
+    }
+
+    const payload = {
+      orderPaymentType: paymentType === 'cash' ? 'Cash' : paymentType === 'mpesa' ? 'Mpesa' : 'Hybrid',
+      phoneNumber: paymentType === 'mpesa' || paymentType === 'both' ? (paymentData.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
+      buyerPin: 'N/A',
+      latitude: coords?.lat ?? 0,
+      longitude: coords?.lng ?? 0,
+      orderItems: cart.map(ci => ({
+        productId: Number(ci.id || ci._id),
+        quantity: ci.quantity
+      }))
+    };
+
+    if (paymentType === 'both') {
+      // mapping per requirement: add Orderpaymenttype=hybrid (note: your earlier used lowercase / variations; keep consistent)
+      // user originally requested "Orderpaymenttype" exactly; you had used `orderPaymentType` in payload previously.
+      // we'll add both to be safe: Orderpaymenttype (exact) and orderPaymentType (friendly)
+      payload.orderPaymentType = 'Hybrid';
+      payload.Orderpaymenttype = 'hybrid';
+      // mpesa amount should be mapped to `total` per your requirement
+      payload.total = Number(paymentData.mpesaAmount) || 0;
+      payload.cashAmount = Number(paymentData.cashAmount) || 0;
+      payload.userId = (user && (user.phone || user.userName)) || '';
+    }
+
+    if (paymentType === 'mpesa') {
+      payload.userId = (user && (user.phone || user.userName)) || '';
+    }
+
+    if (paymentType === 'cash') {
+      payload.cashAmount = Number(paymentData.cashAmount) || 0;
+    }
+
+    try {
+      setProcessingOrder(true);
+      toast.info('Sending order to server...');
+
+      const res = await api.post('/order', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
+      if (orderId) {
+        setCurrentOrderId(orderId);
+        toast.success(`Order created. Order ID: ${orderId}`);
+
+        // For hybrid we wait for payment confirmation (do not finalize yet)
+        if (paymentType !== 'both') {
+          // If createOrder used in non-hybrid context, finalize
+          await handleOrderCompletion(res.data);
+        } else {
+          toast.info('Hybrid order awaiting M-Pesa payment confirmation.');
+        }
+      } else {
+        // no order id returned
+        toast.success('Order created.');
+        if (paymentType !== 'both') {
+          await handleOrderCompletion(res.data);
+        } else {
+          toast.info('Hybrid order created but server did not return an order id.');
+        }
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Order creation failed. Please try again.';
+      toast.error(msg);
+    } finally {
+      setProcessingOrder(false);
+    }
+  };
+
+  // completeCheckout -> cash or mpesa-only
   const completeCheckout = async () => {
     if (!paymentType) {
       toast.error('Please select a payment method');
@@ -643,7 +623,6 @@ export default function POS() {
       return;
     }
 
-    // Build order payload - exclude userId for cash payments
     const payload = {
       orderPaymentType: paymentType === 'cash' ? 'Cash' : 'Mpesa',
       phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || 'N/A',
@@ -656,62 +635,116 @@ export default function POS() {
       }))
     };
 
-    // Add userId only for M-Pesa payments
     if (paymentType === 'mpesa') {
       payload.userId = (user && (user.phone || user.userName)) || '';
+      // do NOT finalize here - store orderId and await confirmation
+    }
+
+    if (paymentType === 'cash') {
+      payload.cashAmount = Number(paymentData.cashAmount) || 0;
     }
 
     try {
-      toast.info('Processing payment...');
+      setProcessingOrder(true);
+      toast.info(paymentType === 'mpesa' ? 'Sending M-Pesa order to server...' : 'Processing payment...');
 
-      const res = await api.post('/order', payload , {
-        headers: {
-          'Content-Type': 'application/json'
-        }
+      const res = await api.post('/order', payload, {
+        headers: { 'Content-Type': 'application/json' }
       });
 
-      toast.success('Order completed successfully');
-
-      // Prepare receipt data for thermal printing
-      const orderData = {
-        cart: cart,
-        cartTotal: cartTotal,
-        paymentType: paymentType,
-        paymentData: {
-          ...paymentData,
-          cashAmount: paymentType === 'cash' ? Number(paymentData.cashAmount) : 0,
-          change: paymentType === 'cash' ? Math.max(0, Number(paymentData.cashAmount) - cartTotal) : 0
-        },
-        user: user,
-        orderNumber: res.data?.orderNumber || `ORD-${Date.now().toString().slice(-6)}`,
-        customerPhone: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : ''
-      };
-
-      // Print thermal receipt
-      try {
-        await printOrderReceipt(orderData);
-        toast.success('Receipt printed successfully');
-      } catch (printError) {
-        console.error('Failed to print receipt:', printError);
-        toast.warning('Order completed but receipt printing failed. Check printer connection.');
-      }
-
-      dispatch(clearCart());
-
-      setPaymentType('');
-      setPaymentData({ cashAmount: '', mpesaPhone: '' });
-
-      if (paymentType === 'cash') {
-        const given = Number(paymentData.cashAmount);
-        const change = given - cartTotal;
-        if (!Number.isNaN(change) && change > 0) {
-          toast.info(`Change to return: ${KSH(change)}`);
+      const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
+      if (paymentType === 'mpesa') {
+        if (orderId) {
+          setCurrentOrderId(orderId);
+          toast.success(`M-Pesa order created. Order ID: ${orderId}. Confirm payment when customer pays.`);
+        } else {
+          toast.success('M-Pesa order created. Confirm payment when customer pays.');
         }
+        // DO NOT finalize until GET /payments confirms
+      } else {
+        // cash -> finalize immediately
+        await handleOrderCompletion(res.data);
       }
     } catch (err) {
-      console.error('Checkout failed', err);
       const msg = err?.response?.data?.message || err?.message || 'Checkout failed. Please try again.';
       toast.error(msg);
+      setProcessingOrder(false);
+    } finally {
+      setProcessingOrder(false);
+    }
+  };
+
+  const handleOrderCompletion = async (orderData) => {
+    toast.success('Order completed');
+
+    const receiptData = {
+      cart,
+      cartTotal,
+      paymentType,
+      paymentData: {
+        ...paymentData,
+        cashAmount: paymentType === 'cash' ? Number(paymentData.cashAmount) : paymentType === 'both' ? Number(paymentData.cashAmount) || 0 : 0,
+        change: paymentType === 'cash' ? Math.max(0, Number(paymentData.cashAmount) - cartTotal) : paymentType === 'both' ? Math.max(0, (Number(paymentData.cashAmount) + Number(paymentData.mpesaAmount)) - cartTotal) : 0,
+        mpesaAmount: paymentType === 'both' ? Number(paymentData.mpesaAmount) : Number(paymentData.mpesaAmount) || 0
+      },
+      user,
+      orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
+      customerPhone: paymentType === 'mpesa' || paymentType === 'both' ? (paymentData.mpesaPhone || '').trim() : ''
+    };
+
+    try {
+      await printOrderReceipt(receiptData);
+      toast.success('Receipt printed successfully');
+    } catch (printError) {
+      toast.warning('Order completed but receipt printing failed. Check printer connection.');
+    }
+
+    dispatch(clearCart());
+    setPaymentType('');
+    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+    setCurrentOrderId(null);
+    setProcessingOrder(false);
+
+    if (paymentType === 'cash') {
+      const given = Number(paymentData.cashAmount);
+      const change = given - cartTotal;
+      if (!Number.isNaN(change) && change > 0) toast.info(`Change to return: ${KSH(change)}`);
+    }
+
+    if (paymentType === 'both') {
+      const totalGiven = (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0);
+      const change = totalGiven - cartTotal;
+      if (change > 0) toast.info(`Change to return: ${KSH(change)}`);
+    }
+  };
+
+  // Confirm payment by calling payments GET route
+  const checkPaymentStatus = async () => {
+    if (!currentOrderId) {
+      toast.error('No order ID to check');
+      return;
+    }
+
+    try {
+      setCheckingPayment(true);
+      toast.info('Checking payment status...');
+
+      const response = await api.get(`/payments/${currentOrderId}`);
+
+      const paid = response?.data?.paid || response?.data?.isPaid || response?.data?.status === 'PAID' || response?.data?.status === 'paid';
+
+      if (paid) {
+        toast.success('Payment confirmed — finalizing order');
+        // pass order id into completion so receipt/orderNumber is present
+        await handleOrderCompletion({ orderNumber: currentOrderId });
+      } else {
+        toast.warning('Payment not yet confirmed. Try again shortly.');
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Failed to check payment status';
+      toast.error(msg);
+    } finally {
+      setCheckingPayment(false);
     }
   };
 
@@ -720,22 +753,14 @@ export default function POS() {
     setFilteredProducts([]);
     setHasSearched(false);
     setSearchType('');
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
+    if (searchInputRef.current) searchInputRef.current.focus();
   };
 
   return (
-    <div className="container-fluid py-4" style={{
-      background: '#f8f9fa',
-      minHeight: '100vh -200vh',
-      maxWidth: '100%',
-      overflow: 'hidden'
-    }}>
+    <div className="container-fluid py-4" style={{ background: '#f8f9fa', minHeight: '100vh -200vh', maxWidth: '100%', overflow: 'hidden' }}>
       <div className="row h-100" style={{ minHeight: 'calc(100vh - 2rem)' }}>
         {/* Left side - Products */}
         <div className="col-lg-8 col-12 mb-4">
-          {/* Search Header */}
           <div className="mb-4">
             <div className="d-flex flex-column flex-md-row gap-3 align-items-center">
               <div className="flex-grow-1">
@@ -753,12 +778,7 @@ export default function POS() {
                     style={{ fontSize: '1rem' }}
                   />
                   {searchTerm && (
-                    <button
-                      className="btn btn-outline-secondary border-start-0"
-                      type="button"
-                      onClick={clearSearch}
-                      title="Clear search"
-                    >
+                    <button className="btn btn-outline-secondary border-start-0" type="button" onClick={clearSearch} title="Clear search">
                       <i className="fas fa-times"></i>
                     </button>
                   )}
@@ -772,12 +792,7 @@ export default function POS() {
                   </div>
                 )}
               </div>
-              <button
-                className="btn btn-lg px-4"
-                onClick={refresh}
-                style={{ ...CTA, minWidth: '120px' }}
-                disabled={loading}
-              >
+              <button className="btn btn-lg px-4" onClick={refresh} style={{ ...CTA, minWidth: '120px' }} disabled={loading}>
                 {loading ? (
                   <>
                     <span className="spinner-border spinner-border-sm me-2"></span>
@@ -823,10 +838,7 @@ export default function POS() {
                       {isLikelyBarcode(searchTerm) ? 'No product found with this barcode' : 'No products found'}
                     </h5>
                     <p className="text-muted">
-                      {isLikelyBarcode(searchTerm) 
-                        ? `Barcode "${searchTerm}" not found in inventory`
-                        : 'Try a different search term or barcode'
-                      }
+                      {isLikelyBarcode(searchTerm) ? `Barcode "${searchTerm}" not found in inventory` : 'Try a different search term or barcode'}
                     </p>
                   </div>
                 </div>
@@ -838,20 +850,9 @@ export default function POS() {
                   return (
                     <div key={productId} className="col-6 col-sm-4 col-md-6 col-lg-4 col-xl-3 mb-3">
                       <div style={{ position: 'relative' }}>
-                        <ProductCard
-                          product={product}
-                          cartQuantity={cartMap[productId] || 0}
-                          onQuantityChange={handleQuantityChange}
-                        />
+                        <ProductCard product={product} cartQuantity={cartMap[productId] || 0} onQuantityChange={handleQuantityChange} />
                         {isLoading && (
-                          <div
-                            className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
-                            style={{
-                              backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                              borderRadius: '12px',
-                              zIndex: 10
-                            }}
-                          >
+                          <div className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: '12px', zIndex: 10 }}>
                             <div className="spinner-border text-primary" style={{ width: '2rem', height: '2rem' }}>
                               <span className="visually-hidden">Loading...</span>
                             </div>
@@ -879,37 +880,21 @@ export default function POS() {
 
         {/* Right side - Cart */}
         <div className="col-lg-4 col-12">
-          <div 
-            className="cart-sidebar h-100 bg-white rounded-3 shadow-sm p-4 position-sticky"
-            style={{ 
-              top: '20px',
-              maxHeight: 'calc(100vh - 100px)',
-              display: 'flex',
-              flexDirection: 'column'
-            }}
-          >
-            {/* Cart Header */}
+          <div className="cart-sidebar h-100 bg-white rounded-3 shadow-sm p-4 position-sticky" style={{ top: '20px', maxHeight: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
             <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
               <h5 className="fw-semibold mb-0 d-flex align-items-center">
                 <i className="fas fa-shopping-cart me-2"></i>
                 Cart
-                {cartItemCount > 0 && (
-                  <span className="badge bg-primary ms-2">{cartItemCount} items</span>
-                )}
+                {cartItemCount > 0 && <span className="badge bg-primary ms-2">{cartItemCount} items</span>}
               </h5>
               {cartItemCount > 0 && (
-                <button
-                  className="btn btn-outline-danger btn-sm"
-                  onClick={handleClearCart}
-                  title="Clear all items"
-                >
+                <button className="btn btn-outline-danger btn-sm" onClick={handleClearCart} title="Clear all items">
                   <i className="fas fa-trash me-1"></i>
                   Clear
                 </button>
               )}
             </div>
 
-            {/* Cart Items */}
             <div className="cart-items flex-grow-1" style={{ overflowY: 'auto', marginBottom: '20px' }}>
               {cart.length === 0 ? (
                 <div className="text-center py-5">
@@ -937,34 +922,18 @@ export default function POS() {
                         return (
                           <tr key={itemId}>
                             <td style={{ fontSize: '0.75rem' }}>
-                              <div className="text-truncate" style={{ maxWidth: '600px' ,fontSize: '1.01rem' }} title={item.name}>
+                              <div className="text-truncate" style={{ maxWidth: '600px', fontSize: '1.01rem' }} title={item.name}>
                                 <strong>{item.name}</strong>
-                                <div className="text-success small">
-                                  {KSH(itemPrice)}
-                                </div>
-                                {item.barcode && (
-                                  <div className="text-muted" style={{ fontSize: '0.65rem' }}>
-                                    <i className="fas fa-barcode me-1"></i>
-                                    {item.barcode}
-                                  </div>
-                                )}
+                                <div className="text-success small">{KSH(itemPrice)}</div>
+                                {item.barcode && <div className="text-muted" style={{ fontSize: '0.65rem' }}><i className="fas fa-barcode me-1"></i>{item.barcode}</div>}
                               </div>
                             </td>
                             <td className="text-center" style={{ fontSize: '0.75rem' }}>
-                              <span className="badge bg-secondary px-2 py-1">
-                                {item.quantity || 1}
-                              </span>
+                              <span className="badge bg-secondary px-2 py-1">{item.quantity || 1}</span>
                             </td>
-                            <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>
-                              {KSH(itemTotal)}
-                            </td>
+                            <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>{KSH(itemTotal)}</td>
                             <td className="text-center">
-                              <button
-                                className="btn btn-outline-danger btn-sm rounded-circle"
-                                onClick={() => handleRemoveItem(itemId, item.name)}
-                                title={`Remove ${item.name}`}
-                                style={{ width: '24px', height: '24px', padding: '0', fontSize: '0.6rem' }}
-                              >
+                              <button className="btn btn-outline-danger btn-sm rounded-circle" onClick={() => handleRemoveItem(itemId, item.name)} title={`Remove ${item.name}`} style={{ width: '24px', height: '24px', padding: '0', fontSize: '0.6rem' }}>
                                 <i className="fas fa-times"></i>
                               </button>
                             </td>
@@ -980,58 +949,33 @@ export default function POS() {
             {/* Cart Total & Checkout */}
             {cart.length > 0 && (
               <div className="cart-checkout border-top pt-3">
-                {/* Total */}
                 <div className="d-flex justify-content-between align-items-center mb-3">
-                  <span className="fw-bold fs-4">
-                    <i className="fas fa-shopping-bag me-1"></i>
-                    Total:
-                  </span>
-                  <span className="fw-bold fs-3 text-success">
-                    {KSH(cartTotal)}
-                  </span>
+                  <span className="fw-bold fs-4"><i className="fas fa-shopping-bag me-1"></i>Total:</span>
+                  <span className="fw-bold fs-3 text-success">{KSH(cartTotal)}</span>
                 </div>
 
-                {/* Payment Method */}
                 <Form.Group className="mb-3">
-                  <Form.Label className="fw-semibold small">
-                    <i className="fas fa-credit-card me-2"></i>
-                    Payment Method
-                  </Form.Label>
-                  <Form.Select
-                    value={paymentType}
-                    onChange={(e) => setPaymentType(e.target.value)}
-                    size="sm"
-                  >
+                  <Form.Label className="fw-semibold small"><i className="fas fa-credit-card me-2"></i>Payment Method</Form.Label>
+                  <Form.Select value={paymentType} onChange={(e) => { setPaymentType(e.target.value); setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); setCurrentOrderId(null); }} size="sm">
                     <option value="">Select payment method</option>
                     <option value="cash">Cash</option>
                     <option value="mpesa">M-Pesa</option>
+                    <option value="both">Hybrid (Cash + M-Pesa)</option>
                   </Form.Select>
                 </Form.Group>
 
-                {/* Payment Details */}
                 {paymentType === 'cash' && (
                   <Form.Group className="mb-3">
                     <Form.Label className="fw-semibold small">Cash Amount Given</Form.Label>
                     <div className="input-group input-group-sm">
                       <span className="input-group-text">Ksh</span>
-                      <Form.Control
-                        type="number"
-                        value={paymentData.cashAmount}
-                        onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })}
-                        placeholder="Enter amount received"
-                        min={cartTotal}
-                      />
+                      <Form.Control type="number" value={paymentData.cashAmount} onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })} placeholder="Enter amount received" min={cartTotal} />
                     </div>
                     {paymentData.cashAmount && Number(paymentData.cashAmount) >= cartTotal && (
                       <div className="mt-2 p-2 bg-success bg-opacity-10 rounded border-start border-success border-3">
                         <div className="d-flex justify-content-between align-items-center">
-                          <span className="text-success fw-semibold small">
-                            <i className="fas fa-check-circle me-1"></i>
-                            Change:
-                          </span>
-                          <span className="text-success fw-bold">
-                            {KSH(Number(paymentData.cashAmount) - cartTotal)}
-                          </span>
+                          <span className="text-success fw-semibold small"><i className="fas fa-check-circle me-1"></i>Change:</span>
+                          <span className="text-success fw-bold">{KSH(Number(paymentData.cashAmount) - cartTotal)}</span>
                         </div>
                       </div>
                     )}
@@ -1043,39 +987,74 @@ export default function POS() {
                     <Form.Label className="fw-semibold small">M-Pesa Phone Number</Form.Label>
                     <div className="input-group input-group-sm">
                       <span className="input-group-text">📱</span>
-                      <Form.Control
-                        type="tel"
-                        placeholder="07XXXXXXXX"
-                        value={paymentData.mpesaPhone}
-                        onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })}
-                      />
+                      <Form.Control type="tel" placeholder="254XXXXXXXXX" value={paymentData.mpesaPhone} onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })} />
                     </div>
                   </Form.Group>
                 )}
 
-                {/* Checkout Button */}
-                <Button
-                  style={{
-                    ...CTA,
-                    width: '100%',
-                    padding: '12px',
-                    fontSize: '1rem',
-                    fontWeight: '600'
-                  }}
-                  onClick={completeCheckout}
-                  disabled={!paymentType}
-                  size="lg"
-                >
-                  <i className="fas fa-check me-2"></i>
-                  Complete Order - {KSH(cartTotal)}
-                </Button>
+                {paymentType === 'both' && (
+                  <div>
+                    <Form.Group className="mb-3">
+                      <Form.Label className="fw-semibold small"><i className="fas fa-money-bill-wave me-2"></i>Cash Amount</Form.Label>
+                      <div className="input-group input-group-sm">
+                        <span className="input-group-text">Ksh</span>
+                        <Form.Control type="number" value={paymentData.cashAmount} onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })} placeholder="Enter cash amount" min={0} />
+                      </div>
+                    </Form.Group>
 
-                {paymentType && (
-                  <div className="alert alert-info mt-3 py-2 mb-0">
-                    <i className="fas fa-keyboard me-2"></i>
-                    <small>Press <kbd>Enter</kbd> to complete checkout quickly</small>
+                    <Form.Group className="mb-3">
+                      <Form.Label className="fw-semibold small"><i className="fas fa-mobile-alt me-2"></i>M-Pesa Amount</Form.Label>
+                      <div className="input-group input-group-sm">
+                        <span className="input-group-text">Ksh</span>
+                        <Form.Control type="number" value={paymentData.mpesaAmount} onChange={(e) => setPaymentData({ ...paymentData, mpesaAmount: e.target.value })} placeholder="Enter M-Pesa amount" min={0} />
+                      </div>
+                    </Form.Group>
+
+                    <Form.Group className="mb-3">
+                      <Form.Label className="fw-semibold small">M-Pesa Phone Number</Form.Label>
+                      <div className="input-group input-group-sm">
+                        <span className="input-group-text">📱</span>
+                        <Form.Control type="tel" placeholder="2547XXXXXXXX" value={paymentData.mpesaPhone} onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })} />
+                      </div>
+                    </Form.Group>
+
+                    {(paymentData.cashAmount || paymentData.mpesaAmount) && (
+                      <div className="alert alert-info py-2 mb-3">
+                        <div className="d-flex justify-content-between small"><span>Cash:</span><span>{KSH(Number(paymentData.cashAmount) || 0)}</span></div>
+                        <div className="d-flex justify-content-between small"><span>M-Pesa:</span><span>{KSH(Number(paymentData.mpesaAmount) || 0)}</span></div>
+                        <hr className="my-1" />
+                        <div className="d-flex justify-content-between fw-semibold">
+                          <span>Total Payment:</span>
+                          <span className={((Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0)) >= cartTotal ? 'text-success' : 'text-danger'}>
+                            {KSH((Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0))}
+                          </span>
+                        </div>
+                        {((Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0)) >= cartTotal && ((Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0)) > cartTotal && (
+                          <div className="d-flex justify-content-between text-success small"><span>Change:</span><span>{KSH(((Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0)) - cartTotal)}</span></div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
+
+                {/* show Confirm Payment for M-Pesa and Hybrid when orderId exists */}
+                {currentOrderId && (paymentType === 'mpesa' || paymentType === 'both') && (
+                  <div className="alert alert-warning py-2 mb-3">
+                    <div className="d-flex justify-content-between align-items-center">
+                      <div><i className="fas fa-clock me-2"></i><small>Order ID: <strong>{currentOrderId}</strong></small></div>
+                      <div>
+                        <Button variant="outline-success" size="sm" onClick={checkPaymentStatus} disabled={checkingPayment}>
+                          {checkingPayment ? (<><span className="spinner-border spinner-border-sm me-2"></span>Checking...</>) : (<><i className="fas fa-check-circle me-2"></i>Confirm Payment</>)}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="text-center mt-2 small text-muted">Use this to confirm M-Pesa payment and finalize the order.</div>
+                  </div>
+                )}
+
+                <Button style={{ ...CTA, width: '100%', padding: '12px', fontSize: '1rem', fontWeight: '600' }} onClick={paymentType === 'both' ? createOrder : completeCheckout} disabled={!paymentType || processingOrder} size="lg">
+                  {processingOrder ? (<><span className="spinner-border spinner-border-sm me-2"></span>Processing...</>) : (<><i className="fas fa-check me-2"></i>{paymentType === 'both' ? 'Create Order' : 'Complete Order'} - {KSH(cartTotal)}</>)}
+                </Button>
               </div>
             )}
           </div>
@@ -1084,91 +1063,25 @@ export default function POS() {
 
       <style jsx>{`
         @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css');
-
-        .table-hover tbody tr:hover {
-          background-color: rgba(0, 123, 255, 0.05);
-        }
-
-        .btn-outline-danger:hover {
-          transform: scale(1.05);
-        }
-
-        .product-card:hover {
-          border-color: #007bff !important;
-        }
-
-        .form-control:focus {
-          border-color: #007bff;
-          box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
-        }
-
-        .product-card .text-muted.small {
-          opacity: 0.7;
-          transition: opacity 0.2s;
-        }
-
-        .product-card:hover .text-muted.small {
-          opacity: 1;
-        }
-
-        .cart-sidebar {
-          border: 1px solid #e9ecef;
-        }
-
-        .cart-items {
-          min-height: 200px;
-        }
-
-        .cart-items::-webkit-scrollbar {
-          width: 6px;
-        }
-
-        .cart-items::-webkit-scrollbar-track {
-          background: #f8f9fa;
-          border-radius: 3px;
-        }
-
-        .cart-items::-webkit-scrollbar-thumb {
-          background: #dee2e6;
-          border-radius: 3px;
-        }
-
-        .cart-items::-webkit-scrollbar-thumb:hover {
-          background: #ced4da;
-        }
-
-        .products-container::-webkit-scrollbar {
-          width: 8px;
-        }
-
-        .products-container::-webkit-scrollbar-track {
-          background: #f8f9fa;
-          border-radius: 4px;
-        }
-
-        .products-container::-webkit-scrollbar-thumb {
-          background: #dee2e6;
-          border-radius: 4px;
-        }
-
-        .products-container::-webkit-scrollbar-thumb:hover {
-          background: #ced4da;
-        }
-
-        kbd {
-          background-color: #f8f9fa;
-          border: 1px solid #dee2e6;
-          border-radius: 3px;
-          padding: 2px 6px;
-          font-size: 0.875em;
-        }
-
+        .table-hover tbody tr:hover { background-color: rgba(0, 123, 255, 0.05); }
+        .btn-outline-danger:hover { transform: scale(1.05); }
+        .product-card:hover { border-color: #007bff !important; }
+        .form-control:focus { border-color: #007bff; box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25); }
+        .product-card .text-muted.small { opacity: 0.7; transition: opacity 0.2s; }
+        .product-card:hover .text-muted.small { opacity: 1; }
+        .cart-sidebar { border: 1px solid #e9ecef; }
+        .cart-items { min-height: 200px; }
+        .cart-items::-webkit-scrollbar { width: 6px; }
+        .cart-items::-webkit-scrollbar-track { background: #f8f9fa; border-radius: 3px; }
+        .cart-items::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 3px; }
+        .cart-items::-webkit-scrollbar-thumb:hover { background: #ced4da; }
+        .products-container::-webkit-scrollbar { width: 8px; }
+        .products-container::-webkit-scrollbar-track { background: #f8f9fa; border-radius: 4px; }
+        .products-container::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 4px; }
+        .products-container::-webkit-scrollbar-thumb:hover { background: #ced4da; }
+        kbd { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 3px; padding: 2px 6px; font-size: 0.875em; }
         @media (max-width: 991.98px) {
-          .cart-sidebar {
-            position: relative !important;
-            max-height: none !important;
-            margin-top: 20px;
-          }
+          .cart-sidebar { position: relative !important; max-height: none !important; margin-top: 20px; }
         }
       `}</style>
     </div>

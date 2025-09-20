@@ -14,8 +14,8 @@ import ThermalPrinterSettings from './app/thermalPrinter/index.jsx';
 // Selectors from Redux
 import { selectUser } from './redux/slices/userSlice';
 
-// Check if running in Electron
-const isElectron = window.require && window.require('electron');
+// Detect Electron and get ipcRenderer safely
+const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
 
 // Error boundary fallback component
@@ -50,7 +50,7 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   );
 }
 
-// Auto Update Status Component
+// === Auto Update Status Component (improved, matches main.js events) ===
 function AutoUpdateStatus() {
   const [updateStatus, setUpdateStatus] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -62,79 +62,105 @@ function AutoUpdateStatus() {
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    // Get current version
-    const getCurrentVersion = async () => {
+    // Get current version from main
+    (async () => {
       try {
         const version = await ipcRenderer.invoke('get-app-version');
-        setCurrentVersion(version);
-      } catch (error) {
-        console.error('Failed to get app version:', error);
+        setCurrentVersion(version || '');
+      } catch (err) {
+        console.warn('get-app-version failed', err);
+      }
+    })();
+
+    // Handlers
+    const onChecking = () => {
+      setUpdateStatus('Checking for updates...');
+      setIsChecking(true);
+    };
+
+    const onAvailable = (event, info) => {
+      setUpdateStatus(`Update available: v${info?.version || ''}`);
+      setUpdateAvailable(true);
+      setShowUpdatePanel(true);
+      toast.info('New update available — downloading in background.', { position: 'top-right', autoClose: 4000 });
+    };
+
+    const onNotAvailable = () => {
+      setUpdateStatus('No updates available');
+      setUpdateAvailable(false);
+      if (isChecking) {
+        toast.info('You are running the latest version.', { position: 'top-right', autoClose: 3000 });
       }
     };
 
-    getCurrentVersion();
+    const onProgress = (event, progress) => {
+      const pct = Math.round(progress?.percent || 0);
+      setDownloadProgress(pct);
+      setUpdateStatus(`Downloading update: ${pct}%`);
+    };
 
-    // Listen for update messages
-    const handleUpdateMessage = (event, text) => {
-      console.log('Update message:', text);
-      setUpdateStatus(text);
-      
-      if (text.includes('Update available')) {
+    const onDownloaded = (event, info) => {
+      setDownloadProgress(100);
+      setUpdateStatus('Update downloaded');
+      setUpdateAvailable(true);
+      toast.success('Update downloaded — click Install & Restart to apply.', { autoClose: false });
+    };
+
+    const onError = (event, err) => {
+      const msg = err?.message || String(err);
+      console.error('AutoUpdater error:', msg);
+      setUpdateStatus(`Update error: ${msg}`);
+      toast.error('Update error: ' + msg, { autoClose: 5000 });
+    };
+
+    // Register listeners (names must match main.js)
+    ipcRenderer.on('update-checking', onChecking);
+    ipcRenderer.on('update-available', onAvailable);
+    ipcRenderer.on('update-not-available', onNotAvailable);
+    ipcRenderer.on('update-download-progress', onProgress);
+    ipcRenderer.on('update-downloaded', onDownloaded);
+    ipcRenderer.on('update-error', onError);
+
+    // Backwards compatibility: also subscribe to legacy channels if used
+    ipcRenderer.on('update-message', (e, text) => {
+      // keep textual messages in sync with granular state
+      setUpdateStatus(text || '');
+      if (typeof text === 'string' && text.toLowerCase().includes('update available')) {
         setUpdateAvailable(true);
-        setShowUpdatePanel(true);
-        toast.info('New update available! Downloading in background...', {
-          position: "top-right",
-          autoClose: 5000,
-        });
-      } else if (text.includes('Update not available')) {
-        setUpdateAvailable(false);
-        if (isChecking) {
-          toast.info('You are running the latest version.', {
-            position: "top-right",
-            autoClose: 3000,
-          });
-        }
-      } else if (text.includes('downloaded')) {
-        toast.success('Update downloaded! Click to install and restart.', {
-          position: "top-right",
-          autoClose: false,
-          onClick: () => installUpdate()
-        });
       }
-    };
+    });
+    ipcRenderer.on('download-progress', (e, progress) => {
+      const pct = Math.round(progress?.percent || 0);
+      setDownloadProgress(pct);
+    });
 
-    const handleDownloadProgress = (event, progress) => {
-      console.log('Download progress:', progress);
-      setDownloadProgress(progress.percent);
-    };
-
-    // Register listeners
-    ipcRenderer.on('update-message', handleUpdateMessage);
-    ipcRenderer.on('download-progress', handleDownloadProgress);
-
-    // Cleanup listeners
     return () => {
-      ipcRenderer.removeListener('update-message', handleUpdateMessage);
-      ipcRenderer.removeListener('download-progress', handleDownloadProgress);
+      ipcRenderer.removeListener('update-checking', onChecking);
+      ipcRenderer.removeListener('update-available', onAvailable);
+      ipcRenderer.removeListener('update-not-available', onNotAvailable);
+      ipcRenderer.removeListener('update-download-progress', onProgress);
+      ipcRenderer.removeListener('update-downloaded', onDownloaded);
+      ipcRenderer.removeListener('update-error', onError);
+
+      ipcRenderer.removeAllListeners('update-message');
+      ipcRenderer.removeAllListeners('download-progress');
     };
   }, [isChecking]);
 
+  // Manual check trigger
   const checkForUpdates = async () => {
     if (!ipcRenderer) return;
-    
-    setIsChecking(true);
-    setUpdateStatus('Checking for updates...');
-    
     try {
-      const result = await ipcRenderer.invoke('check-for-updates');
-      if (result.success) {
-        console.log('Update check result:', result);
-      } else {
-        setUpdateStatus('Failed to check for updates: ' + result.error);
-        toast.error('Failed to check for updates: ' + result.error);
+      setIsChecking(true);
+      setUpdateStatus('Checking for updates...');
+      const res = await ipcRenderer.invoke('check-for-updates');
+      if (res && res.success === false) {
+        const msg = res.error || res.message || 'Check failed';
+        setUpdateStatus(msg);
+        toast.error(msg);
       }
-    } catch (error) {
-      console.error('Update check failed:', error);
+    } catch (err) {
+      console.error('checkForUpdates failed', err);
       setUpdateStatus('Update check failed');
       toast.error('Update check failed');
     } finally {
@@ -142,161 +168,117 @@ function AutoUpdateStatus() {
     }
   };
 
+  // Install and restart
   const installUpdate = async () => {
     if (!ipcRenderer) return;
-    
     try {
-      await ipcRenderer.invoke('quit-and-install');
-    } catch (error) {
-      console.error('Failed to install update:', error);
-      toast.error('Failed to install update');
+      await ipcRenderer.invoke('install-update'); // alias exposed in main.js
+      // app will quit & install if no errors
+    } catch (err) {
+      console.error('installUpdate failed', err);
+      toast.error('Failed to install update: ' + (err?.message || String(err)));
     }
   };
 
   const getStatusColor = () => {
-    if (updateStatus.includes('Error') || updateStatus.includes('failed')) {
-      return 'text-danger';
-    } else if (updateStatus.includes('available')) {
-      return 'text-success';
-    } else if (updateStatus.includes('Downloading')) {
-      return 'text-primary';
-    } else if (updateStatus.includes('downloaded')) {
-      return 'text-info';
-    }
+    if (/error|failed/i.test(updateStatus)) return 'text-danger';
+    if (/available/i.test(updateStatus)) return 'text-success';
+    if (/downloading/i.test(updateStatus)) return 'text-primary';
+    if (/downloaded/i.test(updateStatus)) return 'text-info';
     return 'text-muted';
   };
+
+  // Improved Update Button
+  const UpdateButton = () => (
+    <button
+      className={`btn btn-sm d-flex align-items-center ${updateAvailable ? 'btn-warning' : 'btn-outline-secondary'}`}
+      onClick={() => {
+        setShowUpdatePanel(true);
+        // kick off a check when opening panel (small delay to let panel render)
+        setTimeout(() => checkForUpdates(), 200);
+      }}
+      aria-label={updateAvailable ? 'Update available' : 'Check for updates'}
+      title={updateAvailable ? 'Update available' : 'Check for updates'}
+      style={{ gap: 8, padding: '6px 10px' }}
+    >
+      {updateAvailable ? (
+        <>
+          <i className="bi bi-arrow-down-circle-fill" style={{ fontSize: 14 }}></i>
+          <span className="small fw-bold ms-1">Update</span>
+          <span className="badge bg-danger ms-2">!</span>
+        </>
+      ) : (
+        <>
+          <i className="bi bi-arrow-clockwise" style={{ fontSize: 14 }}></i>
+          <span className="small ms-1">Updates</span>
+        </>
+      )}
+    </button>
+  );
 
   if (!isElectron) return null;
 
   return (
     <>
-      {/* Update Notification Badge */}
-      <div className="position-fixed" style={{ top: '10px', right: '10px', zIndex: 1050 }}>
-        <button
-          className={`btn btn-sm ${updateAvailable ? 'btn-warning' : 'btn-outline-secondary'} position-relative`}
-          onClick={() => setShowUpdatePanel(!showUpdatePanel)}
-          title="App Updates"
-        >
-          <i className="bi bi-arrow-clockwise"></i>
-          {updateAvailable && (
-            <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
-              !
-            </span>
-          )}
-        </button>
+      {/* Fixed-position badge/button */}
+      <div className="position-fixed" style={{ top: 10, right: 12, zIndex: 9999 }}>
+        <UpdateButton />
       </div>
 
       {/* Update Panel */}
       {showUpdatePanel && (
-        <div 
+        <div
           className="position-fixed bg-white border shadow-lg rounded p-3"
-          style={{ 
-            top: '50px', 
-            right: '10px', 
-            width: '320px', 
-            zIndex: 1040,
-            maxHeight: '80vh',
-            overflowY: 'auto'
-          }}
+          style={{ top: 56, right: 12, width: 360, zIndex: 10000, maxHeight: '75vh', overflowY: 'auto' }}
         >
-          <div className="d-flex justify-content-between align-items-center mb-3">
-            <h6 className="mb-0">
-              <i className="bi bi-arrow-clockwise me-2"></i>
-              App Updates
-            </h6>
-            <button
-              className="btn-close"
-              onClick={() => setShowUpdatePanel(false)}
-              aria-label="Close"
-            ></button>
-          </div>
-
-          <div className="mb-2">
-            <small className="text-muted">Current Version: v{currentVersion}</small>
-          </div>
-
-          {/* Status Display */}
-          <div className="alert alert-light border p-2 mb-3">
-            <div className="small fw-medium text-dark mb-1">Status:</div>
-            <div className={`small ${getStatusColor()}`}>
-              {updateStatus || 'Ready to check for updates'}
+          <div className="d-flex justify-content-between align-items-center mb-2">
+            <div>
+              <strong>App Updates</strong>
+              <div className="small text-muted">v{currentVersion}</div>
+            </div>
+            <div>
+              <button className="btn btn-sm btn-outline-secondary me-2" onClick={checkForUpdates} disabled={isChecking} title="Check now">
+                {isChecking ? <span className="spinner-border spinner-border-sm" /> : <i className="bi bi-search" />}
+              </button>
+              <button className="btn-close" onClick={() => setShowUpdatePanel(false)} />
             </div>
           </div>
 
-          {/* Download Progress */}
-          {downloadProgress > 0 && downloadProgress < 100 && (
+          <div className="mb-2 small">
+            <div className={getStatusColor()}>{updateStatus || 'Ready to check for updates'}</div>
+          </div>
+
+          {downloadProgress > 0 && (
             <div className="mb-3">
-              <div className="small fw-medium text-dark mb-1">
-                Downloading: {downloadProgress}%
-              </div>
-              <div className="progress" style={{ height: '6px' }}>
-                <div
-                  className="progress-bar bg-primary"
-                  style={{ width: `${downloadProgress}%` }}
-                ></div>
+              <div className="small mb-1">Downloading: {downloadProgress}%</div>
+              <div className="progress" style={{ height: 8 }}>
+                <div className="progress-bar" role="progressbar" style={{ width: `${downloadProgress}%` }} aria-valuenow={downloadProgress} aria-valuemin="0" aria-valuemax="100" />
               </div>
             </div>
           )}
 
-          {/* Action Buttons */}
           <div className="d-grid gap-2">
-            <button
-              onClick={checkForUpdates}
-              disabled={isChecking}
-              className={`btn btn-sm ${isChecking ? 'btn-secondary' : 'btn-primary'}`}
-            >
-              {isChecking ? (
-                <>
-                  <span className="spinner-border spinner-border-sm me-1" role="status"></span>
-                  Checking...
-                </>
-              ) : (
-                <>
-                  <i className="bi bi-search me-1"></i>
-                  Check for Updates
-                </>
-              )}
+            <button className="btn btn-sm btn-primary" onClick={checkForUpdates} disabled={isChecking}>
+              {isChecking ? 'Checking...' : 'Check for updates'}
             </button>
 
-            {updateAvailable && updateStatus.includes('downloaded') && (
-              <button
-                onClick={installUpdate}
-                className="btn btn-sm btn-success"
-              >
-                <i className="bi bi-arrow-clockwise me-1"></i>
+            {updateAvailable && /downloaded/i.test(updateStatus) && (
+              <button className="btn btn-sm btn-success" onClick={installUpdate}>
                 Install & Restart
               </button>
             )}
           </div>
 
-          {/* Update Available Notice */}
-          {updateAvailable && !updateStatus.includes('downloaded') && (
-            <div className="alert alert-success border-success p-2 mt-2 mb-2">
-              <div className="small">
-                <strong>Update Available!</strong><br />
-                Downloading in background...
-              </div>
-            </div>
-          )}
-
-          {/* Info */}
-          <div className="border-top pt-2 mt-2">
-            <div className="small text-muted">
-              <div>• Updates checked automatically at startup</div>
-              <div>• Downloads happen in background</div>
-              <div>• You'll be notified when ready</div>
-            </div>
+          <div className="mt-3 small text-muted border-top pt-2">
+            • App checks for updates automatically on startup (packaged builds).<br/>
+            • Downloads happen in background. You have to manually install when ready.
           </div>
         </div>
       )}
 
-      {/* Click outside to close */}
+      {/* overlay to close panel when clicking outside */}
       {showUpdatePanel && (
-        <div
-          className="position-fixed w-100 h-100"
-          style={{ top: 0, left: 0, zIndex: 1030 }}
-          onClick={() => setShowUpdatePanel(false)}
-        ></div>
+        <div className="position-fixed w-100 h-100" style={{ top: 0, left: 0, zIndex: 9998 }} onClick={() => setShowUpdatePanel(false)} />
       )}
     </>
   );

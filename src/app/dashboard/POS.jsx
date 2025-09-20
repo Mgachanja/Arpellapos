@@ -737,7 +737,7 @@ export default function POS() {
         toast.warning('Payment not yet confirmed. Try again shortly.');
       }
     } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || 'Failed to check payment status';
+      const msg =  'Payment check failed. Please try again.';
       toast.error(msg);
     } finally {
       setCheckingPayment(false);

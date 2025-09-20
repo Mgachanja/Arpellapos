@@ -547,11 +547,7 @@ export default function POS() {
     };
 
     if (paymentType === 'both') {
-      // mapping per requirement: add Orderpaymenttype=hybrid (note: your earlier used lowercase / variations; keep consistent)
-      // user originally requested "Orderpaymenttype" exactly; you had used `orderPaymentType` in payload previously.
-      // we'll add both to be safe: Orderpaymenttype (exact) and orderPaymentType (friendly)
       payload.orderPaymentType = 'Hybrid';
-      payload.Orderpaymenttype = 'hybrid';
       // mpesa amount should be mapped to `total` per your requirement
       payload.total = Number(paymentData.mpesaAmount) || 0;
       payload.cashAmount = Number(paymentData.cashAmount) || 0;
@@ -731,7 +727,7 @@ export default function POS() {
 
       const response = await api.get(`/payments/${currentOrderId}`);
 
-      const paid = response?.data?.paid || response?.data?.isPaid || response?.data?.status === 'PAID' || response?.data?.status === 'paid';
+      const paid = response?.data?.orderid === currentOrderId;
 
       if (paid) {
         toast.success('Payment confirmed — finalizing order');

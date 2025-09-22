@@ -756,7 +756,7 @@ export default function POS() {
     <div className="container-fluid py-4" style={{ background: '#f8f9fa', minHeight: '100vh -200vh', maxWidth: '100%', overflow: 'hidden' }}>
       <div className="row h-100" style={{ minHeight: 'calc(100vh - 2rem)' }}>
         {/* Left side - Products */}
-        <div className="col-lg-8 col-12 mb-4">
+        <div className="col-lg-8 col-12 mb-4" style={{maxWidth: '600px'}}>
           <div className="mb-4">
             <div className="d-flex flex-column flex-md-row gap-3 align-items-center">
               <div className="flex-grow-1">
@@ -876,8 +876,8 @@ export default function POS() {
 
         {/* Right side - Cart */}
         <div className="col-lg-4 col-12">
-          <div className="cart-sidebar h-100 bg-white rounded-3 shadow-sm p-4 position-sticky" style={{ top: '20px', maxHeight: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
-            <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+          <div className="cart-sidebar h-100  bg-white rounded-3 shadow-sm p-4 position-sticky" style={{minWidth: '900px', maxWidth: '900px',  top: '20px', maxHeight: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
+            <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom"style={{ }}>
               <h5 className="fw-semibold mb-0 d-flex align-items-center">
                 <i className="fas fa-shopping-cart me-2"></i>
                 Cart

@@ -370,7 +370,7 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     const printData = [];
 
     // Add logo if available
-    const logoBase64 = getLogoBase64();
+    /*const logoBase64 = getLogoBase64();
     if (logoBase64) {
       printData.push({
         type: 'image',
@@ -383,6 +383,7 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
         }
       });
     }
+      */
 
     // Enhanced test print with better styling and centering
     printData.push(
@@ -553,6 +554,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
 
     // Add logo at the top if available
     const logoBase64 = getLogoBase64();
+    /*
     if (logoBase64) {
       printData.push({
         type: 'image',
@@ -565,6 +567,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         }
       });
     }
+      */
 
     printData.push(
       {

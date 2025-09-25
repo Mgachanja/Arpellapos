@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
@@ -29,6 +29,7 @@ const electron = require('electron');
 const window = electron.BrowserWindow;
 
 let mainWindow;
+let updateDownloaded = false;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); process.exit(0); }
@@ -41,12 +42,21 @@ try {
   log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
 }
 
-// Auto-updater configuration and event handlers
+// Enhanced Auto-updater configuration and event handlers
 function setupAutoUpdater() {
-  // Configure auto-updater
+  // Enhanced auto-updater configuration
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
+
+  // Set update channel if needed
+  // autoUpdater.channel = 'latest';
+
+  // Check for updates
   autoUpdater.checkForUpdatesAndNotify();
   
-  // Auto-updater events
+  // Auto-updater events with enhanced error handling
   autoUpdater.on('checking-for-update', () => {
     log.info('Checking for update...');
     sendUpdateMessage('Checking for updates...');
@@ -55,32 +65,101 @@ function setupAutoUpdater() {
   autoUpdater.on('update-available', (info) => {
     log.info('Update available:', info);
     sendUpdateMessage(`Update available: v${info.version}`);
+    
+    // Notify user about available update
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-available', {
+        version: info.version,
+        releaseNotes: info.releaseNotes,
+        releaseName: info.releaseName,
+        releaseDate: info.releaseDate
+      });
+    }
   });
 
   autoUpdater.on('update-not-available', (info) => {
     log.info('Update not available:', info);
-    sendUpdateMessage('Update not available - you are running the latest version');
+    sendUpdateMessage('You are running the latest version');
   });
 
   autoUpdater.on('error', (err) => {
     log.error('Error in auto-updater:', err);
     sendUpdateMessage(`Update error: ${err.message}`);
-  });
-
-  autoUpdater.on('download-progress', (progressObj) => {
-    let log_message = `Download speed: ${progressObj.bytesPerSecond}`;
-    log_message += ` - Downloaded ${progressObj.percent}%`;
-    log_message += ` (${progressObj.transferred}/${progressObj.total})`;
-    log.info(log_message);
     
+    // Send detailed error to renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('download-progress', progressObj);
+      mainWindow.webContents.send('update-error', {
+        message: err.message,
+        stack: err.stack
+      });
     }
   });
 
-  autoUpdater.on('update-downloaded', (info) => {
+  autoUpdater.on('download-progress', (progressObj) => {
+    let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
+    log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
+    log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
+    log.info(log_message);
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download-progress', {
+        percent: Math.round(progressObj.percent),
+        bytesPerSecond: progressObj.bytesPerSecond,
+        transferred: progressObj.transferred,
+        total: progressObj.total,
+        transferredMB: Math.round(progressObj.transferred / 1024 / 1024),
+        totalMB: Math.round(progressObj.total / 1024 / 1024)
+      });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', async (info) => {
     log.info('Update downloaded:', info);
+    updateDownloaded = true;
     sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
+    
+    // Enhanced update downloaded handling
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', {
+        version: info.version,
+        releaseNotes: info.releaseNotes,
+        releaseName: info.releaseName,
+        releaseDate: info.releaseDate
+      });
+
+      // Show dialog to user asking if they want to install now
+      const choice = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        buttons: ['Install Now', 'Install Later'],
+        title: 'Update Downloaded',
+        message: `Update v${info.version} has been downloaded.`,
+        detail: 'The update will be installed when the application is restarted. Would you like to restart now?',
+        defaultId: 0,
+        cancelId: 1
+      });
+
+      if (choice.response === 0) {
+        // User chose to install now
+        log.info('User chose to install update immediately');
+        try {
+          // Close all windows gracefully
+          BrowserWindow.getAllWindows().forEach(window => {
+            if (!window.isDestroyed()) {
+              window.close();
+            }
+          });
+          
+          // Install update
+          setImmediate(() => {
+            autoUpdater.quitAndInstall(false, true);
+          });
+        } catch (error) {
+          log.error('Failed to quit and install:', error);
+        }
+      } else {
+        log.info('User chose to install update later');
+      }
+    }
   });
 }
 
@@ -88,11 +167,13 @@ function sendUpdateMessage(message) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-message', message);
   }
+  log.info('Update message:', message);
 }
 
-// IPC handlers for auto-updater
+// Enhanced IPC handlers for auto-updater
 ipcMain.handle('check-for-updates', async () => {
   try {
+    log.info('Manual update check initiated');
     const result = await autoUpdater.checkForUpdates();
     return { success: true, result };
   } catch (error) {
@@ -103,7 +184,18 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('quit-and-install', async () => {
   try {
-    autoUpdater.quitAndInstall(false, true);
+    if (!updateDownloaded) {
+      log.warn('No update downloaded, cannot install');
+      return { success: false, error: 'No update available to install' };
+    }
+    
+    log.info('Initiating quit and install');
+    
+    // Give some time for the response to be sent
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(false, true);
+    }, 1000);
+    
     return { success: true };
   } catch (error) {
     log.error('Quit and install failed:', error);
@@ -112,7 +204,34 @@ ipcMain.handle('quit-and-install', async () => {
 });
 
 ipcMain.handle('get-app-version', () => {
-  return app.getVersion();
+  return {
+    version: app.getVersion(),
+    name: app.getName(),
+    updateDownloaded
+  };
+});
+
+// New IPC handler to download update manually
+ipcMain.handle('download-update', async () => {
+  try {
+    log.info('Manual update download initiated');
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error) {
+    log.error('Manual update download failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// New IPC handler to get update info
+ipcMain.handle('get-update-info', () => {
+  return {
+    updateDownloaded,
+    autoDownload: autoUpdater.autoDownload,
+    autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
+    channel: autoUpdater.channel,
+    currentVersion: app.getVersion()
+  };
 });
 
 function resolveIconPath() {
@@ -275,9 +394,17 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.on('closed', () => { mainWindow = null; });
-}
+  mainWindow.on('closed', () => { 
+    mainWindow = null; 
+  });
 
+  // Enhanced close handling for updates
+  mainWindow.on('close', (event) => {
+    if (updateDownloaded) {
+      log.info('App closing with update available, will install on quit');
+    }
+  });
+}
 // Enhanced printer detection function
 async function getAllAvailablePrinters() {
   try {

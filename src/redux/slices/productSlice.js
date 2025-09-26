@@ -610,7 +610,8 @@ export const selectCartItemCount = (state) =>
   state.products.cart.reduce((count, item) => count + (item.quantity || 1), 0);
 export const selectCartTotal = (state) => 
   state.products.cart.reduce((total, item) => {
-    const price = item.salePrice || item.price || 0;
+    // Use priceType to determine which price to use
+    const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
     return total + (price * (item.quantity || 1));
   }, 0);
 export const selectFilters = (state) => state.products.filters;

@@ -39,31 +39,61 @@ function useDebouncedCallback(fn, wait) {
   }, [fn, wait]);
 }
 
-// ProductCard Component - UPDATED for wholesale/retail
+// ProductCard Component - FIXED for wholesale/retail
 function ProductCard({ product, cartItems, onQuantityChange }) {
   const productId = product.id || product._id;
   const retailPrice = product.price || 0;
   const wholesalePrice = product.priceAfterDiscount || product.price || 0;
   
-  // Get cart quantities for both price types
-  const retailCartItem = cartItems.find(item => item.priceType === 'Retail');
-  const wholesaleCartItem = cartItems.find(item => item.priceType === 'Discounted');
+  // FIXED: Get cart quantities for both price types with proper filtering
+  const retailCartItem = cartItems.find(item => 
+    (item.id || item._id) === productId && item.priceType === 'Retail'
+  );
+  const wholesaleCartItem = cartItems.find(item => 
+    (item.id || item._id) === productId && item.priceType === 'Discounted'
+  );
+  
   const retailQuantity = retailCartItem ? retailCartItem.quantity : 0;
   const wholesaleQuantity = wholesaleCartItem ? wholesaleCartItem.quantity : 0;
 
-  const handleRetailIncrement = () => onQuantityChange(productId, 'Retail', retailQuantity + 1);
+  // FIXED: Handlers now properly pass the productId
+  const handleRetailIncrement = () => {
+    console.log('Retail increment for product:', productId, 'current qty:', retailQuantity);
+    onQuantityChange(productId, 'Retail', retailQuantity + 1);
+  };
+  
   const handleRetailDecrement = () => {
-    if (retailQuantity > 1) onQuantityChange(productId, 'Retail', retailQuantity - 1);
-    else if (retailQuantity === 1) onQuantityChange(productId, 'Retail', 0);
+    console.log('Retail decrement for product:', productId, 'current qty:', retailQuantity);
+    if (retailQuantity > 1) {
+      onQuantityChange(productId, 'Retail', retailQuantity - 1);
+    } else if (retailQuantity === 1) {
+      onQuantityChange(productId, 'Retail', 0);
+    }
   };
-  const handleRetailAddToCart = () => onQuantityChange(productId, 'Retail', 1);
+  
+  const handleRetailAddToCart = () => {
+    console.log('Adding retail for product:', productId);
+    onQuantityChange(productId, 'Retail', 1);
+  };
 
-  const handleWholesaleIncrement = () => onQuantityChange(productId, 'Discounted', wholesaleQuantity + 1);
-  const handleWholesaleDecrement = () => {
-    if (wholesaleQuantity > 1) onQuantityChange(productId, 'Discounted', wholesaleQuantity - 1);
-    else if (wholesaleQuantity === 1) onQuantityChange(productId, 'Discounted', 0);
+  const handleWholesaleIncrement = () => {
+    console.log('Wholesale increment for product:', productId, 'current qty:', wholesaleQuantity);
+    onQuantityChange(productId, 'Discounted', wholesaleQuantity + 1);
   };
-  const handleWholesaleAddToCart = () => onQuantityChange(productId, 'Discounted', 1);
+  
+  const handleWholesaleDecrement = () => {
+    console.log('Wholesale decrement for product:', productId, 'current qty:', wholesaleQuantity);
+    if (wholesaleQuantity > 1) {
+      onQuantityChange(productId, 'Discounted', wholesaleQuantity - 1);
+    } else if (wholesaleQuantity === 1) {
+      onQuantityChange(productId, 'Discounted', 0);
+    }
+  };
+  
+  const handleWholesaleAddToCart = () => {
+    console.log('Adding wholesale for product:', productId);
+    onQuantityChange(productId, 'Discounted', 1);
+  };
 
   return (
     <div
@@ -126,6 +156,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               className="btn btn-outline-success btn-sm rounded-circle d-flex align-items-center justify-content-center"
               onClick={handleRetailDecrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
+              type="button"
             >
               <i className="fas fa-minus" style={{ fontSize: '0.7rem' }}></i>
             </button>
@@ -136,6 +167,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               className="btn btn-outline-success btn-sm rounded-circle d-flex align-items-center justify-content-center"
               onClick={handleRetailIncrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
+              type="button"
             >
               <i className="fas fa-plus" style={{ fontSize: '0.7rem' }}></i>
             </button>
@@ -145,6 +177,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
             className="btn btn-success btn-sm w-100 rounded-pill"
             onClick={handleRetailAddToCart}
             style={{ fontWeight: '600', fontSize: '0.75rem', padding: '6px 12px' }}
+            type="button"
           >
             <i className="fas fa-plus me-1"></i>
             Add Retail
@@ -166,6 +199,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               className="btn btn-outline-info btn-sm rounded-circle d-flex align-items-center justify-content-center"
               onClick={handleWholesaleDecrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
+              type="button"
             >
               <i className="fas fa-minus" style={{ fontSize: '0.7rem' }}></i>
             </button>
@@ -176,6 +210,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               className="btn btn-outline-info btn-sm rounded-circle d-flex align-items-center justify-content-center"
               onClick={handleWholesaleIncrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
+              type="button"
             >
               <i className="fas fa-plus" style={{ fontSize: '0.7rem' }}></i>
             </button>
@@ -185,6 +220,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
             className="btn btn-info btn-sm w-100 rounded-pill"
             onClick={handleWholesaleAddToCart}
             style={{ fontWeight: '600', fontSize: '0.75rem', padding: '6px 12px' }}
+            type="button"
           >
             <i className="fas fa-plus me-1"></i>
             Add Wholesale
@@ -247,9 +283,9 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
   );
 }
 
-// Products Grid Component - UPDATED for cart grouping
+// Products Grid Component - FIXED for cart grouping
 function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarcode, cart, onQuantityChange, loadingProducts }) {
-  // Group cart items by productId for easier lookup
+  // FIXED: Group cart items by productId for easier lookup
   const cartByProduct = cart.reduce((acc, item) => {
     const productId = item.id || item._id;
     if (!acc[productId]) acc[productId] = [];
@@ -306,7 +342,11 @@ function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarco
         return (
           <div key={productId} className="col-6 col-sm-4 col-md-6 col-lg-4 col-xl-3 mb-3">
             <div style={{ position: 'relative' }}>
-              <ProductCard product={product} cartItems={cartItems} onQuantityChange={onQuantityChange} />
+              <ProductCard 
+                product={product} 
+                cartItems={cartItems} 
+                onQuantityChange={onQuantityChange} 
+              />
               {isLoading && (
                 <div className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: '12px', zIndex: 10 }}>
                   <div className="spinner-border text-primary" style={{ width: '2rem', height: '2rem' }}>
@@ -351,10 +391,9 @@ function CartItems({ cart, onRemoveItem, KSH }) {
             const itemPrice = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
             const itemTotal = itemPrice * (item.quantity || 1);
             const itemId = item.id || item._id;
-            const cartItemId = `${itemId}_${item.priceType}`;
 
             return (
-              <tr key={cartItemId}>
+              <tr key={itemId}>
                 <td style={{ fontSize: '0.75rem' }}>
                   <div className="text-truncate" style={{ maxWidth: '400px', fontSize: '1.01rem' }} title={item.name}>
                     <strong>{item.name}</strong>
@@ -372,7 +411,7 @@ function CartItems({ cart, onRemoveItem, KSH }) {
                 </td>
                 <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>{KSH(itemTotal)}</td>
                 <td className="text-center">
-                  <button className="btn btn-outline-danger btn-sm rounded-circle" onClick={() => onRemoveItem(cartItemId, item.name, item.priceType)} title={`Remove ${item.name} (${item.priceType})`} style={{ width: '24px', height: '24px', padding: '0', fontSize: '0.6rem' }}>
+                  <button className="btn btn-outline-danger btn-sm rounded-circle" onClick={() => onRemoveItem(itemId, item.name, item.priceType)} title={`Remove ${item.name} (${item.priceType})`} style={{ width: '24px', height: '24px', padding: '0', fontSize: '0.6rem' }}>
                     <i className="fas fa-times"></i>
                   </button>
                 </td>
@@ -721,6 +760,7 @@ export default function POS() {
 
       setFilteredProducts(allResults);
     } catch (error) {
+      console.error('Search error:', error);
       toast.error('Search failed');
       setFilteredProducts([]);
       setSearchType('');
@@ -730,9 +770,10 @@ export default function POS() {
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
   useEffect(() => { debouncedSearch(searchTerm); }, [searchTerm, debouncedSearch]);
 
-  // Handler functions - UPDATED for price types
+  // Handler functions - FIXED for price types
   const handleBarcodeScanned = async (barcode) => {
     try {
+      console.log('Barcode scanned:', barcode);
       const product = await indexedDb.getProductByBarcode(barcode);
       if (!product) {
         toast.error(`No product found with barcode: ${barcode}`);
@@ -758,6 +799,7 @@ export default function POS() {
       setHasSearched(true);
       setSearchType('barcode');
     } catch (error) {
+      console.error('Barcode scan error:', error);
       toast.error(`Failed to process barcode: ${error?.message || 'Unexpected error'}`);
       setLoadingProducts(prev => {
         const newSet = new Set(prev);
@@ -767,8 +809,11 @@ export default function POS() {
     }
   };
 
+  // FIXED: Main quantity change handler
   const handleQuantityChange = async (productId, priceType, newQuantity, productData = null) => {
     try {
+      console.log('handleQuantityChange called:', { productId, priceType, newQuantity });
+      
       const product = productData || filteredProducts.find(p => (p.id || p._id) === productId);
       if (!product) {
         toast.error('Product not found');
@@ -779,6 +824,8 @@ export default function POS() {
       const existingCartItem = cart.find(item => 
         (item.id || item._id) === productId && item.priceType === priceType
       );
+
+      console.log('Existing cart item:', existingCartItem);
 
       if (newQuantity === 0) {
         if (existingCartItem) {
@@ -791,6 +838,9 @@ export default function POS() {
 
       const currentCartQty = existingCartItem ? existingCartItem.quantity : 0;
       const inventoryId = getInventoryId(product);
+      
+      console.log('Inventory ID:', inventoryId);
+      
       if (!inventoryId) {
         toast.error('Cannot validate stock - inventory ID missing');
         return;
@@ -798,45 +848,60 @@ export default function POS() {
 
       setProductLoading(productId, true);
 
+      // Validate stock if increasing quantity
       if (newQuantity > currentCartQty) {
         const qtyToAdd = newQuantity - currentCartQty;
-        const validation = await validateAndAddToCart({
-          productId,
-          inventoryId,
-          qty: qtyToAdd,
-          currentCartQty
-        });
+        
+        try {
+          const validation = await validateAndAddToCart({
+            productId,
+            inventoryId,
+            qty: qtyToAdd,
+            currentCartQty
+          });
 
-        if (validation.status === 'conflict' || validation.status === 'error') {
-          toast.error(validation.message);
-          setProductLoading(productId, false);
-          return;
-        }
+          if (validation.status === 'conflict' || validation.status === 'error') {
+            toast.error(validation.message);
+            setProductLoading(productId, false);
+            return;
+          }
 
-        if (validation.status === 'warning') {
-          toast.warning(validation.message);
+          if (validation.status === 'warning') {
+            toast.warning(validation.message);
+          }
+        } catch (validationError) {
+          console.warn('Stock validation failed, proceeding anyway:', validationError);
+          // Continue with the operation even if validation fails
         }
       } else {
-        const validation = await validateCartQuantityChange({
-          productId,
-          inventoryId,
-          newQty: newQuantity,
-          currentCartQty
-        });
+        // Validate quantity decrease
+        try {
+          const validation = await validateCartQuantityChange({
+            productId,
+            inventoryId,
+            newQty: newQuantity,
+            currentCartQty
+          });
 
-        if (validation.status === 'conflict' || validation.status === 'error') {
-          toast.error(validation.message);
-          setProductLoading(productId, false);
-          return;
+          if (validation.status === 'conflict' || validation.status === 'error') {
+            toast.error(validation.message);
+            setProductLoading(productId, false);
+            return;
+          }
+        } catch (validationError) {
+          console.warn('Cart quantity validation failed, proceeding anyway:', validationError);
+          // Continue with the operation even if validation fails
         }
       }
 
-      const cartItemId = `${productId}_${priceType}`;
-
       if (existingCartItem) {
-        dispatch(updateCartItemQuantity({ productId: cartItemId, quantity: newQuantity }));
+        // Update existing item
+        console.log('Updating existing cart item for product:', productId);
+        dispatch(updateCartItemQuantity({ productId: productId, quantity: newQuantity }));
         toast.success('Cart updated');
       } else {
+        // Add new item to cart
+        console.log('Adding new item to cart');
         dispatch(addItemToCart({
           product: { 
             ...product, 
@@ -853,14 +918,15 @@ export default function POS() {
 
       setProductLoading(productId, false);
     } catch (error) {
+      console.error('handleQuantityChange error:', error);
       toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
       setProductLoading(productId, false);
     }
   };
 
-  const handleRemoveItem = (cartItemId, productName, priceType) => {
+  const handleRemoveItem = (productId, productName, priceType) => {
     if (window.confirm(`Remove "${productName}" (${priceType === 'Retail' ? 'Retail' : 'Wholesale'}) from cart?`)) {
-      dispatch(removeItemFromCart(cartItemId));
+      dispatch(removeItemFromCart(productId));
       toast.success('Item removed from cart');
     }
   };

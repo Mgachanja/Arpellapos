@@ -309,23 +309,42 @@ export const addItemToCart = (cartItems = [], product, quantity = 1) => {
   }
   
   const productId = product.id || product._id;
+  const priceType = product.priceType || 'Retail'; // Default to Retail if not specified
+  
+  // Check for existing item with same productId (regardless of priceType)
   const existingItemIndex = cartItems.findIndex(item => 
     (item.id || item._id) === productId
   );
   
   if (existingItemIndex >= 0) {
-    // Update quantity of existing item
-    const updatedItems = [...cartItems];
-    updatedItems[existingItemIndex] = {
-      ...updatedItems[existingItemIndex],
-      quantity: (updatedItems[existingItemIndex].quantity || 0) + quantity
-    };
-    return updatedItems;
+    // Product already exists in cart - check if it's the same price type
+    const existingItem = cartItems[existingItemIndex];
+    
+    if (existingItem.priceType === priceType) {
+      // Same price type - update quantity
+      const updatedItems = [...cartItems];
+      updatedItems[existingItemIndex] = {
+        ...updatedItems[existingItemIndex],
+        quantity: (updatedItems[existingItemIndex].quantity || 0) + quantity
+      };
+      return updatedItems;
+    } else {
+      // Different price type - replace the existing item with new price type
+      const updatedItems = [...cartItems];
+      updatedItems[existingItemIndex] = {
+        ...product,
+        quantity: quantity,
+        priceType: priceType,
+        addedAt: new Date().toISOString()
+      };
+      return updatedItems;
+    }
   } else {
     // Add new item to cart
     const cartItem = {
       ...product,
       quantity: quantity,
+      priceType: priceType,
       addedAt: new Date().toISOString()
     };
     return [...cartItems, cartItem];
@@ -371,7 +390,8 @@ export const updateCartItemQuantity = (cartItems = [], productId, newQuantity) =
  */
 export const calculateCartTotal = (cartItems = []) => {
   return cartItems.reduce((total, item) => {
-    const price = getEffectivePrice(item);
+    // Use priceType to determine which price to use
+    const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
     const quantity = item.quantity || 1;
     return total + (price * quantity);
   }, 0);

@@ -53,7 +53,7 @@ export const apiService = {
   // Products
   getProducts: (params = {}) => apiClient.get('/products', { params }),
   getPagedProducts: (pageNumber = 1, pageSize = 200) => 
-    apiClient.get('/paged-products', { params: { pageNumber, pageSize } }),
+    apiClient.get('/pos-paged-products', { params: { pageNumber, pageSize } }),
   getProductById: (id) => apiClient.get(`/products/${id}`),
   searchProducts: (searchTerm, pageNumber = 1, pageSize = 50) =>
     apiClient.get('/products/search', { 

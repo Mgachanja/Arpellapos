@@ -20,7 +20,7 @@ export const STORAGE_KEYS = {
 export const API_ENDPOINTS = {
   // Products
   PRODUCTS: '/products',
-  PAGED_PRODUCTS: '/paged-products',
+  PAGED_PRODUCTS: '/pos-paged-products',
   PRODUCT_BY_ID: (id) => `/products/${id}`,
   SEARCH_PRODUCTS: '/products/search',
   

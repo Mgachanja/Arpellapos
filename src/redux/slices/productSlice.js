@@ -114,7 +114,7 @@ export const fetchSinglePage = createAsyncThunk(
       // Set page as pending
       dispatch(_setPagePending({ pageNumber }));
       
-      const url = `${baseUrl}/paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
+      const url = `${baseUrl}/pos-paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
       const { data } = await axios.get(url);
       const items = Array.isArray(data) ? data : (data.items || []);
       

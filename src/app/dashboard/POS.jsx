@@ -871,10 +871,8 @@ export default function POS() {
           }
         } catch (validationError) {
           console.warn('Stock validation failed, proceeding anyway:', validationError);
-          // Continue with the operation even if validation fails
         }
       } else {
-        // Validate quantity decrease
         try {
           const validation = await validateCartQuantityChange({
             productId,
@@ -890,7 +888,6 @@ export default function POS() {
           }
         } catch (validationError) {
           console.warn('Cart quantity validation failed, proceeding anyway:', validationError);
-          // Continue with the operation even if validation fails
         }
       }
 
@@ -939,6 +936,18 @@ export default function POS() {
 
     if (window.confirm('Are you sure you want to clear all items from the cart?')) {
       dispatch(clearCart());
+      
+      // Clear search and reset to fresh state
+      setSearchTerm('');
+      setFilteredProducts([]);
+      setHasSearched(false);
+      setSearchType('');
+      
+      // Focus the search input
+      if (searchInputRef.current) {
+        searchInputRef.current.focus();
+      }
+      
       toast.success('Cart cleared successfully');
       setCurrentOrderId(null);
     }
@@ -1154,6 +1163,17 @@ export default function POS() {
     setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
     setCurrentOrderId(null);
     setProcessingOrder(false);
+    
+    // Clear search and reset to fresh state after order completion
+    setSearchTerm('');
+    setFilteredProducts([]);
+    setHasSearched(false);
+    setSearchType('');
+    
+    // Focus the search input
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
 
     if (paymentType === 'cash') {
       const given = Number(paymentData.cashAmount);

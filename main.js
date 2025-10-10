@@ -1,14 +1,10 @@
-// main.js (improved printing diagnostics & fallbacks)
-// Key behaviors preserved; added robust error normalization, payload logging,
-// image-to-temp-file fallback, no-image retry, and thermalHandler fallback.
-
-const { app, BrowserWindow, ipcMain } = require('electron');
+// main.js
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
-
-// Auto-updater
 const { autoUpdater } = require('electron-updater');
+
 autoUpdater.logger = log;
 autoUpdater.logger.transports.file.level = 'info';
 
@@ -18,8 +14,8 @@ try {
   const electronPosPrinter = require('electron-pos-printer');
   PosPrinter = electronPosPrinter.PosPrinter;
   log.info('electron-pos-printer loaded successfully');
-} catch (error) {
-  log.error('Failed to load electron-pos-printer:', error);
+} catch (err) {
+  log.warn('electron-pos-printer not available:', err && err.message ? err.message : err);
 }
 
 const APP_ID = 'com.arpella.pos';
@@ -27,89 +23,474 @@ if (process.platform === 'win32') {
   try { app.setAppUserModelId(APP_ID); } catch (e) { console.warn('setAppUserModelId failed', e); }
 }
 
-let mainWindow;
+const electron = require('electron');
+const windowApi = electron.BrowserWindow;
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) { app.quit(); process.exit(0); }
-
-let ThermalHandlerClass = null;
+let mainWindow = null;
+let updateDownloaded = false;
 let thermalHandlerInstance = null;
+let ThermalHandlerClass = null;
 try {
   ThermalHandlerClass = require(path.join(__dirname, 'main-thermal-handler'));
 } catch (err) {
-  log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
+  // optional, fine if not present
+  log.info('No custom thermal handler provided:', err && err.message ? err.message : '');
 }
 
-// child_process helpers
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const execAsync = promisify(exec);
+// Cache for logo base64
+let _logoCache = { dataUri: null, mtimeMs: 0, path: null };
 
-// CONFIG & CACHES
-const PRINTER_CACHE_TTL = 5000;
-const POWER_SHELL_TIMEOUT = 4000;
-const POWER_SHELL_MAX_BUFFER = 10 * 1024 * 1024;
+// Printer cache / simple TTL (avoid frequent expensive calls)
+let _printerCache = { data: null, ts: 0, ttl: 5000, inFlight: null };
 
-let printerCache = { data: null, ts: 0, inFlight: null };
-let logoCache = { base64: null, path: null, mtimeMs: 0 };
+// Utility: safe string from whatever error/object
+function safeString(x, fallback = '') {
+  if (!x) return fallback;
+  if (typeof x === 'string') return x;
+  if (x instanceof Error) return x.message || String(x);
+  try { return JSON.stringify(x); } catch { return String(x); }
+}
 
-// Auto-updater helpers
+// Normalize handler return shape
+function ok(data = null, message = '') { return { success: true, message: message || '', data }; }
+function fail(message = '', data = null) { return { success: false, message: safeString(message), data }; }
+
+// ----------------- Logo loader (async, mtime-aware) -----------------
+async function resolveLogoPathCandidates() {
+  const candidates = [
+    path.join(__dirname, 'assets', 'receipt-logo.png'),
+    path.join(__dirname, 'src', 'assets', 'receipt-logo.png'),
+    path.join(__dirname, 'public', 'assets', 'receipt-logo.png'),
+    path.join(__dirname, 'build', 'assets', 'receipt-logo.png'),
+  ];
+  if (process.resourcesPath) {
+    candidates.push(
+      path.join(process.resourcesPath, 'app.asar', 'assets', 'receipt-logo.png'),
+      path.join(process.resourcesPath, 'assets', 'receipt-logo.png'),
+      path.join(process.resourcesPath, 'build', 'assets', 'receipt-logo.png')
+    );
+  }
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch (e) { /* continue */ }
+  }
+  return null;
+}
+
+async function getLogoBase64Async() {
+  try {
+    const logoPath = await resolveLogoPathCandidates();
+    if (!logoPath) {
+      _logoCache = { dataUri: null, mtimeMs: 0, path: null };
+      return null;
+    }
+
+    const stats = await fs.promises.stat(logoPath).catch(() => null);
+    const mtimeMs = stats ? stats.mtimeMs : 0;
+    if (_logoCache.dataUri && _logoCache.path === logoPath && _logoCache.mtimeMs === mtimeMs) {
+      return _logoCache.dataUri;
+    }
+
+    const imageBuffer = await fs.promises.readFile(logoPath);
+    const mimeType = logoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const dataUri = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+
+    _logoCache = { dataUri, mtimeMs, path: logoPath };
+    log.info('Logo loaded and cached:', logoPath);
+    return dataUri;
+  } catch (err) {
+    log.warn('getLogoBase64Async failed:', err && err.message ? err.message : err);
+    _logoCache = { dataUri: null, mtimeMs: 0, path: null };
+    return null;
+  }
+}
+
+// ----------------- Printers detection (cached) -----------------
+async function getAllAvailablePrinters() {
+  try {
+    const now = Date.now();
+    if (_printerCache.data && (now - _printerCache.ts) < _printerCache.ttl) return _printerCache.data;
+    if (_printerCache.inFlight) return await _printerCache.inFlight;
+
+    _printerCache.inFlight = (async () => {
+      let printWindow = windowApi.getFocusedWindow() || windowApi.getAllWindows()[0];
+      if (!printWindow) {
+        _printerCache.data = [];
+        _printerCache.ts = Date.now();
+        _printerCache.inFlight = null;
+        return [];
+      }
+
+      let electronPrinters = [];
+      try {
+        electronPrinters = await printWindow.webContents.getPrintersAsync();
+      } catch (err) {
+        log.warn('getPrintersAsync failed:', err && err.message ? err.message : err);
+        electronPrinters = [];
+      }
+
+      const all = Array.isArray(electronPrinters) ? electronPrinters.slice() : [];
+      // Windows fallback via PowerShell (best-effort, non-blocking)
+      if (process.platform === 'win32' && (!electronPrinters || electronPrinters.length === 0)) {
+        try {
+          const { exec } = require('child_process');
+          const { promisify } = require('util');
+          const execAsync = promisify(exec);
+          const ps = 'powershell "Get-Printer | Select-Object Name, PrinterStatus, Type | ConvertTo-Json"';
+          const { stdout } = await execAsync(ps, { timeout: 3000, maxBuffer: 10 * 1024 * 1024 });
+          let parsed = [];
+          try { parsed = JSON.parse(stdout); } catch (e) { parsed = []; }
+          if (Array.isArray(parsed)) {
+            parsed.forEach(p => {
+              const name = p.Name || p.name;
+              if (!all.find(x => x.name === name)) {
+                all.push({ name, displayName: name, status: p.PrinterStatus || 'unknown', isDefault: false, options: {} });
+              }
+            });
+          }
+        } catch (err) {
+          log.warn('PowerShell printers fallback failed (ignored):', err && err.message ? err.message : err);
+        }
+      }
+
+      _printerCache.data = all;
+      _printerCache.ts = Date.now();
+      _printerCache.inFlight = null;
+      return all;
+    })();
+
+    return await _printerCache.inFlight;
+  } catch (err) {
+    log.error('getAllAvailablePrinters failed:', err && err.message ? err.message : err);
+    _printerCache.data = [];
+    _printerCache.ts = Date.now();
+    _printerCache.inFlight = null;
+    return [];
+  }
+}
+
+// ----------------- Auto updater wiring -----------------
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
-  log.info('Setting up auto-updater...');
+  autoUpdater.allowPrerelease = false;
 
   autoUpdater.on('checking-for-update', () => {
-    log.info('Checking for update...');
-    sendUpdateEvent('update-checking');
-    sendUpdateMessage('Checking for updates...');
+    log.info('autoUpdater: checking-for-update');
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-message', 'Checking for updates...');
   });
 
-  autoUpdater.on('update-available', (info) => {
-    log.info('Update available:', info);
-    sendUpdateEvent('update-available', info);
-    sendUpdateMessage(`Update available: v${info.version}`);
-  });
-
-  autoUpdater.on('update-not-available', (info) => {
-    log.info('Update not available:', info);
-    sendUpdateEvent('update-not-available', info);
-    sendUpdateMessage('No updates available');
-  });
-
-  autoUpdater.on('error', (err) => {
-    log.error('Error in auto-updater:', err);
-    sendUpdateEvent('update-error', { message: err.message, stack: err.stack });
-    sendUpdateMessage(`Update error: ${err.message}`);
-  });
-
-  autoUpdater.on('download-progress', (progressObj) => {
-    const log_message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
-    log.info(log_message);
-    sendUpdateEvent('update-download-progress', progressObj);
+  autoUpdater.on('update-available', info => {
+    log.info('autoUpdater: update-available', info && info.version);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('download-progress', progressObj);
+      mainWindow.webContents.send('update-available', info);
+      mainWindow.webContents.send('update-message', `Update available: v${info.version}`);
     }
   });
 
-  autoUpdater.on('update-downloaded', (info) => {
-    log.info('Update downloaded:', info);
-    sendUpdateEvent('update-downloaded', info);
-    sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
+  autoUpdater.on('update-not-available', info => {
+    log.info('autoUpdater: update-not-available');
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-message', 'No updates available');
   });
 
-  autoUpdater.checkForUpdatesAndNotify().catch(err => {
-    log.error('Initial update check failed:', err);
+  autoUpdater.on('download-progress', progressObj => {
+    log.info('autoUpdater: download-progress', progressObj && progressObj.percent);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('download-progress', {
+      percent: Math.round(progressObj.percent || 0),
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
   });
-}
-function sendUpdateEvent(eventName, data = null) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(eventName, data);
-}
-function sendUpdateMessage(message) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-message', message);
+
+  autoUpdater.on('update-downloaded', async info => {
+    log.info('autoUpdater: update-downloaded', info && info.version);
+    updateDownloaded = true;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', info);
+      mainWindow.webContents.send('update-message', `Update downloaded: v${info.version}`);
+    }
+
+    // Ask user if they want to install now (optional)
+    try {
+      const choice = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        buttons: ['Install & Restart', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Update Ready',
+        message: `Update v${info.version} has been downloaded.`,
+        detail: 'Install now and restart the app?'
+      });
+      if (choice.response === 0) {
+        setTimeout(() => {
+          try { autoUpdater.quitAndInstall(); } catch (err) { log.error('quitAndInstall failed:', err); }
+        }, 500);
+      }
+    } catch (err) {
+      log.warn('Auto-updater dialog failed (ignored):', err && err.message ? err.message : err);
+    }
+  });
+
+  autoUpdater.on('error', err => {
+    log.error('autoUpdater error:', err && err.message ? err.message : err);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-error', { message: safeString(err.message || err), stack: err.stack || '' });
+      mainWindow.webContents.send('update-message', `Update error: ${safeString(err.message || err)}`);
+    }
+  });
+
+  // Trigger a background check at setup time (non-blocking)
+  (async () => {
+    try { await autoUpdater.checkForUpdatesAndNotify(); } catch (err) { log.warn('autoUpdater initial check failed (ignored):', err && err.message ? err.message : err); }
+  })();
 }
 
-// File helpers
+// ----------------- IPC Handlers (registered immediately) -----------------
+
+ipcMain.handle('get-app-version', async () => {
+  try {
+    return ok({ version: app.getVersion(), name: app.getName(), updateDownloaded });
+  } catch (err) {
+    return fail(safeString(err));
+  }
+});
+
+// Manual check for updates - returns immediately with check result or error
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    log.info('IPC: check-for-updates called');
+    // Ensure auto-updater listeners are set up
+    setupAutoUpdater();
+    // Asking autoUpdater to check for updates (it will emit events)
+    const result = await autoUpdater.checkForUpdates();
+    return ok(null, 'Update check initiated');
+  } catch (err) {
+    log.error('IPC check-for-updates error:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+// Download update on demand
+ipcMain.handle('download-update', async () => {
+  try {
+    log.info('IPC: download-update called');
+    await autoUpdater.downloadUpdate();
+    return ok(null, 'Download started');
+  } catch (err) {
+    log.error('IPC download-update failed:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+// Quit and install (only works if update downloaded)
+ipcMain.handle('quit-and-install', async () => {
+  try {
+    if (!updateDownloaded) return fail('No update downloaded yet');
+    log.info('IPC: quit-and-install called');
+    // autoUpdater.quitAndInstall will quit and install; return success true preemptively
+    setImmediate(() => {
+      try { autoUpdater.quitAndInstall(); } catch (err) { log.error('quitAndInstall call failed:', err && err.message ? err.message : err); }
+    });
+    return ok(null, 'Installing update');
+  } catch (err) {
+    log.error('IPC quit-and-install error:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+// Provide update info
+ipcMain.handle('get-update-info', async () => {
+  try {
+    return ok({ updateDownloaded, autoDownload: autoUpdater.autoDownload, currentVersion: app.getVersion() });
+  } catch (err) {
+    return fail(safeString(err));
+  }
+});
+
+// Printers list
+ipcMain.handle('get-printers', async () => {
+  try {
+    const printers = await getAllAvailablePrinters();
+    return ok(printers);
+  } catch (err) {
+    log.error('IPC get-printers error:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+ipcMain.handle('check-printer-status', async (event, printerName) => {
+  try {
+    const printers = await getAllAvailablePrinters();
+    if (!printerName) return ok({ available: (printers && printers.length > 0), count: printers.length, printers });
+    const found = printers.find(p => p.name === printerName || p.displayName === printerName);
+    return ok({ available: !!found, printer: found, printers });
+  } catch (err) {
+    log.error('IPC check-printer-status error:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
+  try {
+    const printers = await getAllAvailablePrinters();
+    const p = printers.find(x => x.name === printerName || x.displayName === printerName);
+    if (!p) return fail('Printer not found');
+    const caps = { name: p.name, status: p.status, isDefault: p.isDefault || false, options: p.options || {} };
+    return ok(caps);
+  } catch (err) {
+    log.error('IPC get-printer-capabilities error:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+// Test thermal printer (best-effort)
+ipcMain.handle('test-thermal-printer', async (event, printerName) => {
+  if (!PosPrinter && !ThermalHandlerClass && !thermalHandlerInstance) {
+    log.error('No PosPrinter and no custom thermal handler available');
+    return fail('Thermal printing not available on this build');
+  }
+  try {
+    const options = { preview: false, silent: true, margin: '10 10 10 10', timeOutPerLine: 400, pageSize: '80mm', copies: 1 };
+    if (printerName) options.printerName = printerName;
+
+    const printData = [
+      { type: 'text', value: '====== PRINTER TEST ======', style: { textAlign: 'center', fontSize: 14 } },
+      { type: 'text', value: `Test Time: ${new Date().toLocaleString()}`, style: { textAlign: 'center', fontSize: 11 } },
+      { type: 'text', value: '------ END ------', style: { textAlign: 'center', fontSize: 11 } }
+    ];
+
+    if (thermalHandlerInstance && typeof thermalHandlerInstance.print === 'function') {
+      await thermalHandlerInstance.print(printData, options);
+    } else if (PosPrinter) {
+      await PosPrinter.print(printData, options);
+    } else {
+      throw new Error('No print implementation available');
+    }
+
+    return ok(null, 'Test print successful');
+  } catch (err) {
+    log.error('IPC test-thermal-printer failed:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+// Helper to format currency
+function formatCurrency(amount) { return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`; }
+
+// print-receipt: accepts flexible cart items and storeSettings
+ipcMain.handle('print-receipt', async (event, orderData = {}, printerName = '', storeSettings = {}) => {
+  if (!PosPrinter && !ThermalHandlerClass && !thermalHandlerInstance) {
+    log.error('print-receipt: no printing implementation available');
+    return fail('Thermal printing not available');
+  }
+
+  try {
+    const {
+      cart = [],
+      cartTotal = 0,
+      paymentType = '',
+      paymentData = {},
+      user = {},
+      orderNumber = '',
+      customerPhone = ''
+    } = orderData || {};
+
+    // Try to get storeSettings from localStorage file if empty (best-effort)
+    if (!storeSettings || Object.keys(storeSettings).length === 0) {
+      try {
+        const settingsPath = path.join(app.getPath('userData') || __dirname, 'thermalPrinterStoreSettings.json');
+        if (fs.existsSync(settingsPath)) {
+          const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+          storeSettings = s || storeSettings;
+        } else {
+          // fallback to app-local storage or environment — ignore if missing
+        }
+      } catch (err) {
+        log.warn('Failed to load store settings file (ignored):', err && err.message ? err.message : err);
+      }
+    }
+
+    // Build print data
+    const printData = [];
+
+    const logo = await getLogoBase64Async();
+    if (logo) {
+      printData.push({ type: 'image', url: logo, position: 'center', width: '140px', height: '70px', style: { marginBottom: '6px' } });
+    }
+
+    printData.push(
+      { type: 'text', value: storeSettings.storeName || 'ARPELLA STORE', style: { textAlign: 'center', fontSize: 16, fontWeight: 'bold' } },
+      { type: 'text', value: storeSettings.storeAddress || 'Address', style: { textAlign: 'center', fontSize: 12 } },
+      { type: 'text', value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`, style: { textAlign: 'center', fontSize: 12 } },
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: 12 } },
+      { type: 'text', value: `Order #: ${orderNumber || 'N/A'}`, style: { fontSize: 12 } },
+      { type: 'text', value: `Date: ${new Date().toLocaleString()}`, style: { fontSize: 12 } }
+    );
+
+    if (customerPhone) {
+      printData.push({ type: 'text', value: `Customer: ${customerPhone}`, style: { fontSize: 12 } });
+    }
+
+    printData.push({ type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: 12 } });
+
+    // Normalize each cart item - support both old/new shapes
+    for (const rawItem of cart) {
+      const item = rawItem || {};
+      const name = item.productName || item.name || item.product || 'Item';
+      const qty = Number(item.quantity || item.qty || 1);
+      const price = Number(item.sellingPrice || item.salePrice || item.price || 0);
+      const total = qty * price;
+      // Truncate/pad name for alignment
+      const truncated = (name.length > 18) ? name.slice(0, 15) + '...' : name;
+      const padded = truncated.padEnd(18, ' ');
+      const qtyStr = String(qty).padStart(3, ' ');
+      const totalStr = formatCurrency(total).padStart(10, ' ');
+      printData.push({ type: 'text', value: `${padded} ${qtyStr} ${totalStr}`, style: { fontSize: 12, fontFamily: 'monospace' } });
+    }
+
+    printData.push({ type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: 12 } });
+    printData.push({ type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { textAlign: 'right', fontSize: 14, fontWeight: 'bold' } });
+
+    // Payment info
+    const cashAmt = Number(paymentData.cashAmount || 0);
+    if (String(paymentType || '').toLowerCase() === 'cash') {
+      printData.push({ type: 'text', value: `Cash: ${formatCurrency(cashAmt)}`, style: { textAlign: 'right', fontSize: 12 } });
+      const change = Math.max(0, cashAmt - Number(cartTotal || 0));
+      if (change > 0) printData.push({ type: 'text', value: `Change: ${formatCurrency(change)}`, style: { textAlign: 'right', fontSize: 12 } });
+    } else {
+      printData.push({ type: 'text', value: `Payment: ${String(paymentType || '').toUpperCase()}`, style: { textAlign: 'right', fontSize: 12 } });
+    }
+
+    printData.push({ type: 'text', value: storeSettings.receiptFooter || 'Thank you for your business!', style: { textAlign: 'center', fontSize: 13 } });
+    printData.push({ type: 'text', value: `Print Time: ${new Date().toLocaleString()}`, style: { textAlign: 'center', fontSize: 10, marginBottom: '15px' } });
+
+    const options = { preview: false, silent: true, margin: '12 12 12 12', timeOutPerLine: 500, pageSize: '80mm', copies: 1 };
+    if (printerName) options.printerName = printerName;
+
+    if (thermalHandlerInstance && typeof thermalHandlerInstance.print === 'function') {
+      await thermalHandlerInstance.print(printData, options);
+    } else if (PosPrinter) {
+      await PosPrinter.print(printData, options);
+    } else {
+      throw new Error('No print implementation available');
+    }
+
+    log.info('print-receipt: printed successfully');
+    return ok(null, 'Receipt printed successfully');
+  } catch (err) {
+    log.error('print-receipt failed:', err && err.message ? err.message : err);
+    return fail(safeString(err));
+  }
+});
+
+// Small helper: log messages from renderer
+ipcMain.on('log', (ev, msg) => log.info('Renderer log:', msg));
+ipcMain.on('open-devtools', () => mainWindow && mainWindow.webContents.openDevTools());
+ipcMain.on('close-devtools', () => mainWindow && mainWindow.webContents.closeDevTools());
+
+// ----------------- Create main window -----------------
 function resolveIconPath() {
   if (!app.isPackaged) {
     const devIcons = [
@@ -125,647 +506,69 @@ function resolveIconPath() {
   return path.join(process.resourcesPath, 'icon.ico');
 }
 
-function resolveLogoPath() {
-  const candidates = [
-    path.join(__dirname, 'assets', 'receipt-logo.png'),
-    path.join(__dirname, 'src', 'assets', 'receipt-logo.png'),
-    path.join(__dirname, 'public', 'assets', 'receipt-logo.png'),
-    path.join(__dirname, 'build', 'assets', 'receipt-logo.png'),
-  ];
-
-  if (process.resourcesPath) {
-    candidates.push(
-      path.join(process.resourcesPath, 'app.asar', 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'app.asar', 'src', 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'app.asar', 'build', 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'build', 'assets', 'receipt-logo.png')
-    );
-  }
-
-  for (const logoPath of candidates) {
-    try {
-      if (fs.existsSync(logoPath)) {
-        log.info('Found receipt logo at:', logoPath);
-        return logoPath;
-      }
-    } catch (error) { /* continue */ }
-  }
-
-  log.warn('Receipt logo not found in any expected locations');
-  return null;
-}
-
-async function getLogoBase64() {
-  try {
-    const logoPath = resolveLogoPath();
-    if (!logoPath) {
-      logoCache = { base64: null, path: null, mtimeMs: 0 };
-      return null;
-    }
-
-    const stats = await fs.promises.stat(logoPath).catch(() => null);
-    const mtimeMs = stats ? stats.mtimeMs : 0;
-
-    if (logoCache.base64 && logoCache.path === logoPath && logoCache.mtimeMs === mtimeMs) {
-      return logoCache.base64;
-    }
-
-    const imageBuffer = await fs.promises.readFile(logoPath);
-    const mimeType = logoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-    const base64Image = imageBuffer.toString('base64');
-    const dataUri = `data:${mimeType};base64,${base64Image}`;
-
-    logoCache = { base64: dataUri, path: logoPath, mtimeMs };
-    log.info('Logo converted to base64 (async), sizeBytes:', imageBuffer.length, 'path:', logoPath);
-    return dataUri;
-  } catch (error) {
-    log.error('Failed to load logo for receipt (async):', error);
-    logoCache = { base64: null, path: null, mtimeMs: 0 };
-    return null;
-  }
-}
-
-// Printer detection (cached)
-async function getAllAvailablePrinters() {
-  try {
-    const now = Date.now();
-    if (printerCache.data && (now - printerCache.ts) < PRINTER_CACHE_TTL) return printerCache.data;
-
-    if (printerCache.inFlight) {
-      try { return await printerCache.inFlight; } catch (err) { printerCache.inFlight = null; }
-    }
-
-    printerCache.inFlight = (async () => {
-      let printWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-      if (!printWindow) {
-        log.warn('No active window available for printer detection');
-        printerCache.data = [];
-        printerCache.ts = Date.now();
-        printerCache.inFlight = null;
-        return [];
-      }
-
-      let electronPrinters = [];
-      try { electronPrinters = await printWindow.webContents.getPrintersAsync(); } catch (err) {
-        log.warn('webContents.getPrintersAsync failed:', err && err.message ? err.message : err);
-        electronPrinters = [];
-      }
-
-      log.info('Electron detected printers:', (electronPrinters || []).map(p => ({ name: p.name, status: p.status })));
-      let allPrinters = [...(electronPrinters || [])];
-
-      if (process.platform === 'win32' && (!electronPrinters || electronPrinters.length === 0)) {
-        try {
-          const psCmd = 'powershell "Get-Printer | Select-Object Name, PrinterStatus, Type | ConvertTo-Json"';
-          const opts = { timeout: POWER_SHELL_TIMEOUT, maxBuffer: POWER_SHELL_MAX_BUFFER };
-          const { stdout } = await execAsync(psCmd, opts);
-          let windowsPrinters = [];
-          try {
-            const parsed = JSON.parse(stdout);
-            windowsPrinters = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
-          } catch (parseErr) {
-            log.warn('Failed to parse PowerShell printers JSON:', parseErr && parseErr.message ? parseErr.message : parseErr);
-            windowsPrinters = [];
-          }
-
-          if (Array.isArray(windowsPrinters) && windowsPrinters.length > 0) {
-            windowsPrinters.forEach(winPrinter => {
-              const name = winPrinter.Name || winPrinter.name;
-              if (!allPrinters.find(p => p.name === name)) {
-                allPrinters.push({
-                  name,
-                  displayName: name,
-                  status: (winPrinter.PrinterStatus === 'Normal' || winPrinter.PrinterStatus === 3) ? 'idle' : 'unknown',
-                  isDefault: false,
-                  options: {}
-                });
-              }
-            });
-          }
-          log.info('Windows PowerShell detected additional printers:', windowsPrinters?.length || 0);
-        } catch (winError) {
-          log.warn('Windows printer detection failed or timed out:', winError && winError.message ? winError.message : winError);
-        }
-      }
-
-      printerCache.data = allPrinters;
-      printerCache.ts = Date.now();
-      printerCache.inFlight = null;
-      return allPrinters;
-    })();
-
-    return await printerCache.inFlight;
-  } catch (error) {
-    log.error('Failed to get printers (cached):', error);
-    printerCache.data = [];
-    printerCache.ts = Date.now();
-    printerCache.inFlight = null;
-    return [];
-  }
-}
-
-// Utility: consistent error -> string
-function errToString(error, maxLen = 1000) {
-  try {
-    if (!error && error !== 0) return 'Unknown error';
-    if (typeof error === 'string') return error.length > maxLen ? error.slice(0, maxLen) + '…' : error;
-    if (error instanceof Error) {
-      const m = error.message || String(error);
-      return m.length > maxLen ? m.slice(0, maxLen) + '…' : m;
-    }
-    if (typeof error === 'object') {
-      if (error.message && typeof error.message === 'string') return error.message;
-      if (error.error && typeof error.error === 'string') return error.error;
-      try {
-        const s = JSON.stringify(error);
-        return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
-      } catch (e) {
-        return String(error);
-      }
-    }
-    return String(error);
-  } catch (e) {
-    return 'Unknown error';
-  }
-}
-
-// Create window & startup
 function findIndexHtmlCandidates() {
   const candidates = [
     path.join(__dirname, 'build', 'index.html'),
     path.join(__dirname, 'index.html'),
   ];
-
   if (process.resourcesPath) {
     candidates.push(path.join(process.resourcesPath, 'app.asar', 'build', 'index.html'));
     candidates.push(path.join(process.resourcesPath, 'app.asar', 'index.html'));
-    candidates.push(path.join(process.resourcesPath, 'build', 'index.html'));
-    candidates.push(path.join(process.resourcesPath, 'index.html'));
   }
-
-  const existing = candidates.filter(c => {
-    try { return c && fs.existsSync(c); } catch (e) { return false; }
-  });
-
-  log.info('Index.html candidate list:', candidates);
-  log.info('Existing index.html files found:', existing);
+  const existing = candidates.filter(c => { try { return c && fs.existsSync(c); } catch (e) { return false; } });
   return existing;
 }
 
 function createMainWindow() {
   const iconPath = resolveIconPath();
-  log.info('Resolved icon path:', iconPath, 'packaged:', app.isPackaged);
-
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
-    minWidth: 1024,
-    minHeight: 720,
-    title: app.name || 'Arpella POS',
-    icon: iconPath,
-    show: false,
-    autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: false,
-      nodeIntegration: true
-    }
+    width: 1200, height: 820, minWidth: 1024, minHeight: 720,
+    title: app.name || 'Arpella POS', icon: iconPath, show: false, autoHideMenuBar: true,
+    webPreferences: { contextIsolation: false, nodeIntegration: true }
   });
 
   const isDev = !app.isPackaged;
   if (isDev) {
     const devUrl = process.env.ELECTRON_START_URL || 'http://localhost:4000';
-    log.info('Dev mode: loading URL', devUrl);
     mainWindow.loadURL(devUrl).catch(err => {
-      log.error('Failed to load dev URL', devUrl, err);
-      mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Dev server failed to load</h1><pre>${String(err)}</pre>`));
+      mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Dev server failed</h1><pre>${String(err)}</pre>`));
     });
   } else {
     const found = findIndexHtmlCandidates();
-    if (found.length > 0) {
-      const indexFile = found[0];
-      log.info('Loading index from:', indexFile);
-      mainWindow.loadFile(indexFile).catch(err => {
-        log.error('loadFile failed for', indexFile, err);
-        mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Failed to load app</h1><pre>${String(err)}</pre>`));
-      });
-    } else {
-      const diagnosticHtml = `
-        <h1>No index.html found</h1>
-        <p>Your packaged application did not contain build/index.html in any expected location.</p>
-        <pre>${JSON.stringify({ __dirname, resourcesPath: process.resourcesPath }, null, 2)}</pre>
-      `;
-      mainWindow.loadURL('data:text/html,' + encodeURIComponent(diagnosticHtml));
-      log.error('No index.html found. See packaged files and electron-builder config.');
-    }
-  }
-
-  if (process.env.ELECTRON_DEBUG === '1') {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-    log.info('ELECTRON_DEBUG detected — DevTools opened');
+    if (found.length > 0) mainWindow.loadFile(found[0]).catch(err => { mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Load failed</h1><pre>${String(err)}</pre>`)); });
+    else mainWindow.loadURL('data:text/html,' + encodeURIComponent('<h1>No index.html found</h1>'));
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-
-    if (!isDev) {
-      log.info('Initializing auto-updater in 3 seconds...');
-      setTimeout(() => { setupAutoUpdater(); }, 3000);
-    } else {
-      log.info('Development mode - skipping auto-updater');
-    }
+    // Setup auto-updater once window is ready (so events can be sent)
+    setupAutoUpdater();
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// IPC: printers
-ipcMain.handle('get-printers', async () => {
-  try {
-    const printers = await getAllAvailablePrinters();
-    log.info('Total printers found:', printers.length);
-    return printers;
-  } catch (error) {
-    log.error('Failed to get printers:', error);
-    return [];
-  }
-});
+// Single-instance lock
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) { app.quit(); process.exit(0); }
 
-// Utility to write a base64 dataUri to a temp file (returns temp path)
-async function writeDataUriToTempFile(dataUri) {
-  try {
-    if (!dataUri || !dataUri.startsWith('data:')) return null;
-    const matches = dataUri.match(/^data:(image\/[a-zA-Z0-9+.]+);base64,(.*)$/);
-    if (!matches) return null;
-    const mime = matches[1];
-    const b64 = matches[2];
-    const ext = mime.includes('png') ? '.png' : mime.includes('jpeg') ? '.jpg' : '.img';
-    const tempName = `arpella_logo_${Date.now()}${Math.floor(Math.random()*1000)}${ext}`;
-    const tmpPath = path.join(app.getPath('temp') || os.tmpdir(), tempName);
-    await fs.promises.writeFile(tmpPath, Buffer.from(b64, 'base64'));
-    return tmpPath;
-  } catch (err) {
-    log.warn('Failed to write dataUri to temp file:', err);
-    return null;
-  }
-}
-
-// Test print handler (improved)
-ipcMain.handle('test-thermal-printer', async (event, printerName) => {
-  if (!PosPrinter && !thermalHandlerInstance) {
-    const msg = 'Thermal printing support not available';
-    log.error(msg);
-    return { success: false, message: msg };
-  }
-
-  const options = {
-    preview: false,
-    silent: true,
-    margin: '10 10 10 10',
-    timeOutPerLine: 400,
-    pageSize: '80mm',
-    copies: 1
-  };
-  if (printerName) options.printerName = printerName;
-
-  try {
-    const printData = [];
-    const logoBase64 = await getLogoBase64();
-    if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '120px',
-        height: '60px',
-        style: { marginBottom: '10px' }
-      });
-    }
-
-    printData.push(
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
-      { type: 'text', value: 'PRINTER TEST', style: { fontWeight: 'bold', textAlign: 'center', fontSize: '18px', marginBottom: '5px' } },
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '10px' } },
-      { type: 'text', value: 'This is a test receipt to verify', style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
-      { type: 'text', value: 'printer alignment and formatting.', style: { textAlign: 'center', fontSize: '14px', marginBottom: '10px' } },
-      { type: 'text', value: `Test Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '11px', marginBottom: '10px' } },
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '20px' } }
-    );
-
-    log.info('Attempting test print. printer:', printerName || 'default', 'printData-items:', printData.length);
-
-    if (PosPrinter) {
-      try {
-        await PosPrinter.print(printData, options);
-        log.info('Test print completed successfully for printer:', printerName || 'default');
-        return { success: true, message: 'Test print successful' };
-      } catch (posErr) {
-        log.error('PosPrinter test print failed:', errToString(posErr), posErr);
-        // try image-path fallback or no-image fallback below
-      }
-    }
-
-    // Fallback: try thermalHandlerInstance
-    if (thermalHandlerInstance && typeof thermalHandlerInstance.testPrint === 'function') {
-      try {
-        const result = await thermalHandlerInstance.testPrint(printerName, printData, options);
-        log.info('Thermal handler testPrint success:', result);
-        return { success: true, message: 'Test print successful (thermal handler)' };
-      } catch (handlerErr) {
-        log.error('Thermal handler testPrint failed:', errToString(handlerErr), handlerErr);
-        return { success: false, message: `Test print failed: ${errToString(handlerErr)}` };
-      }
-    }
-
-    // As a last attempt, try no-image print (if image existed)
-    const printDataNoImage = printData.filter(p => p.type !== 'image');
-    if (printDataNoImage.length < printData.length && PosPrinter) {
-      try {
-        log.info('Retrying test print without images...');
-        await PosPrinter.print(printDataNoImage, options);
-        log.info('Test print succeeded (no-image fallback)');
-        return { success: true, message: 'Test print successful (no-image fallback)' };
-      } catch (noImgErr) {
-        log.error('No-image fallback failed:', errToString(noImgErr), noImgErr);
-      }
-    }
-
-    return { success: false, message: 'Test print failed: all backends failed' };
-  } catch (error) {
-    log.error('test-thermal-printer handler exception:', error);
-    return { success: false, message: `Test print failed: ${errToString(error)}` };
-  }
-});
-
-// Print receipt handler (improved)
-ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettings = {}) => {
-  if (!PosPrinter && !thermalHandlerInstance) {
-    const msg = 'Thermal printing support not available';
-    log.error(msg);
-    return { success: false, message: msg };
-  }
-
-  try {
-    const {
-      cart = [],
-      cartTotal = 0,
-      paymentType = '',
-      paymentData = {},
-      user = {},
-      orderNumber = '',
-      customerPhone = '',
-    } = orderData;
-
-    const cashAmount = Number(paymentData.cashAmount || 0);
-    const formatCurrency = (amt) => `Ksh ${Number(amt || 0).toLocaleString('en-KE')}`;
-
-    const options = {
-      preview: false,
-      silent: true,
-      margin: '15 15 15 15',
-      timeOutPerLine: 500,
-      pageSize: '80mm',
-      copies: 1
-    };
-    if (printerName) options.printerName = printerName;
-
-    let printData = [];
-    const logoBase64 = await getLogoBase64();
-    if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '150px',
-        height: '75px',
-        style: { marginBottom: '8px' }
-      });
-    }
-
-    printData.push(
-      { type: 'text', value: storeSettings.storeName || 'ARPELLA STORE', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' } },
-      { type: 'text', value: storeSettings.storeAddress || 'Ngong, Matasia', style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
-      { type: 'text', value: `TELEPHONE NO: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`, style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
-      { type: 'text', value: 'SALES RECEIPT', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '14px', marginBottom: '8px' } },
-      { type: 'text', value: `Order #: ${orderNumber}`, style: { fontSize: '12px', marginBottom: '3px' } },
-      { type: 'text', value: `Date: ${new Date().toLocaleString('en-KE')}`, style: { fontSize: '12px', marginBottom: '3px' } },
-      { type: 'text', value: `Served by: ${user.fullName || user.username || 'Staff'}`, style: { fontSize: '12px', marginBottom: customerPhone ? '3px' : '8px' } }
-    );
-
-    if (customerPhone) {
-      printData.push({ type: 'text', value: `Customer: ${customerPhone}`, style: { fontSize: '12px', marginBottom: '8px' } });
-    }
-
-    printData.push({ type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } });
-
-    // Normalize items
-    for (const rawItem of cart) {
-      const name = rawItem.productName || rawItem.name || rawItem.title || 'Unknown Item';
-      const qty = Number(rawItem.quantity || rawItem.qty || 0);
-      const sellingPrice = Number(rawItem.sellingPrice ?? rawItem.price ?? rawItem.salePrice ?? rawItem.unitPrice ?? 0);
-      const itemTotal = qty * sellingPrice;
-
-      printData.push(
-        { type: 'text', value: name, style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '2px' } },
-        { type: 'text', value: `  ${qty} x ${formatCurrency(sellingPrice)} = ${formatCurrency(itemTotal)}`, style: { fontSize: '12px', marginBottom: '5px' } }
-      );
-    }
-
-    printData.push(
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
-      { type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { fontWeight: 'bold', fontSize: '16px', textAlign: 'right', marginBottom: '5px' } }
-    );
-
-    if (paymentType === 'cash') {
-      printData.push(
-        { type: 'text', value: `Cash: ${formatCurrency(cashAmount)}`, style: { fontSize: '13px', textAlign: 'right', marginBottom: '3px' } },
-        { type: 'text', value: `Change: ${formatCurrency(Math.max(0, cashAmount - cartTotal))}`, style: { fontSize: '13px', textAlign: 'right', marginBottom: '8px' } }
-      );
-    } else if (paymentType === 'mpesa') {
-      printData.push({ type: 'text', value: 'Payment: M-PESA', style: { fontSize: '13px', textAlign: 'right', marginBottom: '8px' } });
-    }
-
-    printData.push(
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
-      { type: 'text', value: storeSettings.receiptFooter || 'Thank you for your business! Please come again', style: { textAlign: 'center', fontSize: '13px', marginBottom: '3px' } },
-      { type: 'text', value: 'Powered by Arpella POS', style: { textAlign: 'center', fontSize: '10px', marginBottom: '20px' } }
-    );
-
-    log.info('print-receipt: printing to', printerName || 'default', 'items:', cart.length, 'printData length:', printData.length);
-
-    // Try PosPrinter
-    if (PosPrinter) {
-      try {
-        await PosPrinter.print(printData, options);
-        log.info('Receipt printed successfully to:', printerName || 'default printer');
-        return { success: true, message: 'Receipt printed successfully' };
-      } catch (posErr) {
-        log.error('PosPrinter.print failed:', errToString(posErr), posErr);
-
-        // If image exists, try image->temp file fallback
-        const imageEntry = printData.find(p => p.type === 'image');
-        if (imageEntry && typeof imageEntry.url === 'string' && imageEntry.url.startsWith('data:')) {
-          let tmpPath = null;
-          try {
-            // extract base64 and write to temp file
-            const matches = imageEntry.url.match(/^data:(image\/[a-zA-Z0-9+.]+);base64,(.*)$/);
-            if (matches) {
-              const b64 = matches[2];
-              const mime = matches[1];
-              const ext = mime.includes('png') ? '.png' : mime.includes('jpeg') ? '.jpg' : '.img';
-              const tempName = `arpella_logo_${Date.now()}_${Math.floor(Math.random()*10000)}${ext}`;
-              tmpPath = path.join(app.getPath('temp') || require('os').tmpdir(), tempName);
-              await fs.promises.writeFile(tmpPath, Buffer.from(b64, 'base64'));
-              // replace url
-              const printDataWithPath = printData.map(p => p.type === 'image' ? ({ ...p, url: tmpPath }) : p);
-              try {
-                log.info('Retrying print with logo as temp file path:', tmpPath);
-                await PosPrinter.print(printDataWithPath, options);
-                log.info('Receipt printed successfully (image temp-file fallback)');
-                // clean up temp file
-                try { await fs.promises.unlink(tmpPath); } catch (e) { /* ignore */ }
-                return { success: true, message: 'Receipt printed (image file fallback)' };
-              } catch (retryErr) {
-                log.error('Retry with temp-file image failed:', errToString(retryErr), retryErr);
-                try { await fs.promises.unlink(tmpPath); } catch (e) { /* ignore */ }
-              }
-            }
-          } catch (imgErr) {
-            log.warn('Image temp-file fallback failed to write/process:', errToString(imgErr), imgErr);
-            try { if (tmpPath) await fs.promises.unlink(tmpPath); } catch (e) { /* ignore */ }
-          }
-        }
-
-        // Try no-image fallback
-        const printDataNoImage = printData.filter(p => p.type !== 'image');
-        if (printDataNoImage.length < printData.length) {
-          try {
-            log.info('Retrying print without images as fallback...');
-            await PosPrinter.print(printDataNoImage, options);
-            log.info('Receipt printed successfully (no-image fallback)');
-            return { success: true, message: 'Receipt printed (no-image fallback)' };
-          } catch (noImgErr) {
-            log.error('No-image fallback failed:', errToString(noImgErr), noImgErr);
-          }
-        }
-      }
-    }
-
-    // fallback to thermalHandlerInstance if provided
-    if (thermalHandlerInstance && typeof thermalHandlerInstance.print === 'function') {
-      try {
-        const result = await thermalHandlerInstance.print({ orderData, printData, options, printerName });
-        log.info('Thermal handler printed successfully:', result);
-        return { success: true, message: 'Receipt printed successfully (thermal handler)' };
-      } catch (handlerErr) {
-        log.error('Thermal handler print failed:', errToString(handlerErr), handlerErr);
-        return { success: false, message: `Print failed: ${errToString(handlerErr)}` };
-      }
-    }
-
-    const msg = 'Print failed: all print backends failed';
-    log.error(msg);
-    return { success: false, message: msg };
-  } catch (error) {
-    log.error('Print receipt failed (exception):', error);
-    return { success: false, message: `Print failed: ${errToString(error)}` };
-  }
-});
-
-// logo check
-ipcMain.handle('check-receipt-logo', async () => {
-  try {
-    const logoPath = resolveLogoPath();
-    const logoBase64 = await getLogoBase64();
-    return {
-      available: !!logoBase64,
-      path: logoPath,
-      size: logoBase64 ? Buffer.byteLength(logoBase64, 'utf8') : 0
-    };
-  } catch (error) {
-    log.error('Failed to check receipt logo:', error);
-    return { available: false, error: errToString(error) };
-  }
-});
-
-// printer status
-ipcMain.handle('check-printer-status', async (event, printerName) => {
-  try {
-    const printers = await getAllAvailablePrinters();
-    if (!printerName) {
-      return { available: printers.length > 0, printers, count: printers.length };
-    }
-    const found = printers.find(p => p.name === printerName);
-    return { available: !!found, printers, printer: found, status: found ? found.status : 'not_found' };
-  } catch (error) {
-    log.error('Failed to check printer status:', error);
-    return { available: false, printers: [], error: errToString(error) };
-  }
-});
-
-// printer capabilities
-ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
-  try {
-    const printers = await getAllAvailablePrinters();
-    const printer = printers.find(p => p.name === printerName);
-    if (!printer) return { success: false, message: 'Printer not found' };
-
-    const capabilities = {
-      name: printer.name,
-      status: printer.status,
-      isDefault: printer.isDefault || false,
-      canPrint: printer.status === 'idle',
-      supportsThermal: printer.name.toLowerCase().includes('thermal') ||
-                       printer.name.toLowerCase().includes('pos') ||
-                       printer.name.toLowerCase().includes('epson') ||
-                       printer.name.toLowerCase().includes('star'),
-      ...printer.options
-    };
-
-    log.info('Printer capabilities for', printerName, ':', capabilities);
-    return { success: true, capabilities };
-  } catch (error) {
-    log.error('Failed to get printer capabilities:', error);
-    return { success: false, message: errToString(error) };
-  }
-});
-
-// single instance & lifecycle
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
-});
-
-app.commandLine.appendSwitch('disable-http2');
-
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // instantiate optional thermal handler if provided
   if (ThermalHandlerClass) {
     try {
       thermalHandlerInstance = new ThermalHandlerClass();
-      log.info('Thermal handler instantiated');
+      log.info('Custom thermal handler instantiated');
     } catch (err) {
-      log.error('Failed to instantiate thermal handler', err);
+      log.warn('Failed to instantiate thermal handler (ignored):', err && err.message ? err.message : err);
       thermalHandlerInstance = null;
     }
-  } else {
-    log.info('Using electron-pos-printer for thermal printing');
   }
 
   createMainWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
-    else if (mainWindow) mainWindow.show();
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-ipcMain.on('log', (ev, msg) => log.info('Renderer log:', msg));
-ipcMain.on('open-devtools', () => mainWindow && mainWindow.webContents.openDevTools());
-ipcMain.on('close-devtools', () => mainWindow && mainWindow.webContents.closeDevTools());
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

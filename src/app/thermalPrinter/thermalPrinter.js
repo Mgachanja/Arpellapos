@@ -1,98 +1,70 @@
-// src/app/thermalPrinter/thermalPrinter.js
+// src/utils/thermalPrinter.js
 import { toast } from 'react-toastify';
 
-const { ipcRenderer } = (typeof window !== 'undefined' && window.require) ? window.require('electron') : { ipcRenderer: null };
+let ipcRenderer = null;
+try {
+  ipcRenderer = (typeof window !== 'undefined' && window.require)
+    ? window.require('electron').ipcRenderer
+    : null;
+} catch (err) {
+  ipcRenderer = null;
+}
 
+// Helper: determine if running inside Electron renderer
 const isElectron = () => {
-  return typeof window !== 'undefined' && window.process && window.process.type === 'renderer' && ipcRenderer;
+  return !!(ipcRenderer && typeof window !== 'undefined' && window.process && window.process.type === 'renderer');
 };
 
-// Small renderer-side cache to avoid hammering IPC frequently
-const PRINTER_TTL_MS = 3000;
-let _printerCache = { data: null, ts: 0, inFlight: null };
-
-function formatError(err, maxLength = 400) {
-  if (!err && err !== 0) return 'Unknown error';
-  // If it's a string already, return trimmed
-  if (typeof err === 'string') return err.length > maxLength ? err.slice(0, maxLength) + '…' : err;
-  // If it's an Error instance
-  if (err instanceof Error) {
-    const msg = err.message || String(err);
-    return msg.length > maxLength ? msg.slice(0, maxLength) + '…' : msg;
-  }
-  // If it's an object, try common fields
-  try {
-    if (typeof err === 'object') {
-      if (err.message && typeof err.message === 'string') {
-        return err.message.length > maxLength ? err.message.slice(0, maxLength) + '…' : err.message;
-      }
-      if (err.error && typeof err.error === 'string') {
-        return err.error.length > maxLength ? err.error.slice(0, maxLength) + '…' : err.error;
-      }
-      if (err.data && typeof err.data === 'string') {
-        return err.data.length > maxLength ? err.data.slice(0, maxLength) + '…' : err.data;
-      }
-      // Fall back to JSON.stringify but limit depth/size
-      const json = JSON.stringify(err, replacerForStringify, 2);
-      return json.length > maxLength ? json.slice(0, maxLength) + '…' : json;
+// Helper: convert various error/result shapes to a safe string for toast
+function safeMessage(input, fallback = 'An unexpected error occurred') {
+  if (!input) return fallback;
+  if (typeof input === 'string') return input;
+  if (input instanceof Error) return input.message || String(input);
+  if (typeof input === 'object') {
+    if (input.message) return String(input.message);
+    if (input.error) return String(input.error);
+    try {
+      return JSON.stringify(input);
+    } catch (err) {
+      return String(input);
     }
-  } catch (e) {
-    // fallback
   }
-  // Fallback generic conversion
   try {
-    const s = String(err);
-    return s.length > maxLength ? s.slice(0, maxLength) + '…' : s;
-  } catch (e) {
-    return 'Unknown error';
+    return String(input);
+  } catch (err) {
+    return fallback;
   }
 }
 
-function replacerForStringify(key, value) {
-  // avoid circular structures or huge nested objects: replace functions and DOM nodes
-  if (typeof value === 'function') return `[Function ${value.name || 'anonymous'}]`;
-  if (value instanceof Element) return `[Element ${value.tagName}]`;
-  return value;
+// Helper: normalize result from ipcRenderer.invoke to { success, message, data }
+function normalizeIpcResult(res) {
+  if (res == null) return { success: true, message: '', data: null };
+  if (typeof res === 'object') {
+    const success = ('success' in res) ? Boolean(res.success) : true;
+    const message = res.message || res.error || '';
+    const data = res.data !== undefined ? res.data : res;
+    return { success, message: safeMessage(message, ''), data };
+  }
+  // primitive truthy/falsey
+  return { success: Boolean(res), message: '', data: res };
 }
 
 export const getThermalPrinters = async () => {
   if (!isElectron()) {
-    console.warn('Not in Electron environment');
+    console.warn('Not in Electron environment (getThermalPrinters)');
     return [];
   }
 
-  const now = Date.now();
-  if (_printerCache.data && (now - _printerCache.ts) < PRINTER_TTL_MS) {
-    return _printerCache.data;
+  try {
+    const res = await ipcRenderer.invoke('get-printers');
+    const { success, data } = normalizeIpcResult(res);
+    // data expected to be array; if not, fallback to empty array
+    return Array.isArray(data) ? data : (Array.isArray(res) ? res : []);
+  } catch (error) {
+    console.error('getThermalPrinters error:', error);
+    toast.error(safeMessage(error, 'Failed to get available printers'));
+    return [];
   }
-
-  if (_printerCache.inFlight) {
-    try {
-      return await _printerCache.inFlight;
-    } catch (err) {
-      _printerCache.inFlight = null;
-    }
-  }
-
-  _printerCache.inFlight = (async () => {
-    try {
-      const printers = await ipcRenderer.invoke('get-printers');
-      _printerCache.data = printers || [];
-      _printerCache.ts = Date.now();
-      _printerCache.inFlight = null;
-      return _printerCache.data;
-    } catch (error) {
-      console.error('Failed to get printers (renderer):', error);
-      const msg = formatError(error, 200);
-      toast.error(`Failed to get available printers: ${msg}`);
-      _printerCache.data = [];
-      _printerCache.ts = Date.now();
-      _printerCache.inFlight = null;
-      return [];
-    }
-  })();
-
-  return await _printerCache.inFlight;
 };
 
 export const connectThermalPrinter = async (printerName = '') => {
@@ -102,33 +74,40 @@ export const connectThermalPrinter = async (printerName = '') => {
   }
 
   try {
-    const status = await ipcRenderer.invoke('check-printer-status', printerName);
-    if (status && status.available) {
+    const res = await ipcRenderer.invoke('check-printer-status', printerName);
+    const { success, data, message } = normalizeIpcResult(res);
+    // check-printer-status returns object with available boolean or success flag
+    const available = (data && data.available) || (res && res.available) || (!!success && !!(data && (data.count || data.printers)));
+    if (available) {
+      toast.success('Printer is ready');
       return true;
     } else {
-      const reason = status && (status.message || status.error) ? formatError(status, 200) : 'Printer not available';
-      toast.error(`Printer not available: ${reason}`);
+      const userMsg = message || (data && data.message) || 'No thermal printer found';
+      toast.error(safeMessage(userMsg, 'No thermal printer found'));
       return false;
     }
   } catch (error) {
-    console.error('Failed to connect to printer (renderer):', error);
-    toast.error(`Connection failed: ${formatError(error, 200)}`);
+    console.error('connectThermalPrinter error:', error);
+    toast.error(safeMessage(error, 'Connection failed'));
     return false;
   }
 };
 
 export const disconnectThermalPrinter = async () => {
+  // electron-pos-printer doesn't require explicit disconnect; keep API for parity
   toast.info('Printer disconnected');
   return true;
 };
 
 export const isThermalPrinterConnected = async (printerName = '') => {
   if (!isElectron()) return false;
+
   try {
-    const status = await ipcRenderer.invoke('check-printer-status', printerName);
-    return Boolean(status && status.available);
+    const res = await ipcRenderer.invoke('check-printer-status', printerName);
+    const { data, message } = normalizeIpcResult(res);
+    return !!(data && data.available) || !!(res && res.available);
   } catch (error) {
-    console.error('Failed to check printer status (renderer):', error);
+    console.error('isThermalPrinterConnected error:', error);
     return false;
   }
 };
@@ -140,20 +119,18 @@ export const testThermalPrinter = async (printerName = '') => {
   }
 
   try {
-    const result = await ipcRenderer.invoke('test-thermal-printer', printerName);
-    // normalize response shapes: support { success: true } or { ok: true } etc.
-    if (result && (result.success === true || result.ok === true)) {
-      toast.success('Test print sent');
+    const res = await ipcRenderer.invoke('test-thermal-printer', printerName);
+    const { success, message } = normalizeIpcResult(res);
+    if (success) {
+      toast.success('Test print sent successfully');
       return true;
     } else {
-      const messageCandidate = (result && (result.message || result.error || result.msg)) || 'Test print failed';
-      const msg = formatError(messageCandidate, 300);
-      toast.error(`Test print failed: ${msg}`);
+      toast.error(safeMessage(message, 'Test print failed'));
       return false;
     }
   } catch (error) {
-    console.error('Test print failed (renderer):', error);
-    toast.error(`Test print failed: ${formatError(error, 300)}`);
+    console.error('testThermalPrinter error:', error);
+    toast.error(safeMessage(error, 'Test print failed'));
     return false;
   }
 };
@@ -165,30 +142,34 @@ export const printOrderReceipt = async (orderData, printerName = '', storeSettin
   }
 
   try {
+    // fallback: try to load saved store settings when none passed
     let settings = storeSettings;
     if (!settings || Object.keys(settings).length === 0) {
       try {
         const saved = localStorage.getItem('thermalPrinterStoreSettings');
         if (saved) settings = JSON.parse(saved);
-      } catch (error) {
-        console.warn('Failed to load store settings (renderer) for print:', error);
+      } catch (err) {
+        // ignore parse errors; settings will be {}
+        console.warn('Failed to parse saved store settings for print:', err);
       }
     }
 
-    const result = await ipcRenderer.invoke('print-receipt', orderData, printerName, settings);
-    if (result && (result.success === true || result.ok === true)) {
+    const res = await ipcRenderer.invoke('print-receipt', orderData, printerName, settings);
+    const { success, message } = normalizeIpcResult(res);
+
+    if (success) {
       toast.success('Receipt printed successfully');
       return true;
     } else {
-      const message = (result && (result.message || result.error || result.msg)) ? formatError(result.message || result.error || result.msg, 400) : 'Unknown print error';
-      toast.error(`Print failed: ${message}`);
-      throw new Error(message);
+      const msg = message || 'Print failed';
+      toast.error(safeMessage(msg));
+      throw new Error(msg);
     }
   } catch (error) {
-    console.error('Print receipt failed (renderer):', error);
-    const msg = formatError(error, 400);
-    toast.error(`Print failed: ${msg}`);
-    throw new Error(msg);
+    console.error('printOrderReceipt error:', error);
+    const m = safeMessage(error, 'Print failed');
+    toast.error(m);
+    throw new Error(m);
   }
 };
 
@@ -196,7 +177,7 @@ export const getSavedPrinter = () => {
   try {
     return localStorage.getItem('selectedThermalPrinter') || '';
   } catch (error) {
-    console.error('Failed to get saved printer:', error);
+    console.error('getSavedPrinter error:', error);
     return '';
   }
 };
@@ -205,7 +186,7 @@ export const savePrinterPreference = (printerName) => {
   try {
     localStorage.setItem('selectedThermalPrinter', printerName);
   } catch (error) {
-    console.error('Failed to save printer preference:', error);
+    console.error('savePrinterPreference error:', error);
   }
 };
 

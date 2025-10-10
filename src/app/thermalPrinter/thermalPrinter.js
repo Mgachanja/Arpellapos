@@ -79,7 +79,7 @@ export const testThermalPrinter = async (printerName = '') => {
       toast.success('Test print sent successfully');
       return true;
     } else {
-      toast.error(`Test print failed: ${result.message}`);
+      toast.error(`Test print failed: ${result}`);
       return false;
     }
   } catch (error) {

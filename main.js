@@ -1,4 +1,4 @@
-// main.js (fixed)
+// main.js (fixed auto-updater)
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -44,36 +44,44 @@ try {
 
 // Auto-updater configuration and event handlers
 function setupAutoUpdater() {
-  // Configure auto-updater
-  autoUpdater.checkForUpdatesAndNotify();
+  // Configure auto-updater options
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false; // We want manual control
   
-  // Auto-updater events
+  log.info('Setting up auto-updater...');
+  
+  // Auto-updater events - send granular events to renderer
   autoUpdater.on('checking-for-update', () => {
     log.info('Checking for update...');
+    sendUpdateEvent('update-checking');
     sendUpdateMessage('Checking for updates...');
   });
 
   autoUpdater.on('update-available', (info) => {
     log.info('Update available:', info);
+    sendUpdateEvent('update-available', info);
     sendUpdateMessage(`Update available: v${info.version}`);
   });
 
   autoUpdater.on('update-not-available', (info) => {
     log.info('Update not available:', info);
-    sendUpdateMessage('Update not available - you are running the latest version');
+    sendUpdateEvent('update-not-available', info);
+    sendUpdateMessage('No updates available');
   });
 
   autoUpdater.on('error', (err) => {
     log.error('Error in auto-updater:', err);
+    sendUpdateEvent('update-error', { message: err.message, stack: err.stack });
     sendUpdateMessage(`Update error: ${err.message}`);
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
-    let log_message = `Download speed: ${progressObj.bytesPerSecond}`;
-    log_message += ` - Downloaded ${progressObj.percent}%`;
-    log_message += ` (${progressObj.transferred}/${progressObj.total})`;
+    const log_message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
     log.info(log_message);
     
+    sendUpdateEvent('update-download-progress', progressObj);
+    
+    // Also send legacy event for backwards compatibility
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('download-progress', progressObj);
     }
@@ -81,10 +89,24 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     log.info('Update downloaded:', info);
+    sendUpdateEvent('update-downloaded', info);
     sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
+  });
+  
+  // Start checking for updates
+  autoUpdater.checkForUpdatesAndNotify().catch(err => {
+    log.error('Initial update check failed:', err);
   });
 }
 
+// Helper to send update events to renderer
+function sendUpdateEvent(eventName, data = null) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(eventName, data);
+  }
+}
+
+// Helper to send update messages to renderer (legacy)
 function sendUpdateMessage(message) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-message', message);
@@ -94,7 +116,9 @@ function sendUpdateMessage(message) {
 // IPC handlers for auto-updater
 ipcMain.handle('check-for-updates', async () => {
   try {
+    log.info('Manual update check requested');
     const result = await autoUpdater.checkForUpdates();
+    log.info('Update check result:', result);
     return { success: true, result };
   } catch (error) {
     log.error('Manual update check failed:', error);
@@ -104,6 +128,9 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('quit-and-install', async () => {
   try {
+    log.info('Quit and install requested');
+    // The second parameter (isSilent) = false means show the installer
+    // The third parameter (isForceRunAfter) = true means restart after install
     autoUpdater.quitAndInstall(false, true);
     return { success: true };
   } catch (error) {
@@ -113,7 +140,9 @@ ipcMain.handle('quit-and-install', async () => {
 });
 
 ipcMain.handle('get-app-version', () => {
-  return app.getVersion();
+  const version = app.getVersion();
+  log.info('App version requested:', version);
+  return version;
 });
 
 function resolveIconPath() {
@@ -265,9 +294,9 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     
-    // Initialize auto-updater after window is ready
+    // Initialize auto-updater after window is ready (only in production)
     if (!isDev) {
-      log.info('Initializing auto-updater...');
+      log.info('Initializing auto-updater in 3 seconds...');
       setTimeout(() => {
         setupAutoUpdater();
       }, 3000); // Wait 3 seconds after app is ready
@@ -332,9 +361,7 @@ async function getAllAvailablePrinters() {
   }
 }
 
-// ---- ✅ ENHANCED IPC HANDLERS (printers, thermal, etc.) ----
-// Note: these are the original handlers — kept as-is and only registered once.
-// If you ever reload code in dev, ensure these don't get re-registered.
+// ---- IPC HANDLERS ----
 
 ipcMain.handle('get-printers', async () => {
   try {
@@ -605,14 +632,184 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           fontSize: '12px',
           marginBottom: '8px'
         }
+      },
+      {
+        type: 'text',
+        value: 'SALES RECEIPT',
+        style: {
+          textAlign: 'center',
+          fontWeight: 'bold',
+          fontSize: '14px',
+          marginBottom: '8px'
+        }
+      },
+      {
+        type: 'text',
+        value: `Order #: ${orderNumber}`,
+        style: {
+          fontSize: '12px',
+          marginBottom: '3px'
+        }
+      },
+      {
+        type: 'text',
+        value: `Date: ${new Date().toLocaleString('en-KE')}`,
+        style: {
+          fontSize: '12px',
+          marginBottom: '3px'
+        }
+      },
+      {
+        type: 'text',
+        value: `Served by: ${user.fullName || user.username || 'Staff'}`,
+        style: {
+          fontSize: '12px',
+          marginBottom: customerPhone ? '3px' : '8px'
+        }
       }
-      // ... (printing content continues, unchanged)
     );
 
-    // Build and print the rest of receipt (kept unchanged)
-    // NOTE: omitted repeating every line here to keep file readable - in your real file,
-    // keep the full printData push logic that existed previously.
-    // For completeness, your original printData logic remains below in your real file.
+    if (customerPhone) {
+      printData.push({
+        type: 'text',
+        value: `Customer: ${customerPhone}`,
+        style: {
+          fontSize: '12px',
+          marginBottom: '8px'
+        }
+      });
+    }
+
+    printData.push({
+      type: 'text',
+      value: '================================',
+      style: {
+        textAlign: 'center',
+        fontSize: '12px',
+        marginBottom: '8px'
+      }
+    });
+
+    // Cart items
+    cart.forEach((item, index) => {
+      const itemTotal = Number(item.quantity || 0) * Number(item.sellingPrice || 0);
+      
+      printData.push(
+        {
+          type: 'text',
+          value: item.productName || 'Unknown Item',
+          style: {
+            fontWeight: 'bold',
+            fontSize: '13px',
+            marginBottom: '2px'
+          }
+        },
+        {
+          type: 'text',
+          value: `  ${item.quantity} x ${formatCurrency(item.sellingPrice)} = ${formatCurrency(itemTotal)}`,
+          style: {
+            fontSize: '12px',
+            marginBottom: '5px'
+          }
+        }
+      );
+    });
+
+    printData.push(
+      {
+        type: 'text',
+        value: '================================',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px',
+          marginBottom: '5px'
+        }
+      },
+      {
+        type: 'text',
+        value: `TOTAL: ${formatCurrency(cartTotal)}`,
+        style: {
+          fontWeight: 'bold',
+          fontSize: '16px',
+          textAlign: 'right',
+          marginBottom: '5px'
+        }
+      }
+    );
+
+    // Payment details
+    if (paymentType === 'cash') {
+      printData.push(
+        {
+          type: 'text',
+          value: `Cash: ${formatCurrency(cashAmount)}`,
+          style: {
+            fontSize: '13px',
+            textAlign: 'right',
+            marginBottom: '3px'
+          }
+        },
+        {
+          type: 'text',
+          value: `Change: ${formatCurrency(change)}`,
+          style: {
+            fontSize: '13px',
+            textAlign: 'right',
+            marginBottom: '8px'
+          }
+        }
+      );
+    } else if (paymentType === 'mpesa') {
+      printData.push({
+        type: 'text',
+        value: 'Payment: M-PESA',
+        style: {
+          fontSize: '13px',
+          textAlign: 'right',
+          marginBottom: '8px'
+        }
+      });
+    }
+
+    printData.push(
+      {
+        type: 'text',
+        value: '================================',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px',
+          marginBottom: '8px'
+        }
+      },
+      {
+        type: 'text',
+        value: 'Thank you for your business!',
+        style: {
+          textAlign: 'center',
+          fontSize: '13px',
+          marginBottom: '3px'
+        }
+      },
+      {
+        type: 'text',
+        value: 'Please come again',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px',
+          marginBottom: '10px'
+        }
+      },
+      {
+        type: 'text',
+        value: 'Powered by Arpella POS',
+        style: {
+          textAlign: 'center',
+          fontSize: '10px',
+          marginBottom: '20px'
+        }
+      }
+    );
+
     await PosPrinter.print(printData, options);
     log.info('Receipt printed successfully to:', printerName || 'default printer');
     return { success: true, message: 'Receipt printed successfully' };
@@ -709,7 +906,9 @@ app.on('second-instance', () => {
     mainWindow.focus();
   }
 });
+
 app.commandLine.appendSwitch('disable-http2');
+
 app.whenReady().then(() => {
   if (ThermalHandlerClass) {
     try {

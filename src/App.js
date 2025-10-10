@@ -50,7 +50,7 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   );
 }
 
-// === Auto Update Status Component (improved, matches main.js events) ===
+// === Auto Update Status Component (fixed IPC handler names) ===
 function AutoUpdateStatus() {
   const [updateStatus, setUpdateStatus] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -58,6 +58,7 @@ function AutoUpdateStatus() {
   const [currentVersion, setCurrentVersion] = useState('');
   const [showUpdatePanel, setShowUpdatePanel] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null);
 
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -79,15 +80,18 @@ function AutoUpdateStatus() {
     };
 
     const onAvailable = (event, info) => {
+      setUpdateInfo(info);
       setUpdateStatus(`Update available: v${info?.version || ''}`);
       setUpdateAvailable(true);
       setShowUpdatePanel(true);
+      setIsChecking(false);
       toast.info('New update available — downloading in background.', { position: 'top-right', autoClose: 4000 });
     };
 
     const onNotAvailable = () => {
       setUpdateStatus('No updates available');
       setUpdateAvailable(false);
+      setIsChecking(false);
       if (isChecking) {
         toast.info('You are running the latest version.', { position: 'top-right', autoClose: 3000 });
       }
@@ -100,9 +104,11 @@ function AutoUpdateStatus() {
     };
 
     const onDownloaded = (event, info) => {
+      setUpdateInfo(info);
       setDownloadProgress(100);
       setUpdateStatus('Update downloaded');
       setUpdateAvailable(true);
+      setShowUpdatePanel(true);
       toast.success('Update downloaded — click Install & Restart to apply.', { autoClose: false });
     };
 
@@ -110,6 +116,7 @@ function AutoUpdateStatus() {
       const msg = err?.message || String(err);
       console.error('AutoUpdater error:', msg);
       setUpdateStatus(`Update error: ${msg}`);
+      setIsChecking(false);
       toast.error('Update error: ' + msg, { autoClose: 5000 });
     };
 
@@ -123,7 +130,6 @@ function AutoUpdateStatus() {
 
     // Backwards compatibility: also subscribe to legacy channels if used
     ipcRenderer.on('update-message', (e, text) => {
-      // keep textual messages in sync with granular state
       setUpdateStatus(text || '');
       if (typeof text === 'string' && text.toLowerCase().includes('update available')) {
         setUpdateAvailable(true);
@@ -158,25 +164,39 @@ function AutoUpdateStatus() {
         const msg = res.error || res.message || 'Check failed';
         setUpdateStatus(msg);
         toast.error(msg);
+        setIsChecking(false);
       }
+      // Don't set isChecking to false here - let the event handlers do it
     } catch (err) {
       console.error('checkForUpdates failed', err);
-      setUpdateStatus('Update check failed');
-      toast.error('Update check failed');
-    } finally {
+      setUpdateStatus('Update check failed: ' + (err?.message || String(err)));
+      toast.error('Update check failed: ' + (err?.message || String(err)));
       setIsChecking(false);
     }
   };
 
-  // Install and restart
+  // Install and restart - FIXED: using correct handler name
   const installUpdate = async () => {
     if (!ipcRenderer) return;
     try {
-      await ipcRenderer.invoke('install-update'); // alias exposed in main.js
-      // app will quit & install if no errors
+      toast.info('Installing update and restarting...', { autoClose: 2000 });
+      
+      // Use the correct handler name that matches main.js
+      const result = await ipcRenderer.invoke('quit-and-install');
+      
+      if (result && result.success === false) {
+        throw new Error(result.error || 'Installation failed');
+      }
+      
+      // App should quit and install at this point
+      // If we reach here, something might be wrong
+      setTimeout(() => {
+        toast.warn('Installation may have failed - app did not restart', { autoClose: 5000 });
+      }, 3000);
+      
     } catch (err) {
       console.error('installUpdate failed', err);
-      toast.error('Failed to install update: ' + (err?.message || String(err)));
+      toast.error('Failed to install update: ' + (err?.message || String(err)), { autoClose: 5000 });
     }
   };
 
@@ -248,22 +268,41 @@ function AutoUpdateStatus() {
             <div className={getStatusColor()}>{updateStatus || 'Ready to check for updates'}</div>
           </div>
 
-          {downloadProgress > 0 && (
+          {updateInfo && updateAvailable && (
+            <div className="mb-2 p-2 bg-light rounded small">
+              <strong>New Version:</strong> v{updateInfo.version}
+              {updateInfo.releaseDate && (
+                <div className="text-muted">
+                  Released: {new Date(updateInfo.releaseDate).toLocaleDateString()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {downloadProgress > 0 && downloadProgress < 100 && (
             <div className="mb-3">
               <div className="small mb-1">Downloading: {downloadProgress}%</div>
               <div className="progress" style={{ height: 8 }}>
-                <div className="progress-bar" role="progressbar" style={{ width: `${downloadProgress}%` }} aria-valuenow={downloadProgress} aria-valuemin="0" aria-valuemax="100" />
+                <div className="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style={{ width: `${downloadProgress}%` }} aria-valuenow={downloadProgress} aria-valuemin="0" aria-valuemax="100" />
               </div>
             </div>
           )}
 
           <div className="d-grid gap-2">
             <button className="btn btn-sm btn-primary" onClick={checkForUpdates} disabled={isChecking}>
-              {isChecking ? 'Checking...' : 'Check for updates'}
+              {isChecking ? (
+                <>
+                  <span className="spinner-border spinner-border-sm me-2" />
+                  Checking...
+                </>
+              ) : (
+                'Check for updates'
+              )}
             </button>
 
             {updateAvailable && /downloaded/i.test(updateStatus) && (
               <button className="btn btn-sm btn-success" onClick={installUpdate}>
+                <i className="bi bi-download me-2"></i>
                 Install & Restart
               </button>
             )}
@@ -271,7 +310,8 @@ function AutoUpdateStatus() {
 
           <div className="mt-3 small text-muted border-top pt-2">
             • App checks for updates automatically on startup (packaged builds).<br/>
-            • Downloads happen in background. You have to manually install when ready.
+            • Downloads happen in background. You have to manually install when ready.<br/>
+            • The app will restart during installation.
           </div>
         </div>
       )}

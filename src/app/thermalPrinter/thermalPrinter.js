@@ -79,12 +79,12 @@ export const testThermalPrinter = async (printerName = '') => {
       toast.success('Test print sent successfully');
       return true;
     } else {
-      toast.error(`Test print failed: ${result}`);
+      toast.error(`Test print failed: ${String(result)}`);
       return false;
     }
   } catch (error) {
-    console.error('Test print failed:', error);
-    toast.error(`Test print failed: ${error}`);
+    console.error('Test print failed:',String(error));
+    toast.error(`Test print failed: ${String(error)}`);
     return false;
   }
 };
@@ -115,12 +115,12 @@ export const printOrderReceipt = async (orderData, printerName = '', storeSettin
       toast.success('Receipt printed successfully');
       return true;
     } else {
-      toast.error(`Print failed: ${result}`);
+      toast.error(`Print failed: ${String(result)}`);
       throw new Error(result.message);
     }
   } catch (error) {
-    console.error('Print receipt failed:', error);
-    toast.error(`Print failed: ${error}`);
+    console.error('Print receipt failed:', String(error));
+    toast.error(`Print failed: ${String(error)}`);
     throw error;
   }
 };

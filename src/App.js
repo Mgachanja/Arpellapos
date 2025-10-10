@@ -5,39 +5,28 @@ import { useSelector } from 'react-redux';
 import { ErrorBoundary } from 'react-error-boundary';
 import { toast } from 'react-toastify';
 
-// Pages & Layouts
 import Dashboard from './app/dashboard/index';
 import POS from './app/dashboard/POS';
 import LoginPage from './app/login';
 import ThermalPrinterSettings from './app/thermalPrinter/index.jsx';
 
-// Selectors from Redux
 import { selectUser } from './redux/slices/userSlice';
 
 // Detect Electron and get ipcRenderer safely
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
 
-// Error boundary fallback component
 function ErrorFallback({ error, resetErrorBoundary }) {
   return (
     <div className="min-vh-100 d-flex align-items-center justify-content-center">
       <div className="text-center">
         <h2 className="text-danger mb-3">Something went wrong</h2>
-        <p className="text-muted mb-4">
-          {error?.message || 'An unexpected error occurred'}
-        </p>
+        <p className="text-muted mb-4">{error?.message || 'An unexpected error occurred'}</p>
         <div>
-          <button
-            className="btn btn-primary me-2"
-            onClick={resetErrorBoundary}
-          >
+          <button className="btn btn-primary me-2" onClick={resetErrorBoundary}>
             Try again
           </button>
-          <button
-            className="btn btn-outline-secondary"
-            onClick={() => window.location.reload()}
-          >
+          <button className="btn btn-outline-secondary" onClick={() => window.location.reload()}>
             Reload page
           </button>
         </div>
@@ -50,7 +39,6 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   );
 }
 
-// === Auto Update Status Component (fixed IPC handler names) ===
 function AutoUpdateStatus() {
   const [updateStatus, setUpdateStatus] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -63,25 +51,27 @@ function AutoUpdateStatus() {
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    // Get current version from main
+    let mounted = true;
+
     (async () => {
       try {
-        const version = await ipcRenderer.invoke('get-app-version');
-        setCurrentVersion(version || '');
+        const res = await safeInvoke('get-app-version');
+        if (!mounted) return;
+        if (res && res.success && res.version) setCurrentVersion(res.version);
+        else if (typeof res === 'string') setCurrentVersion(res);
       } catch (err) {
-        console.warn('get-app-version failed', err);
+        // ignore - optional
       }
     })();
 
-    // Handlers
     const onChecking = () => {
       setUpdateStatus('Checking for updates...');
       setIsChecking(true);
     };
 
     const onAvailable = (event, info) => {
-      setUpdateInfo(info);
-      setUpdateStatus(`Update available: v${info?.version || ''}`);
+      setUpdateInfo(info || null);
+      setUpdateStatus(`Update available: v${(info && info.version) || ''}`);
       setUpdateAvailable(true);
       setShowUpdatePanel(true);
       setIsChecking(false);
@@ -92,9 +82,7 @@ function AutoUpdateStatus() {
       setUpdateStatus('No updates available');
       setUpdateAvailable(false);
       setIsChecking(false);
-      if (isChecking) {
-        toast.info('You are running the latest version.', { position: 'top-right', autoClose: 3000 });
-      }
+      toast.info('You are running the latest version.', { position: 'top-right', autoClose: 2500 });
     };
 
     const onProgress = (event, progress) => {
@@ -104,7 +92,7 @@ function AutoUpdateStatus() {
     };
 
     const onDownloaded = (event, info) => {
-      setUpdateInfo(info);
+      setUpdateInfo(info || null);
       setDownloadProgress(100);
       setUpdateStatus('Update downloaded');
       setUpdateAvailable(true);
@@ -113,14 +101,13 @@ function AutoUpdateStatus() {
     };
 
     const onError = (event, err) => {
-      const msg = err?.message || String(err);
-      console.error('AutoUpdater error:', msg);
+      const msg = (err && (err.message || err.toString())) || 'Update error';
       setUpdateStatus(`Update error: ${msg}`);
       setIsChecking(false);
-      toast.error('Update error: ' + msg, { autoClose: 5000 });
+      toast.error(`Update error: ${msg}`, { autoClose: 5000 });
     };
 
-    // Register listeners (names must match main.js)
+    // Register listeners (must match main)
     ipcRenderer.on('update-checking', onChecking);
     ipcRenderer.on('update-available', onAvailable);
     ipcRenderer.on('update-not-available', onNotAvailable);
@@ -128,76 +115,90 @@ function AutoUpdateStatus() {
     ipcRenderer.on('update-downloaded', onDownloaded);
     ipcRenderer.on('update-error', onError);
 
-    // Backwards compatibility: also subscribe to legacy channels if used
-    ipcRenderer.on('update-message', (e, text) => {
+    // Backwards/extra channels
+    const onUpdateMessage = (e, text) => {
       setUpdateStatus(text || '');
-      if (typeof text === 'string' && text.toLowerCase().includes('update available')) {
-        setUpdateAvailable(true);
-      }
-    });
-    ipcRenderer.on('download-progress', (e, progress) => {
+      if (typeof text === 'string' && text.toLowerCase().includes('update available')) setUpdateAvailable(true);
+    };
+    const onDownloadProgress = (e, progress) => {
       const pct = Math.round(progress?.percent || 0);
       setDownloadProgress(pct);
-    });
+    };
+
+    ipcRenderer.on('update-message', onUpdateMessage);
+    ipcRenderer.on('download-progress', onDownloadProgress);
 
     return () => {
-      ipcRenderer.removeListener('update-checking', onChecking);
-      ipcRenderer.removeListener('update-available', onAvailable);
-      ipcRenderer.removeListener('update-not-available', onNotAvailable);
-      ipcRenderer.removeListener('update-download-progress', onProgress);
-      ipcRenderer.removeListener('update-downloaded', onDownloaded);
-      ipcRenderer.removeListener('update-error', onError);
-
-      ipcRenderer.removeAllListeners('update-message');
-      ipcRenderer.removeAllListeners('download-progress');
+      mounted = false;
+      try {
+        ipcRenderer.removeListener('update-checking', onChecking);
+        ipcRenderer.removeListener('update-available', onAvailable);
+        ipcRenderer.removeListener('update-not-available', onNotAvailable);
+        ipcRenderer.removeListener('update-download-progress', onProgress);
+        ipcRenderer.removeListener('update-downloaded', onDownloaded);
+        ipcRenderer.removeListener('update-error', onError);
+        ipcRenderer.removeListener('update-message', onUpdateMessage);
+        ipcRenderer.removeListener('download-progress', onDownloadProgress);
+      } catch (e) {
+        // ignore cleanup errors
+      }
     };
-  }, [isChecking]);
+  }, []);
 
-  // Manual check trigger
+  // Utility: safe ipc invoke wrapper that normalizes result to { success, ... }
+  async function safeInvoke(channel, ...args) {
+    if (!ipcRenderer) return { success: false, message: 'Not running in Electron' };
+    try {
+      const res = await ipcRenderer.invoke(channel, ...args);
+      // Normalize many possible shapes:
+      if (res == null) return { success: true, data: null };
+      if (typeof res === 'object') {
+        // if it already has success boolean, return as-is
+        if ('success' in res) return res;
+        // if it looks like version string or info, wrap it
+        return { success: true, ...res };
+      }
+      // primitive
+      return { success: true, data: res, version: String(res) };
+    } catch (err) {
+      const message = (err && (err.message || String(err))) || 'IPC invoke failed';
+      return { success: false, message };
+    }
+  }
+
   const checkForUpdates = async () => {
     if (!ipcRenderer) return;
-    try {
-      setIsChecking(true);
-      setUpdateStatus('Checking for updates...');
-      const res = await ipcRenderer.invoke('check-for-updates');
-      if (res && res.success === false) {
-        const msg = res.error || res.message || 'Check failed';
-        setUpdateStatus(msg);
-        toast.error(msg);
-        setIsChecking(false);
-      }
-      // Don't set isChecking to false here - let the event handlers do it
-    } catch (err) {
-      console.error('checkForUpdates failed', err);
-      setUpdateStatus('Update check failed: ' + (err?.message || String(err)));
-      toast.error('Update check failed: ' + (err?.message || String(err)));
+    setIsChecking(true);
+    setUpdateStatus('Checking for updates...');
+    const res = await safeInvoke('check-for-updates');
+    if (!res) {
       setIsChecking(false);
+      setUpdateStatus('Update check failed');
+      toast.error('Update check failed');
+      return;
     }
+    if (!res.success) {
+      setIsChecking(false);
+      setUpdateStatus(res.message || 'Update check failed');
+      toast.error(res.message || 'Update check failed');
+      return;
+    }
+    // If successful, rely on main events to update UI (do not flip isChecking off here)
   };
 
-  // Install and restart - FIXED: using correct handler name
   const installUpdate = async () => {
     if (!ipcRenderer) return;
-    try {
-      toast.info('Installing update and restarting...', { autoClose: 2000 });
-      
-      // Use the correct handler name that matches main.js
-      const result = await ipcRenderer.invoke('quit-and-install');
-      
-      if (result && result.success === false) {
-        throw new Error(result.error || 'Installation failed');
-      }
-      
-      // App should quit and install at this point
-      // If we reach here, something might be wrong
-      setTimeout(() => {
-        toast.warn('Installation may have failed - app did not restart', { autoClose: 5000 });
-      }, 3000);
-      
-    } catch (err) {
-      console.error('installUpdate failed', err);
-      toast.error('Failed to install update: ' + (err?.message || String(err)), { autoClose: 5000 });
+    toast.info('Installing update and restarting...', { autoClose: 2000 });
+    const res = await safeInvoke('install-update'); // matches main handler name
+    if (!res || res.success === false) {
+      const msg = (res && (res.message || res.error)) || 'Install failed';
+      toast.error(`Failed to start install: ${msg}`);
+      return;
     }
+    // if main actually triggers quit & install, app will restart. If not, warn user.
+    setTimeout(() => {
+      toast.warn('If the app did not restart automatically, please restart manually.', { autoClose: 5000 });
+    }, 2500);
   };
 
   const getStatusColor = () => {
@@ -208,14 +209,12 @@ function AutoUpdateStatus() {
     return 'text-muted';
   };
 
-  // Improved Update Button
   const UpdateButton = () => (
     <button
       className={`btn btn-sm d-flex align-items-center ${updateAvailable ? 'btn-warning' : 'btn-outline-secondary'}`}
       onClick={() => {
         setShowUpdatePanel(true);
-        // kick off a check when opening panel (small delay to let panel render)
-        setTimeout(() => checkForUpdates(), 200);
+        setTimeout(() => checkForUpdates(), 150);
       }}
       aria-label={updateAvailable ? 'Update available' : 'Check for updates'}
       title={updateAvailable ? 'Update available' : 'Check for updates'}
@@ -240,12 +239,10 @@ function AutoUpdateStatus() {
 
   return (
     <>
-      {/* Fixed-position badge/button */}
       <div className="position-fixed" style={{ top: 10, right: 12, zIndex: 9999 }}>
         <UpdateButton />
       </div>
 
-      {/* Update Panel */}
       {showUpdatePanel && (
         <div
           className="position-fixed bg-white border shadow-lg rounded p-3"
@@ -271,11 +268,7 @@ function AutoUpdateStatus() {
           {updateInfo && updateAvailable && (
             <div className="mb-2 p-2 bg-light rounded small">
               <strong>New Version:</strong> v{updateInfo.version}
-              {updateInfo.releaseDate && (
-                <div className="text-muted">
-                  Released: {new Date(updateInfo.releaseDate).toLocaleDateString()}
-                </div>
-              )}
+              {updateInfo.releaseDate && <div className="text-muted">Released: {new Date(updateInfo.releaseDate).toLocaleDateString()}</div>}
             </div>
           )}
 
@@ -309,30 +302,22 @@ function AutoUpdateStatus() {
           </div>
 
           <div className="mt-3 small text-muted border-top pt-2">
-            • App checks for updates automatically on startup (packaged builds).<br/>
-            • Downloads happen in background. You have to manually install when ready.<br/>
+            • App checks for updates automatically on startup (packaged builds).<br />
+            • Downloads happen in background. You have to manually install when ready.<br />
             • The app will restart during installation.
           </div>
         </div>
       )}
 
-      {/* overlay to close panel when clicking outside */}
-      {showUpdatePanel && (
-        <div className="position-fixed w-100 h-100" style={{ top: 0, left: 0, zIndex: 9998 }} onClick={() => setShowUpdatePanel(false)} />
-      )}
+      {showUpdatePanel && <div className="position-fixed w-100 h-100" style={{ top: 0, left: 0, zIndex: 9998 }} onClick={() => setShowUpdatePanel(false)} />}
     </>
   );
 }
 
-// Auth check utility
 function isAuthorized(user) {
   return user && String(user.role || '').toLowerCase() !== 'customer';
 }
 
-/**
- * InnerRoutes component — runs inside Router so hooks like useLocation work.
- * Receives authed from parent (computed outside Router).
- */
 function InnerRoutes({ authed }) {
   const user = useSelector(selectUser);
   const location = useLocation();
@@ -348,92 +333,40 @@ function InnerRoutes({ authed }) {
       }}
     >
       <div className="App position-relative">
-        {/* Auto Update Status Component */}
         <AutoUpdateStatus />
 
         <Routes>
-          {/* Root redirect - handles both index and explicit "/" */}
-          <Route 
-            index 
-            element={
-              authed ? (
-                <Navigate to="/app/dashboard/pos" replace />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            } 
+          <Route
+            index
+            element={authed ? <Navigate to="/app/dashboard/pos" replace /> : <Navigate to="/login" replace />}
           />
-          <Route 
-            path="/" 
-            element={
-              authed ? (
-                <Navigate to="/app/dashboard/pos" replace />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            } 
+          <Route
+            path="/"
+            element={authed ? <Navigate to="/app/dashboard/pos" replace /> : <Navigate to="/login" replace />}
           />
-
-          {/* Login screen */}
-          <Route 
-            path="/login" 
-            element={
-              authed ? (
-                <Navigate to="/app/dashboard/pos" replace />
-              ) : (
-                <LoginPage />
-              )
-            } 
+          <Route
+            path="/login"
+            element={authed ? <Navigate to="/app/dashboard/pos" replace /> : <LoginPage />}
           />
-
-          {/* Authenticated dashboard routes */}
-          <Route 
-            path="/app/dashboard" 
-            element={
-              authed ? (
-                <Dashboard />
-              ) : (
-                <Navigate to="/login" replace state={{ from: location }} />
-              )
-            }
+          <Route
+            path="/app/dashboard"
+            element={authed ? <Dashboard /> : <Navigate to="/login" replace state={{ from: location }} />}
           >
             <Route index element={<POS />} />
             <Route path="pos" element={<POS />} />
             <Route path="thermal-settings" element={<ThermalPrinterSettings />} />
-
-            {/* Future components */}
-            {/* <Route path="orders" element={<Orders />} /> */}
-            {/* <Route path="orders/success" element={<OrderSuccess />} /> */}
-            {/* <Route path="products" element={<Products />} /> */}
-            {/* <Route path="settings" element={<Settings />} /> */}
-
-            {/* fallback for any unmatched nested path */}
             <Route path="*" element={<POS />} />
           </Route>
 
-          {/* Top-level redirects for common paths */}
-          <Route 
-            path="/thermal-settings" 
-            element={<Navigate to="/app/dashboard/thermal-settings" replace />} 
-          />
+          <Route path="/thermal-settings" element={<Navigate to="/app/dashboard/thermal-settings" replace />} />
 
-          {/* Catch-all fallback */}
-          <Route 
-            path="*" 
-            element={
-              <Navigate 
-                to={authed ? "/app/dashboard/pos" : "/login"} 
-                replace 
-              />
-            } 
-          />
+          <Route path="*" element={<Navigate to={authed ? "/app/dashboard/pos" : "/login"} replace />} />
         </Routes>
       </div>
     </ErrorBoundary>
   );
 }
 
-// App entry point — HashRouter wraps the inner routes so routing works under file://
 function App() {
   const user = useSelector(selectUser);
   const authed = isAuthorized(user);

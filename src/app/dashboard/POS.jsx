@@ -1,4 +1,3 @@
-// src/screens/Index.js
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Button, Form } from 'react-bootstrap';
@@ -18,7 +17,6 @@ import indexedDb from '../../services/indexedDB';
 import { validateAndAddToCart, validateCartQuantityChange } from '../../services/cartService';
 import api from '../../services/api';
 import { selectUser } from '../../redux/slices/userSlice';
-// <-- use the printing handler you supplied (src/utils/thermalPrinter.js)
 import { printOrderReceipt } from '../thermalPrinter/thermalPrinter';
 
 const CTA = { background: '#FF7F50', color: '#fff' };
@@ -273,6 +271,7 @@ export default function POS() {
         return;
       }
 
+      // Find existing cart item with same product + priceType
       const existingCartItem = cart.find(item => (item.id || item._id) === productId && item.priceType === priceType);
 
       if (newQuantity === 0) {
@@ -1040,7 +1039,7 @@ export default function POS() {
         .products-container::-webkit-scrollbar-thumb:hover { background: #ced4da; }
         .products-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
           gap: 1rem;
           align-items: start;
         }

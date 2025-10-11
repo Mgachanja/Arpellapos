@@ -32,7 +32,6 @@ const KSH = (amt) => `Ksh ${Number(amt).toLocaleString()}`;
 
 /**
  * Debounced callback hook.
- * Keep this tiny and reliable — used for search debounce.
  */
 function useDebouncedCallback(fn, wait) {
   const timer = useRef(null);
@@ -43,8 +42,7 @@ function useDebouncedCallback(fn, wait) {
 }
 
 /**
- * ProductCard - presentational, unchanged logic-wise.
- * Price selection / quantity operations delegated via onQuantityChange.
+ * ProductCard (unchanged).
  */
 function ProductCard({ product, cartItems, onQuantityChange }) {
   const productId = product.id || product._id;
@@ -199,8 +197,8 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
 }
 
 /**
- * SearchHeader - receives searchInputRef from parent so parent can focus programmatically.
- * Controlled input (value from parent state).
+ * SearchHeader - receives searchInputRef from parent.
+ * NOTE: input is intentionally UNCONTROLLED for reliability.
  */
 function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefresh, onClear, searchInputRef }) {
   return (
@@ -211,22 +209,22 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
             <span className="input-group-text bg-white border-end-0">
               <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} text-muted`}></i>
             </span>
+            {/* uncontrolled input: no value prop */}
             <input
               ref={searchInputRef}
               type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              defaultValue={searchTerm}
+              onInput={(e) => setSearchTerm(e.target.value)}
               placeholder="Search products by name or scan barcode..."
               className="form-control border-start-0 border-end-0 ps-0"
               style={{ fontSize: '1rem' }}
               autoComplete="off"
               spellCheck={false}
             />
-            {searchTerm && (
-              <button className="btn btn-outline-secondary border-start-0" type="button" onClick={onClear} title="Clear search">
-                <i className="fas fa-times"></i>
-              </button>
-            )}
+            {/* clear button manipulated by DOM value (parent clear handler sets .value = '') */}
+            <button className="btn btn-outline-secondary border-start-0" type="button" onClick={onClear} title="Clear search">
+              <i className="fas fa-times"></i>
+            </button>
           </div>
           {searchType && (
             <div className="small text-muted mt-1">
@@ -256,8 +254,8 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
 }
 
 /**
- * ProductsGrid - maps filteredProducts to ProductCard.
- * No behavioral changes; just uses loadingProducts set to show per-item spinners.
+ * ProductsGrid, CartItems, PaymentForm are unchanged conceptually.
+ * (I'll keep them as in your original file to minimize friction.)
  */
 function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarcode, cart, onQuantityChange, loadingProducts }) {
   const cartByProduct = cart.reduce((acc, item) => {
@@ -398,7 +396,7 @@ function CartItems({ cart, onRemoveItem, KSH }) {
 }
 
 /**
- * PaymentForm - unchanged except it's a presentational child of the POS component.
+ * PaymentForm - unchanged.
  */
 function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData, cartTotal, KSH, setCurrentOrderId }) {
   return (
@@ -568,11 +566,7 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
 }
 
 /**
- * POS main screen component.
- * Primary fix: robust, React-friendly focus handling for the search input after clearing.
- * - centralize safeFocus logic with retries
- * - call focus after state updates (small microtask)
- * - use same helper everywhere that previously tried to focus directly
+ * POS main screen component using an UNCONTROLLED search input for robustness.
  */
 export default function POS() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -642,7 +636,7 @@ export default function POS() {
       .catch(() => toast.error('Failed to sync products'));
   }, [dispatch]);
 
-  // Barcode scanner keyboard capture (fast input). Keep as-is.
+  // Barcode scanner keyboard capture.
   useEffect(() => {
     const THRESHOLD_AVG_MS = 80;
     const CLEAR_TIMEOUT = 800;
@@ -653,11 +647,16 @@ export default function POS() {
 
       const now = Date.now();
       const s = scannerRef.current;
-      const active = document.activeElement;
-      const activeIsEditable = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
 
-      // If user is typing in an input other than the search input, ignore scanner logic
-      if (activeIsEditable && searchInputRef.current !== active) return;
+      // Only run scanner capture when user is NOT actively typing in an editable element.
+      // IMPORTANT: we deliberately check the real event target (e.target) rather than document.activeElement.
+      const target = e.target;
+      const targetIsEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+      if (targetIsEditable) {
+        // Let the input handle keystrokes (prevents interfering with user typing or the search input)
+        return;
+      }
 
       if (e.key === 'Enter') {
         if (s.buffer.length >= MIN_BARCODE_LENGTH) {
@@ -666,8 +665,9 @@ export default function POS() {
           if (avg < THRESHOLD_AVG_MS) {
             const code = s.buffer;
             handleBarcodeScanned(code);
+            // push scanned code to visible search input for feedback
+            try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
             setSearchTerm('');
-            // focus with a robust helper
             safeFocusSearchInput();
             e.preventDefault();
             e.stopPropagation();
@@ -700,13 +700,12 @@ export default function POS() {
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true); // capture phase to be more predictable
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
       clearTimeout(scannerRef.current.timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // empty deps
 
   useEffect(() => {
     if (navigator && navigator.geolocation) {
@@ -733,7 +732,7 @@ export default function POS() {
 
     window.addEventListener('keydown', handleCheckoutEnter);
     return () => window.removeEventListener('keydown', handleCheckoutEnter);
-  }, [paymentType, cart.length, paymentData, processingOrder]); // keep deps accurate
+  }, [paymentType, cart.length, paymentData, processingOrder]);
 
   const performSearch = useCallback(async (term) => {
     if (!term || term.trim().length === 0) {
@@ -783,9 +782,7 @@ export default function POS() {
   useEffect(() => { debouncedSearch(searchTerm); }, [searchTerm, debouncedSearch]);
 
   /**
-   * Centralized safe focus for the search input.
-   * Robust: tries multiple times (rAF + repeated timeouts) until focus & selection are set.
-   * Returns a Promise that resolves true/false to indicate success (not required to await).
+   * Robust focus helper - retries until focus succeeds.
    */
   const safeFocusSearchInput = useCallback(() => {
     return new Promise((resolve) => {
@@ -793,13 +790,11 @@ export default function POS() {
       const MAX_ATTEMPTS = 8;
 
       const focusIfReady = () => {
-        const el = searchInputRef.current;
         attempts += 1;
-
+        const el = searchInputRef.current;
         if (el && !el.disabled && typeof el.focus === 'function') {
           try {
             el.focus({ preventScroll: true });
-            // ensure selection at end
             const len = (el.value && typeof el.value.length === 'number') ? el.value.length : 0;
             if (typeof el.setSelectionRange === 'function') {
               el.setSelectionRange(len, len);
@@ -810,20 +805,16 @@ export default function POS() {
             // swallow and retry
           }
         }
-
         if (attempts < MAX_ATTEMPTS) {
-          // retry after short delay - gives React time to apply updates and toasts time to render if they steal focus
           setTimeout(focusIfReady, attempts < 3 ? 20 : 60);
         } else {
           resolve(false);
         }
       };
 
-      // try rAF fast path then fallback retries
       if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(() => {
           focusIfReady();
-          // one extra scheduled attempt for safety
           setTimeout(focusIfReady, 50);
         });
       } else {
@@ -833,25 +824,25 @@ export default function POS() {
   }, []);
 
   /**
-   * Robust clear search helper.
-   * - Use controlled React state to clear the input value.
-   * - Then focus via safeFocusSearchInput (after state changes).
+   * New clearSearch uses the DOM value directly (uncontrolled input) — deterministic.
    */
   const clearSearch = useCallback(() => {
+    try {
+      if (searchInputRef.current) searchInputRef.current.value = '';
+    } catch (err) {
+      // ignore
+    }
     setSearchTerm('');
     setFilteredProducts([]);
     setHasSearched(false);
     setSearchType('');
 
-    // Defer to next tick to ensure React state has applied and DOM updated, then focus
+    // focus after DOM changes
     setTimeout(() => {
       safeFocusSearchInput().catch(() => {});
     }, 0);
   }, [safeFocusSearchInput]);
 
-  /**
-   * Clear cart flow.
-   */
   const handleClearCart = useCallback(() => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
@@ -863,20 +854,18 @@ export default function POS() {
       dispatch(clearCart());
       toast.success('Cart cleared successfully');
 
-      // Reset payment and order state
       setCurrentOrderId(null);
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
-      // Ensure search is cleared and focused after the DOM updates
-      setTimeout(() => {
-        clearSearch();
-      }, 0);
+      // deterministic clear + focus
+      clearSearch();
     }
   }, [cartItemCount, clearSearch, dispatch]);
 
   /**
-   * Product barcode scanned via keyboard scanner detection.
+   * Barcode scanned from keyboard capture (when focus is not inside inputs).
+   * Because we now block scanner when an input is the event target, this avoids interfering with typing.
    */
   const handleBarcodeScanned = async (barcode) => {
     try {
@@ -900,11 +889,13 @@ export default function POS() {
 
       await handleQuantityChange(product.id || product._id, priceType, 1, product);
 
+      // Show product in results and give feedback
       setFilteredProducts([product]);
       setHasSearched(true);
       setSearchType('barcode');
 
-      // Clear search term but ensure search input remains focusable
+      // Clear visible search input and focus it deterministically
+      try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
       setSearchTerm('');
       setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     } catch (error) {
@@ -918,9 +909,6 @@ export default function POS() {
     }
   };
 
-  /**
-   * handleQuantityChange - validates stock, then updates cart.
-   */
   const handleQuantityChange = async (productId, priceType, newQuantity, productData = null) => {
     try {
       const product = productData || filteredProducts.find(p => (p.id || p._id) === productId);
@@ -1013,7 +1001,7 @@ export default function POS() {
 
       setProductLoading(productId, false);
 
-      // Keep search focused for quick scanning/typing workflow
+      // keep search focused for workflow
       setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     } catch (error) {
       console.error('handleQuantityChange error:', error);
@@ -1024,11 +1012,8 @@ export default function POS() {
 
   const handleRemoveItem = (productId, productName, priceType) => {
     if (window.confirm(`Remove "${productName}" (${priceType === 'Retail' ? 'Retail' : 'Wholesale'}) from cart?`)) {
-      // keep identity consistent with addItemToCart/removeItemFromCart expectations
       dispatch(removeItemFromCart(productId));
       toast.success('Item removed from cart');
-
-      // focus search after removing an item to keep keyboard workflow smooth
       setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     }
   };
@@ -1044,9 +1029,6 @@ export default function POS() {
     }
   };
 
-  /**
-   * Order creation and completion flows kept intact except focusing behavior after completion.
-   */
   const createOrder = async () => {
     if (!paymentType) {
       toast.error('Please select a payment method');
@@ -1203,11 +1185,10 @@ export default function POS() {
     }
   };
 
- // stable, consolidated order completion & printing logic
+ // consolidated order completion & printing logic
  const handleOrderCompletion = async (orderData) => {
   toast.success('Order completed');
 
-  // Properly format receipt items with correct pricing
   const receiptItems = cart.map(ci => {
     const sellingPrice = ci.priceType === 'Retail' 
       ? (ci.price || 0) 
@@ -1300,7 +1281,6 @@ export default function POS() {
         toast.warning('Receipt printing may have failed - order still completed');
       }
     } else {
-      // Web fallback - keep logs for debugging
       console.log('Not in Electron, skipping thermal printer:', receiptData);
       toast.info('Thermal printer not available in web mode');
     }
@@ -1315,9 +1295,13 @@ export default function POS() {
   setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
   setCurrentOrderId(null);
   setProcessingOrder(false);
-  clearSearch();
+  // clear visible search DOM value and state
+  try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
+  setSearchTerm('');
+  setFilteredProducts([]);
+  setHasSearched(false);
+  setSearchType('');
 
-  // Show change information if appropriate
   if (paymentType === 'cash') {
     const given = Number(paymentData.cashAmount);
     const change = given - currentCartTotal;
@@ -1334,7 +1318,7 @@ export default function POS() {
     }
   }
 
-  // Keep input focused for continued workflow
+  // focus input for next workflow
   setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
 };
 

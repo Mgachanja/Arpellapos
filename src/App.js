@@ -47,6 +47,7 @@ function AutoUpdateStatus() {
   const [showUpdatePanel, setShowUpdatePanel] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [lastCheckTime, setLastCheckTime] = useState(null);
 
   useEffect(() => {
     if (!ipcRenderer) return;
@@ -94,7 +95,7 @@ function AutoUpdateStatus() {
     const onDownloaded = (event, info) => {
       setUpdateInfo(info || null);
       setDownloadProgress(100);
-      setUpdateStatus('Update downloaded');
+      setUpdateStatus('Update downloaded — ready to install');
       setUpdateAvailable(true);
       setShowUpdatePanel(true);
       toast.success('Update downloaded — click Install & Restart to apply.', { autoClose: false });
@@ -104,10 +105,18 @@ function AutoUpdateStatus() {
       const msg = (err && (err.message || err.toString())) || 'Update error';
       setUpdateStatus(`Update error: ${msg}`);
       setIsChecking(false);
-      toast.error(`Update error: ${msg}`, { autoClose: 5000 });
+      
+      // Show more user-friendly error messages
+      if (msg.includes('404') || msg.includes('Not Found')) {
+        toast.error('Update not available on server. Please check back later.', { autoClose: 5000 });
+      } else if (msg.includes('ENOTFOUND') || msg.includes('network')) {
+        toast.error('Network error. Check your internet connection.', { autoClose: 5000 });
+      } else {
+        toast.error(`Update error: ${msg}`, { autoClose: 5000 });
+      }
     };
 
-    // Register listeners (must match main)
+    // Register listeners
     ipcRenderer.on('update-checking', onChecking);
     ipcRenderer.on('update-available', onAvailable);
     ipcRenderer.on('update-not-available', onNotAvailable);
@@ -167,38 +176,80 @@ function AutoUpdateStatus() {
   }
 
   const checkForUpdates = async () => {
-    if (!ipcRenderer) return;
+    if (!ipcRenderer) {
+      toast.error('Not running in Electron environment');
+      return;
+    }
+    
+    // Prevent rapid checking
+    if (lastCheckTime && Date.now() - lastCheckTime < 5000) {
+      toast.warn('Please wait before checking again', { autoClose: 2000 });
+      return;
+    }
+
     setIsChecking(true);
     setUpdateStatus('Checking for updates...');
-    const res = await safeInvoke('check-for-updates');
-    if (!res) {
+    
+    try {
+      const res = await safeInvoke('check-for-updates');
+      setLastCheckTime(Date.now());
+      
+      if (!res) {
+        setIsChecking(false);
+        setUpdateStatus('Update check failed - no response from main');
+        toast.error('Update check failed');
+        return;
+      }
+      
+      if (!res.success) {
+        setIsChecking(false);
+        const errorMsg = res.message || res.error || 'Update check failed';
+        setUpdateStatus(`Error: ${errorMsg}`);
+        
+        if (errorMsg.includes('404')) {
+          toast.error('Update URL not found. Please verify your release is published on GitHub.', { autoClose: 5000 });
+        } else if (errorMsg.includes('network') || errorMsg.includes('ENOTFOUND')) {
+          toast.error('Network error. Check your internet connection.', { autoClose: 5000 });
+        } else {
+          toast.error(errorMsg, { autoClose: 5000 });
+        }
+        return;
+      }
+      
+      // Success - rely on main events to update UI
+    } catch (err) {
       setIsChecking(false);
-      setUpdateStatus('Update check failed');
-      toast.error('Update check failed');
-      return;
+      const msg = err?.message || 'Update check failed';
+      setUpdateStatus(`Error: ${msg}`);
+      toast.error(`Update check error: ${msg}`, { autoClose: 5000 });
     }
-    if (!res.success) {
-      setIsChecking(false);
-      setUpdateStatus(res.message || 'Update check failed');
-      toast.error(res.message || 'Update check failed');
-      return;
-    }
-    // If successful, rely on main events to update UI (do not flip isChecking off here)
   };
 
   const installUpdate = async () => {
-    if (!ipcRenderer) return;
-    toast.info('Installing update and restarting...', { autoClose: 2000 });
-    const res = await safeInvoke('install-update'); // matches main handler name
-    if (!res || res.success === false) {
-      const msg = (res && (res.message || res.error)) || 'Install failed';
-      toast.error(`Failed to start install: ${msg}`);
+    if (!ipcRenderer) {
+      toast.error('Not running in Electron environment');
       return;
     }
-    // if main actually triggers quit & install, app will restart. If not, warn user.
-    setTimeout(() => {
-      toast.warn('If the app did not restart automatically, please restart manually.', { autoClose: 5000 });
-    }, 2500);
+    
+    toast.info('Installing update and restarting...', { autoClose: 2000 });
+    
+    try {
+      const res = await safeInvoke('quit-and-install');
+      
+      if (!res || res.success === false) {
+        const msg = (res && (res.message || res.error)) || 'Install failed';
+        toast.error(`Failed to start install: ${msg}`, { autoClose: 5000 });
+        return;
+      }
+      
+      // App should restart automatically
+      setTimeout(() => {
+        toast.warn('Waiting for app to restart...', { autoClose: 3000 });
+      }, 1500);
+    } catch (err) {
+      const msg = err?.message || 'Install failed';
+      toast.error(`Install error: ${msg}`, { autoClose: 5000 });
+    }
   };
 
   const getStatusColor = () => {
@@ -269,6 +320,14 @@ function AutoUpdateStatus() {
             <div className="mb-2 p-2 bg-light rounded small">
               <strong>New Version:</strong> v{updateInfo.version}
               {updateInfo.releaseDate && <div className="text-muted">Released: {new Date(updateInfo.releaseDate).toLocaleDateString()}</div>}
+              {updateInfo.releaseNotes && (
+                <div className="mt-2">
+                  <strong>Release Notes:</strong>
+                  <p className="text-muted small mt-1" style={{ maxHeight: '100px', overflowY: 'auto' }}>
+                    {updateInfo.releaseNotes}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -302,9 +361,23 @@ function AutoUpdateStatus() {
           </div>
 
           <div className="mt-3 small text-muted border-top pt-2">
-            • App checks for updates automatically on startup (packaged builds).<br />
-            • Downloads happen in background. You have to manually install when ready.<br />
-            • The app will restart during installation.
+            <strong>Setup Instructions:</strong>
+            <ul className="mb-0 mt-2">
+              <li>1. Ensure your GitHub release is published (not a draft)</li>
+              <li>2. The release tag must match your app version (e.g., v0.1.47)</li>
+              <li>3. Upload the .exe file to the GitHub release</li>
+              <li>4. Verify the download URL exists and is accessible</li>
+            </ul>
+          </div>
+
+          <div className="mt-3 small text-muted border-top pt-2">
+            <strong>How it works:</strong>
+            <ul className="mb-0 mt-2">
+              <li>• App checks for updates automatically on startup (packaged builds)</li>
+              <li>• Downloads happen in background</li>
+              <li>• Click "Install & Restart" when ready</li>
+              <li>• App restarts automatically during installation</li>
+            </ul>
           </div>
         </div>
       )}

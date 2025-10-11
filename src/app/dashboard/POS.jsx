@@ -1090,96 +1090,144 @@ export default function POS() {
     }
   };
 
-  const handleOrderCompletion = async (orderData) => {
-    toast.success('Order completed');
+ // In the handleOrderCompletion function, replace it with this fixed version:
 
-    // Properly format receipt items with correct pricing
-    const receiptItems = cart.map(ci => {
-      const sellingPrice = ci.priceType === 'Retail' 
-        ? (ci.price || 0) 
-        : (ci.priceAfterDiscount || ci.price || 0);
-      const quantity = ci.quantity || 1;
-      const lineTotal = sellingPrice * quantity;
-      
-      return {
-        name: ci.name || ci.productName || 'Item',
-        productName: ci.name || ci.productName || 'Item',
-        salePrice: sellingPrice,
-        sellingPrice: sellingPrice,
-        price: sellingPrice,
-        quantity: quantity,
-        qty: quantity,
-        lineTotal: lineTotal,
-        total: lineTotal,
-        priceType: ci.priceType,
-        barcode: ci.barcode || ''
-      };
-    });
+const handleOrderCompletion = async (orderData) => {
+  toast.success('Order completed');
 
-    const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
-    const currentCartTotal = calculateCartTotal();
-
-    const receiptData = {
-      cart: receiptItems,
-      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 
-        ? cartTotalFromLines 
-        : currentCartTotal,
-      paymentType,
-      paymentData: {
-        cashAmount: paymentType === 'cash' 
-          ? Number(paymentData.cashAmount) 
-          : paymentType === 'both' 
-            ? Number(paymentData.cashAmount) || 0 
-            : 0,
-        mpesaAmount: paymentType === 'both' 
-          ? Number(paymentData.mpesaAmount) 
-          : Number(paymentData.mpesaAmount) || 0,
-        change: paymentType === 'cash' 
-          ? Math.max(0, Number(paymentData.cashAmount) - currentCartTotal) 
-          : paymentType === 'both' 
-            ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal) 
-            : 0
-      },
-      user: {
-        firstName: user?.firstName || user?.first_name || 'Staff',
-        lastName: user?.lastName || user?.last_name || '',
-        fullName: user?.fullName || user?.full_name || `${user?.firstName || 'Staff'} ${user?.lastName || ''}`.trim(),
-        phone: user?.phone || user?.phoneNumber || '',
-        userName: user?.userName || user?.username || ''
-      },
-      orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
-      customerPhone: paymentType === 'mpesa' || paymentType === 'both' 
-        ? (paymentData.mpesaPhone || '').trim() 
-        : ''
+  // Properly format receipt items with correct pricing
+  const receiptItems = cart.map(ci => {
+    const sellingPrice = ci.priceType === 'Retail' 
+      ? (ci.price || 0) 
+      : (ci.priceAfterDiscount || ci.price || 0);
+    const quantity = ci.quantity || 1;
+    const lineTotal = sellingPrice * quantity;
+    
+    return {
+      name: ci.name || ci.productName || 'Item',
+      productName: ci.name || ci.productName || 'Item',
+      salePrice: sellingPrice,
+      sellingPrice: sellingPrice,
+      price: sellingPrice,
+      quantity: quantity,
+      qty: quantity,
+      lineTotal: lineTotal,
+      total: lineTotal,
+      priceType: ci.priceType,
+      barcode: ci.barcode || ''
     };
+  });
 
-    try {
-      await printOrderReceipt(receiptData);
-      toast.success('Receipt printed');
-    } catch (printError) {
-      console.warn('Receipt printing failed:', printError);
-      toast.warning('Order completed but receipt failed');
-    }
+  const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
+  const currentCartTotal = calculateCartTotal();
 
-    dispatch(clearCart());
-    setPaymentType('');
-    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
-    setCurrentOrderId(null);
-    setProcessingOrder(false);
-    clearSearch();
-
-    if (paymentType === 'cash') {
-      const given = Number(paymentData.cashAmount);
-      const change = given - currentCartTotal;
-      if (!Number.isNaN(change) && change > 0) toast.info(`Change: ${KSH(change)}`);
-    }
-
-    if (paymentType === 'both') {
-      const totalGiven = (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0);
-      const change = totalGiven - currentCartTotal;
-      if (change > 0) toast.info(`Change: ${KSH(change)}`);
-    }
+  // Get cashier name properly
+  const getCashierName = () => {
+    if (!user) return 'Staff';
+    if (user.fullName) return user.fullName;
+    if (user.full_name) return user.full_name;
+    const firstName = user.firstName || user.first_name || '';
+    const lastName = user.lastName || user.last_name || '';
+    if (firstName || lastName) return `${firstName} ${lastName}`.trim();
+    if (user.userName || user.username) return user.userName || user.username;
+    return 'Staff';
   };
+
+  // Default store settings - adjust these to match your actual settings
+  const storeSettings = {
+    storeName: 'ARPELLA STORE LIMITED',
+    storeAddress: 'Ngong, Matasia',
+    storePhone: '+254 7xx xxx xxx',
+    pin: 'P052336649L',
+    receiptFooter: 'Thank you for your business!'
+  };
+
+  const receiptData = {
+    cart: receiptItems,
+    cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 
+      ? cartTotalFromLines 
+      : currentCartTotal,
+    paymentType: paymentType || 'cash',
+    paymentData: {
+      cashAmount: paymentType === 'cash' 
+        ? Number(paymentData.cashAmount) 
+        : paymentType === 'both' 
+          ? Number(paymentData.cashAmount) || 0 
+          : 0,
+      mpesaAmount: paymentType === 'both' 
+        ? Number(paymentData.mpesaAmount) 
+        : (paymentType === 'mpesa' ? Number(paymentData.mpesaAmount) : 0) || 0,
+      change: paymentType === 'cash' 
+        ? Math.max(0, Number(paymentData.cashAmount) - currentCartTotal) 
+        : paymentType === 'both' 
+          ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal) 
+          : 0
+    },
+    user: {
+      firstName: user?.firstName || user?.first_name || 'Staff',
+      lastName: user?.lastName || user?.last_name || '',
+      fullName: getCashierName(),
+      phone: user?.phone || user?.phoneNumber || '',
+      userName: user?.userName || user?.username || ''
+    },
+    orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
+    customerPhone: paymentType === 'mpesa' || paymentType === 'both' 
+      ? (paymentData.mpesaPhone || '').trim() 
+      : '',
+    storeSettings: storeSettings
+  };
+
+  try {
+    // Call the thermal printer with correct parameters
+    const isElectron = !!(typeof window !== 'undefined' && window.require);
+    
+    if (isElectron) {
+      const { ipcRenderer } = window.require('electron');
+      
+      // Send to main process for printing
+      const result = await ipcRenderer.invoke('print-receipt', receiptData, null, storeSettings);
+      
+      if (result?.success) {
+        toast.success('Receipt printed successfully');
+      } else {
+        console.warn('Receipt print returned false:', result?.message);
+        toast.warning('Receipt printing may have failed - order still completed');
+      }
+    } else {
+      // Fallback for web version
+      console.log('Not in Electron, skipping thermal printer:', receiptData);
+      toast.info('Thermal printer not available in web mode');
+    }
+  } catch (printError) {
+    console.error('Receipt printing error:', printError);
+    toast.warning('Order completed but receipt printing failed - try printing from settings');
+  }
+
+  // Clear cart and reset state
+  dispatch(clearCart());
+  setPaymentType('');
+  setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+  setCurrentOrderId(null);
+  setProcessingOrder(false);
+  clearSearch();
+
+  // Show change information
+  if (paymentType === 'cash') {
+    const given = Number(paymentData.cashAmount);
+    const change = given - currentCartTotal;
+    if (!Number.isNaN(change) && change > 0) {
+      toast.info(`Change: ${KSH(change)}`);
+    }
+  }
+
+  if (paymentType === 'both') {
+    const totalGiven = (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0);
+    const change = totalGiven - currentCartTotal;
+    if (change > 0) {
+      toast.info(`Change: ${KSH(change)}`);
+    }
+  }
+};
 
   const checkPaymentStatus = async () => {
     if (!currentOrderId) {

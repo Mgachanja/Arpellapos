@@ -43,21 +43,70 @@ try {
   log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
 }
 
-// Enhanced Auto-updater configuration and event handlers
+// =====================================================
+// RECEIPT FORMATTING UTILITIES
+// =====================================================
+
+/**
+ * Formats a line with multiple columns based on specified widths
+ * @param {Array} columns - Array of column values
+ * @param {Array} widths - Array of column widths
+ * @returns {string} Formatted line
+ */
+const formatReceiptLine = (columns, widths) => {
+  return columns.map((col, idx) => {
+    const width = widths[idx];
+    const text = String(col);
+    
+    if (idx === 0) {
+      // Left align first column
+      return text.length > width ? text.substring(0, width - 3) + '...' : text.padEnd(width);
+    } else if (idx === columns.length - 1) {
+      // Right align last column
+      return text.padStart(width);
+    } else {
+      // Center align middle columns
+      const padding = width - text.length;
+      const leftPad = Math.floor(padding / 2);
+      return ' '.repeat(leftPad) + text + ' '.repeat(padding - leftPad);
+    }
+  }).join('');
+};
+
+/**
+ * Formats a label-value pair with spacing
+ * @param {string} label - Left side label
+ * @param {string} value - Right side value
+ * @param {number} totalWidth - Total character width (default 32)
+ * @returns {string} Formatted line
+ */
+const formatLabelValue = (label, value, totalWidth = 32) => {
+  const valueStr = String(value);
+  const labelStr = String(label);
+  const spacer = totalWidth - labelStr.length - valueStr.length;
+  return labelStr + ' '.repeat(Math.max(1, spacer)) + valueStr;
+};
+
+/**
+ * Column configuration for receipt items
+ */
+const RECEIPT_COLUMNS = {
+  widths: [16, 5, 11], // Total: 32 chars for 80mm thermal
+  headers: ['ITEM', 'QTY', 'TOTAL']
+};
+
+// =====================================================
+// AUTO-UPDATER CONFIGURATION
+// =====================================================
+
 function setupAutoUpdater() {
-  // Enhanced auto-updater configuration
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
 
-  // Set update channel if needed
-  // autoUpdater.channel = 'latest';
-
-  // Check for updates
   autoUpdater.checkForUpdatesAndNotify();
   
-  // Auto-updater events with enhanced error handling
   autoUpdater.on('checking-for-update', () => {
     log.info('Checking for update...');
     sendUpdateMessage('Checking for updates...');
@@ -67,7 +116,6 @@ function setupAutoUpdater() {
     log.info('Update available:', info);
     sendUpdateMessage(`Update available: v${info.version}`);
     
-    // Notify user about available update
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-available', {
         version: info.version,
@@ -87,7 +135,6 @@ function setupAutoUpdater() {
     log.error('Error in auto-updater:', err);
     sendUpdateMessage(`Update error: ${err.message}`);
     
-    // Send detailed error to renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-error', {
         message: err.message,
@@ -119,7 +166,6 @@ function setupAutoUpdater() {
     updateDownloaded = true;
     sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
     
-    // Enhanced update downloaded handling
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-downloaded', {
         version: info.version,
@@ -128,7 +174,6 @@ function setupAutoUpdater() {
         releaseDate: info.releaseDate
       });
 
-      // Show dialog to user asking if they want to install now
       const choice = await dialog.showMessageBox(mainWindow, {
         type: 'info',
         buttons: ['Install Now', 'Install Later'],
@@ -140,17 +185,14 @@ function setupAutoUpdater() {
       });
 
       if (choice.response === 0) {
-        // User chose to install now
         log.info('User chose to install update immediately');
         try {
-          // Close all windows gracefully
           BrowserWindow.getAllWindows().forEach(window => {
             if (!window.isDestroyed()) {
               window.close();
             }
           });
           
-          // Install update
           setImmediate(() => {
             autoUpdater.quitAndInstall(false, true);
           });
@@ -192,7 +234,6 @@ ipcMain.handle('quit-and-install', async () => {
     
     log.info('Initiating quit and install');
     
-    // Give some time for the response to be sent
     setTimeout(() => {
       autoUpdater.quitAndInstall(false, true);
     }, 1000);
@@ -212,7 +253,6 @@ ipcMain.handle('get-app-version', () => {
   };
 });
 
-// New IPC handler to download update manually
 ipcMain.handle('download-update', async () => {
   try {
     log.info('Manual update download initiated');
@@ -224,7 +264,6 @@ ipcMain.handle('download-update', async () => {
   }
 });
 
-// New IPC handler to get update info
 ipcMain.handle('get-update-info', () => {
   return {
     updateDownloaded,
@@ -250,17 +289,14 @@ function resolveIconPath() {
   return path.join(process.resourcesPath, 'icon.ico');
 }
 
-// Function to resolve logo path for receipts
 function resolveLogoPath() {
   const candidates = [
-    // Development paths
     path.join(__dirname, 'assets', 'receipt-logo.png'),
     path.join(__dirname, 'src', 'assets', 'receipt-logo.png'),
     path.join(__dirname, 'public', 'assets', 'receipt-logo.png'),
     path.join(__dirname, 'build', 'assets', 'receipt-logo.png'),
   ];
 
-  // Production paths
   if (process.resourcesPath) {
     candidates.push(
       path.join(process.resourcesPath, 'app.asar', 'assets', 'receipt-logo.png'),
@@ -286,7 +322,6 @@ function resolveLogoPath() {
   return null;
 }
 
-// Function to convert image to base64
 function getLogoBase64() {
   try {
     const logoPath = resolveLogoPath();
@@ -384,12 +419,11 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     
-    // Initialize auto-updater after window is ready
     if (!isDev) {
       log.info('Initializing auto-updater...');
       setTimeout(() => {
         setupAutoUpdater();
-      }, 3000); // Wait 3 seconds after app is ready
+      }, 3000);
     } else {
       log.info('Development mode - skipping auto-updater');
     }
@@ -399,14 +433,13 @@ function createMainWindow() {
     mainWindow = null; 
   });
 
-  // Enhanced close handling for updates
   mainWindow.on('close', (event) => {
     if (updateDownloaded) {
       log.info('App closing with update available, will install on quit');
     }
   });
 }
-// Enhanced printer detection function
+
 async function getAllAvailablePrinters() {
   try {
     let printWindow = window.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -415,21 +448,17 @@ async function getAllAvailablePrinters() {
       return [];
     }
 
-    // Get printers from Electron
     const electronPrinters = await printWindow.webContents.getPrintersAsync();
     log.info('Electron detected printers:', electronPrinters.map(p => ({ name: p.name, status: p.status })));
 
-    // Additional printer detection for thermal printers
     let allPrinters = [...electronPrinters];
 
-    // On Windows, try to get additional printers using system commands
     if (process.platform === 'win32') {
       try {
         const { exec } = require('child_process');
         const { promisify } = require('util');
         const execAsync = promisify(exec);
         
-        // Use PowerShell to get more detailed printer info
         const { stdout } = await execAsync('powershell "Get-Printer | Select-Object Name, PrinterStatus, Type | ConvertTo-Json"');
         const windowsPrinters = JSON.parse(stdout);
         
@@ -459,7 +488,6 @@ async function getAllAvailablePrinters() {
   }
 }
 
-// ---- ✅ ENHANCED IPC HANDLER: Get list of printers with better detection
 ipcMain.handle('get-printers', async () => {
   try {
     const printers = await getAllAvailablePrinters();
@@ -481,9 +509,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     const options = {
       preview: false,
       silent: true,
-      margin: '10 10 10 10', // Better margins for centering
+      margin: '10 10 10 10',
       timeOutPerLine: 400,
-      pageSize: '80mm', // Proper thermal printer size
+      pageSize: '80mm',
       copies: 1
     };
 
@@ -494,137 +522,68 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
       log.info('Testing default printer');
     }
 
-    const printData = [];
-
-    // Add logo if available
-    /*const logoBase64 = getLogoBase64();
-    if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '120px',
-        height: '60px',
-        style: {
-          marginBottom: '10px'
-        }
-      });
-    }
-      */
-
-    // Enhanced test print with better styling and centering
-    printData.push(
+    const printData = [
       {
         type: 'text',
         value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' }
       },
       {
         type: 'text',
         value: 'PRINTER TEST',
-        style: {
-          fontWeight: 'bold',
-          textAlign: 'center',
-          fontSize: '18px',
-          marginBottom: '5px'
-        }
+        style: { fontWeight: 'bold', textAlign: 'center', fontSize: '18px', marginBottom: '5px' }
       },
       {
         type: 'text',
         value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '10px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '10px' }
       },
       {
         type: 'text',
         value: 'This is a test receipt to verify',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '3px'
-        }
+        style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' }
       },
       {
         type: 'text',
         value: 'printer alignment and formatting.',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '10px'
-        }
+        style: { textAlign: 'center', fontSize: '14px', marginBottom: '10px' }
       },
       {
         type: 'text',
         value: '- Printer Status: ONLINE',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '3px' }
       },
       {
         type: 'text',
         value: '- Paper Width: 80mm',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '3px' }
       },
       {
         type: 'text',
         value: '- Character Set: UTF-8',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '10px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '10px' }
       },
       {
         type: 'text',
         value: `Test Time: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '11px',
-          marginBottom: '10px'
-        }
+        style: { textAlign: 'center', fontSize: '11px', marginBottom: '10px' }
       },
       {
         type: 'text',
         value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' }
       },
       {
         type: 'text',
         value: '✓ TEST COMPLETED SUCCESSFULLY!',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
+        style: { textAlign: 'center', fontWeight: 'bold', fontSize: '14px', marginBottom: '5px' }
       },
       {
         type: 'text',
         value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '20px'
-        }
+        style: { textAlign: 'center', fontSize: '12px', marginBottom: '20px' }
       }
-    );
+    ];
 
     await PosPrinter.print(printData, options);
     log.info('Test print completed successfully for printer:', printerName || 'default');
@@ -635,7 +594,6 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   }
 });
 
-// ---- ✅ ENHANCED RECEIPT PRINTING WITH IMPROVED STYLING AND CENTERING
 ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSettings) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -659,13 +617,12 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
     };
 
-    // Enhanced print options for better centering and quality
     const options = {
       preview: false,
       silent: true,
-      margin: '15 15 15 15', // Increased margins for better centering
+      margin: '15 15 15 15',
       timeOutPerLine: 500,
-      pageSize: '80mm', // Standard thermal printer width
+      pageSize: '80mm',
       copies: 1
     };
 
@@ -678,9 +635,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
 
     const printData = [];
 
-    // Add logo at the top if available
     const logoBase64 = getLogoBase64();
-    /*
     if (logoBase64) {
       printData.push({
         type: 'image',
@@ -688,12 +643,9 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         position: 'center',
         width: '150px',
         height: '75px',
-        style: {
-          marginBottom: '8px'
-        }
+        style: { marginBottom: '8px' }
       });
     }
-      */
 
     printData.push(
       {
@@ -702,7 +654,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         style: {
           textAlign: 'center',
           fontSize: '12px',
-          marginBottom: 'px'
+          marginBottom: '5px'
         }
       },
       {
@@ -751,8 +703,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           marginBottom: '8px'
         }
       },
-      
-      // Receipt Title
       {
         type: 'text',
         value: 'SALES RECEIPT',
@@ -772,8 +722,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           marginBottom: '8px'
         }
       },
-      
-      // Order Information
       {
         type: 'text',
         value: `Date: ${new Date().toLocaleString('en-KE')}`,
@@ -805,15 +753,13 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: `Cashier: ${user[0].firstName} ${user[0].lastName || 'Staff'}`,
+        value: `Cashier: ${user}`,
         style: {
           fontSize: '13px',
           marginBottom: '8px',
           textAlign: 'left'
         }
       },
-      
-      // Items Header
       {
         type: 'text',
         value: '--------------------------------',
@@ -825,10 +771,10 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: 'ITEM                 QTY   TOTAL',
+        value: formatReceiptLine(RECEIPT_COLUMNS.headers, RECEIPT_COLUMNS.widths),
         style: {
           fontWeight: 'bold',
-          fontSize: '13px',
+          fontSize: '12px',
           fontFamily: 'monospace',
           marginBottom: '3px'
         }
@@ -844,58 +790,52 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       }
     );
 
-    // Add cart items with improved formatting
+    // Add cart items
     for (const item of cart) {
       const name = item.name || item.productName || 'Item';
       const qty = item.quantity || item.qty || 1;
       const price = item.salePrice || item.price || 0;
-      const total = qty * price;
-      
-      // Enhanced item formatting for better alignment
-      const truncatedName = name.length > 18 ? name.slice(0, 15) + '...' : name;
-      const paddedName = truncatedName.padEnd(18);
-      const qtyStr = qty.toString().padStart(4);
-      const totalStr = formatCurrency(total).padStart(8);
+      const total = (qty * price).toFixed(2);
       
       printData.push({
         type: 'text',
-        value: `${paddedName} ${qtyStr} ${totalStr}`,
+        value: formatReceiptLine([name, qty, total], RECEIPT_COLUMNS.widths),
         style: {
           fontSize: '12px',
           fontFamily: 'monospace',
-          textAlign: 'left',
           marginBottom: '2px'
         }
       });
     }
 
-    // Totals Section with enhanced styling
+    // Totals Section
     printData.push(
       {
         type: 'text',
-        value: '--------------------------------',
+        value: '================================',
         style: {
           textAlign: 'center',
           fontSize: '12px',
-          marginTop: '5px',
+          marginTop: '8px',
           marginBottom: '5px'
         }
       },
       {
         type: 'text',
-        value: `SUBTOTAL: ${formatCurrency(cartTotal)}`,
+        value: formatLabelValue('SUBTOTAL:', formatCurrency(cartTotal)),
         style: {
-          fontSize: '14px',
-          marginBottom: '3px',
-          fontWeight: 'bold'
+          fontSize: '13px',
+          fontFamily: 'monospace',
+          marginBottom: '3px'
         }
       },
       {
         type: 'text',
-        value: `TOTAL: ${formatCurrency(cartTotal)}`,
+        value: formatLabelValue('TOTAL:', formatCurrency(cartTotal)),
         style: {
           fontWeight: 'bold',
-          fontSize: '16px',
+          fontSize: '15px',
+          fontFamily: 'monospace',
           marginBottom: '8px'
         }
       }
@@ -906,9 +846,19 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       printData.push(
         {
           type: 'text',
-          value: `Cash Received: ${formatCurrency(cashAmount)}`,
+          value: '--------------------------------',
+          style: {
+            textAlign: 'center',
+            fontSize: '12px',
+            marginBottom: '5px'
+          }
+        },
+        {
+          type: 'text',
+          value: formatLabelValue('Cash Received:', formatCurrency(cashAmount)),
           style: {
             fontSize: '13px',
+            fontFamily: 'monospace',
             marginBottom: '3px'
           }
         }
@@ -917,12 +867,12 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       if (change > 0) {
         printData.push({
           type: 'text',
-          value: `CHANGE: ${formatCurrency(change)}`,
+          value: formatLabelValue('CHANGE:', formatCurrency(change)),
           style: {
             fontWeight: 'bold',
-            fontSize: '15px',
-            textAlign: 'center',
-            marginBottom: '5px'
+            fontSize: '14px',
+            fontFamily: 'monospace',
+            marginBottom: '8px'
           }
         });
       }
@@ -931,10 +881,19 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
     printData.push(
       {
         type: 'text',
-        value: `Payment Method: ${paymentType.toUpperCase()}`,
+        value: '--------------------------------',
+        style: {
+          textAlign: 'center',
+          fontSize: '12px',
+          marginBottom: '5px'
+        }
+      },
+      {
+        type: 'text',
+        value: formatLabelValue('Payment Method:', paymentType.toUpperCase()),
         style: {
           fontSize: '13px',
-          textAlign: 'center',
+          fontFamily: 'monospace',
           marginBottom: '10px'
         }
       }
@@ -981,7 +940,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: `Powered by Arpella `,
+        value: 'Powered by Arpella',
         style: {
           textAlign: 'center',
           fontSize: '10px',

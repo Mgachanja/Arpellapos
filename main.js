@@ -1,9 +1,8 @@
-import { store } from "./src/redux/store";
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
-const user = store.getState().user;
+const user = "test cashier";
 
 // Auto-updater import
 const { autoUpdater } = require('electron-updater');

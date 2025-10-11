@@ -1,7 +1,9 @@
+import { store } from "../redux/store";
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
+const user = store.getState().user;
 
 // Auto-updater import
 const { autoUpdater } = require('electron-updater');
@@ -470,7 +472,6 @@ ipcMain.handle('get-printers', async () => {
   }
 });
 
-// ---- ✅ ENHANCED THERMAL PRINTER TEST WITH IMPROVED STYLING
 ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -648,7 +649,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       cartTotal = 0,
       paymentType = '',
       paymentData = {},
-      user = {},
       orderNumber = '',
       customerPhone = '',
     } = orderData || {};
@@ -708,7 +708,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: storeSettings.storeName || 'ARPELLA STORE',
+        value: storeSettings.storeName || 'ARPELLA STORE LIMITED',
         style: {
           textAlign: 'center',
           fontWeight: 'bold',
@@ -736,10 +736,19 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
+        value: `PIN: ${storeSettings.pin || 'P052336649L'}`,
+        style: {
+          textAlign: 'center',
+          fontSize: '14px',
+          marginBottom: '5px'
+        }
+      },
+      {
+        type: 'text',
         value: '================================',
         style: {
           textAlign: 'center',
-          fontSize: '12px',
+          fontSize: '15px',
           marginBottom: '8px'
         }
       },
@@ -771,14 +780,16 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         value: `Date: ${new Date().toLocaleString('en-KE')}`,
         style: {
           fontSize: '13px',
+          fontWeight: 'bold',
           marginBottom: '3px',
           textAlign: 'left'
         }
       },
       {
         type: 'text',
-        value: `Order #: ${orderNumber}`,
+        value: `SALE #: ${orderNumber}`,
         style: {
+          fontWeight: 'bold',
           fontSize: '13px',
           marginBottom: '3px',
           textAlign: 'left'
@@ -795,7 +806,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       },
       {
         type: 'text',
-        value: `Cashier: ${user?.userName || user?.name || 'Staff'}`,
+        value: `Cashier: ${user[0].firstName} ${user[0].lastName || 'Staff'}`,
         style: {
           fontSize: '13px',
           marginBottom: '8px',
@@ -820,7 +831,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           fontWeight: 'bold',
           fontSize: '13px',
           fontFamily: 'monospace',
-          textAlign: 'center',
           marginBottom: '3px'
         }
       },
@@ -877,7 +887,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         value: `SUBTOTAL: ${formatCurrency(cartTotal)}`,
         style: {
           fontSize: '14px',
-          textAlign: 'right',
           marginBottom: '3px',
           fontWeight: 'bold'
         }
@@ -888,7 +897,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         style: {
           fontWeight: 'bold',
           fontSize: '16px',
-          textAlign: 'center',
           marginBottom: '8px'
         }
       }
@@ -902,7 +910,6 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
           value: `Cash Received: ${formatCurrency(cashAmount)}`,
           style: {
             fontSize: '13px',
-            textAlign: 'center',
             marginBottom: '3px'
           }
         }

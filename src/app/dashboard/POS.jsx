@@ -12,7 +12,6 @@ import {
   clearCart,
   selectCart,
   selectCartItemCount,
-  selectCartTotal,
   selectProductsLoading,
 } from '../../redux/slices/productSlice';
 
@@ -45,7 +44,6 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
   const retailPrice = product.price || 0;
   const wholesalePrice = product.priceAfterDiscount || product.price || 0;
   
-  // FIXED: Get cart quantities for both price types with proper filtering
   const retailCartItem = cartItems.find(item => 
     (item.id || item._id) === productId && item.priceType === 'Retail'
   );
@@ -56,7 +54,6 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
   const retailQuantity = retailCartItem ? retailCartItem.quantity : 0;
   const wholesaleQuantity = wholesaleCartItem ? wholesaleCartItem.quantity : 0;
 
-  // FIXED: Handlers now properly pass the productId
   const handleRetailIncrement = () => {
     onQuantityChange(productId, 'Retail', retailQuantity + 1);
   };
@@ -112,7 +109,6 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
           {product.name}
         </h6>
         
-        {/* Price Display */}
         <div className="mb-2">
           <div className="d-flex justify-content-between align-items-center mb-1">
             <span className="small text-muted">Retail:</span>
@@ -136,7 +132,6 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
         )}
       </div>
 
-      {/* Retail Controls */}
       <div className="mb-2">
         <div className="d-flex justify-content-between align-items-center mb-1">
           <span className="small fw-semibold text-success">Retail</span>
@@ -179,7 +174,6 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
         )}
       </div>
 
-      {/* Wholesale Controls */}
       <div className="wholesale-controls">
         <div className="d-flex justify-content-between align-items-center mb-1">
           <span className="small fw-semibold text-info">Wholesale</span>
@@ -225,7 +219,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
   );
 }
 
-// Search Header Component (unchanged)
+// Search Header Component
 function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefresh, onClear, searchInputRef }) {
   return (
     <div className="mb-4">
@@ -277,9 +271,8 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
   );
 }
 
-// Products Grid Component - FIXED for cart grouping
+// Products Grid Component
 function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarcode, cart, onQuantityChange, loadingProducts }) {
-  // FIXED: Group cart items by productId for easier lookup
   const cartByProduct = cart.reduce((acc, item) => {
     const productId = item.id || item._id;
     if (!acc[productId]) acc[productId] = [];
@@ -356,7 +349,7 @@ function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarco
   );
 }
 
-// Cart Items Component - UPDATED to show price type
+// Cart Items Component
 function CartItems({ cart, onRemoveItem, KSH }) {
   if (cart.length === 0) {
     return (
@@ -387,7 +380,7 @@ function CartItems({ cart, onRemoveItem, KSH }) {
             const itemId = item.id || item._id;
 
             return (
-              <tr key={itemId}>
+              <tr key={itemId + (item.priceType || '')}>
                 <td style={{ fontSize: '0.75rem' }}>
                   <div className="text-truncate" style={{ maxWidth: '400px', fontSize: '1.01rem' }} title={item.name}>
                     <strong>{item.name}</strong>
@@ -418,7 +411,7 @@ function CartItems({ cart, onRemoveItem, KSH }) {
   );
 }
 
-// Payment Form Component (unchanged)
+// Payment Form Component
 function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData, cartTotal, KSH, setCurrentOrderId }) {
   return (
     <>
@@ -558,13 +551,12 @@ export default function POS() {
   const [currentOrderId, setCurrentOrderId] = useState(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [coords, setCoords] = useState({ lat: 0, lng: 0 });
-  const [defaultPriceType, setDefaultPriceType] = useState('Retail'); // For barcode scans
+  const [defaultPriceType, setDefaultPriceType] = useState('Retail');
 
   // Redux hooks
   const dispatch = useDispatch();
   const cart = useSelector(selectCart);
   const cartItemCount = useSelector(selectCartItemCount);
-  // NOTE: selectCartTotal may be present; we still compute our own to respect price types
   const loading = useSelector(selectProductsLoading);
   const user = useSelector(selectUser);
 
@@ -601,7 +593,7 @@ export default function POS() {
     });
   };
 
-  // Calculate cart total with price types - UPDATED
+  // Calculate cart total with price types
   const calculateCartTotal = useCallback(() => {
     return cart.reduce((total, item) => {
       const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
@@ -620,7 +612,7 @@ export default function POS() {
       .catch(() => toast.error('Failed to sync products'));
   }, [dispatch]);
 
-  // Barcode scanner functionality - UPDATED to handle price type selection
+  // Barcode scanner functionality
   useEffect(() => {
     const THRESHOLD_AVG_MS = 80;
     const CLEAR_TIMEOUT = 800;
@@ -763,7 +755,7 @@ export default function POS() {
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
   useEffect(() => { debouncedSearch(searchTerm); }, [searchTerm, debouncedSearch]);
 
-  // Handler functions - FIXED for price types
+  // Handler functions
   const handleBarcodeScanned = async (barcode) => {
     try {
       const product = await indexedDb.getProductByBarcode(barcode);
@@ -772,7 +764,6 @@ export default function POS() {
         return;
       }
 
-      // Show price type selection dialog
       const priceType = await new Promise((resolve) => {
         const retailPrice = product.price || 0;
         const wholesalePrice = product.priceAfterDiscount || product.price || 0;
@@ -801,7 +792,6 @@ export default function POS() {
     }
   };
 
-  // FIXED: Main quantity change handler
   const handleQuantityChange = async (productId, priceType, newQuantity, productData = null) => {
     try {
       const product = productData || filteredProducts.find(p => (p.id || p._id) === productId);
@@ -810,7 +800,6 @@ export default function POS() {
         return;
       }
 
-      // Find existing cart item with same product and price type
       const existingCartItem = cart.find(item => 
         (item.id || item._id) === productId && item.priceType === priceType
       );
@@ -834,7 +823,6 @@ export default function POS() {
 
       setProductLoading(productId, true);
 
-      // Validate stock if increasing quantity
       if (newQuantity > currentCartQty) {
         const qtyToAdd = newQuantity - currentCartQty;
         
@@ -857,10 +845,8 @@ export default function POS() {
           }
         } catch (validationError) {
           console.warn('Stock validation failed, proceeding anyway:', validationError);
-          // Continue with the operation even if validation fails
         }
       } else {
-        // Validate quantity decrease
         try {
           const validation = await validateCartQuantityChange({
             productId,
@@ -876,16 +862,13 @@ export default function POS() {
           }
         } catch (validationError) {
           console.warn('Cart quantity validation failed, proceeding anyway:', validationError);
-          // Continue with the operation even if validation fails
         }
       }
 
       if (existingCartItem) {
-        // Update existing item
         dispatch(updateCartItemQuantity({ productId: productId, quantity: newQuantity }));
         toast.success('Cart updated');
       } else {
-        // Add new item to cart - include priceType and price fields for printer
         dispatch(addItemToCart({
           product: { 
             ...product, 
@@ -914,16 +897,41 @@ export default function POS() {
     }
   };
 
+  // Clear search function
+  const clearSearch = () => {
+    setSearchTerm('');
+    setFilteredProducts([]);
+    setHasSearched(false);
+    setSearchType('');
+    if (searchInputRef.current) {
+      try {
+        searchInputRef.current.value = '';
+        searchInputRef.current.disabled = false;
+        searchInputRef.current.focus();
+      } catch (e) {}
+    }
+  };
+
   const handleClearCart = () => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
+      clearSearch();
       return;
     }
 
     if (window.confirm('Are you sure you want to clear all items from the cart?')) {
+      clearSearch();
+
       dispatch(clearCart());
       toast.success('Cart cleared successfully');
       setCurrentOrderId(null);
+
+      if (searchInputRef.current) {
+        try {
+          searchInputRef.current.disabled = false;
+          searchInputRef.current.focus();
+        } catch (e) {}
+      }
     }
   };
 
@@ -938,15 +946,6 @@ export default function POS() {
     }
   };
 
-  const clearSearch = () => {
-    setSearchTerm('');
-    setFilteredProducts([]);
-    setHasSearched(false);
-    setSearchType('');
-    if (searchInputRef.current) searchInputRef.current.focus();
-  };
-
-  // Order and payment handlers - UPDATED for price types
   const createOrder = async () => {
     if (!paymentType) {
       toast.error('Please select a payment method');
@@ -1108,29 +1107,29 @@ export default function POS() {
 
   /**
    * handleOrderCompletion
-   * - Builds a receipt payload that matches the printer code expectations:
-   *   cart: [{ productName, sellingPrice, quantity }, ...]
-   *   cartTotal: number
-   *   paymentType, paymentData, user, orderNumber, customerPhone
    */
   const handleOrderCompletion = async (orderData) => {
     toast.success('Order completed');
 
-    const currentCartTotal = calculateCartTotal();
-
-    // Map cart items into the minimal shape expected by thermal printer code
     const receiptItems = cart.map(ci => {
       const sellingPrice = ci.priceType === 'Retail' ? (ci.price || 0) : (ci.priceAfterDiscount || ci.price || 0);
+      const quantity = ci.quantity || 1;
+      const lineTotal = sellingPrice * quantity;
       return {
         productName: ci.name || ci.productName || 'Item',
         sellingPrice,
-        quantity: ci.quantity || 1
+        quantity,
+        lineTotal,
+        total: lineTotal
       };
     });
 
+    const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
+    const currentCartTotal = calculateCartTotal();
+
     const receiptData = {
       cart: receiptItems,
-      cartTotal: currentCartTotal,
+      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 ? cartTotalFromLines : currentCartTotal,
       paymentType,
       paymentData: {
         cashAmount: paymentType === 'cash' ? Number(paymentData.cashAmount) : paymentType === 'both' ? Number(paymentData.cashAmount) || 0 : 0,
@@ -1143,7 +1142,6 @@ export default function POS() {
     };
 
     try {
-      // printOrderReceipt will read store settings from localStorage if not passed
       await printOrderReceipt(receiptData);
       toast.success('Receipt printed successfully');
     } catch (printError) {
@@ -1151,14 +1149,12 @@ export default function POS() {
       toast.warning('Order completed but receipt printing failed. Check printer connection.');
     }
 
-    // Reset cart + payment state
     dispatch(clearCart());
     setPaymentType('');
     setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
     setCurrentOrderId(null);
     setProcessingOrder(false);
 
-    // Show change info if any
     if (paymentType === 'cash') {
       const given = Number(paymentData.cashAmount);
       const change = given - currentCartTotal;
@@ -1174,8 +1170,9 @@ export default function POS() {
 
   /**
    * checkPaymentStatus
-   * - Robustly checks server for payment confirmation for the current orderId
-   * - Accepts a variety of server response shapes, and will try the /order endpoint if /payments returns ambiguous result
+   * - Uses /payments/{orderId} (no trailing semicolons)
+   * - For M-Pesa orders expects "status": "Completed" (case-insensitive) as a canonical confirmation.
+   * - For other flows attempts to accept other common shapes (paid, paymentStatus, status:'paid', etc.)
    */
   const checkPaymentStatus = async () => {
     if (!currentOrderId) {
@@ -1187,47 +1184,78 @@ export default function POS() {
       setCheckingPayment(true);
       toast.info('Checking payment status...');
 
-      // Try payments endpoint first
       let paid = false;
-      try {
-        const response = await api.get(`/payments/${currentOrderId}`);
-        const data = response?.data || {};
+      let remoteData = null;
 
-        // Accept multiple possible server shapes
-        if (data.paid === true || data.paymentStatus === 'PAID' || data.paymentStatus === 'paid' || (data.status && String(data.status).toLowerCase() === 'paid')) {
-          paid = true;
-        } else if (String(data.orderid || data.orderId || data.id) === String(currentOrderId) && (data.paid === true || data.status === 'paid' || data.paymentStatus === 'PAID')) {
-          paid = true;
-        } else if (data && typeof data === 'object' && ('paid' in data || 'status' in data || 'paymentStatus' in data)) {
-          // tried above; default to false if none matched
-          paid = !!(data.paid === true || String(data.status).toLowerCase() === 'paid' || String(data.paymentStatus).toLowerCase() === 'paid');
+      // Primary attempt: /payments/{orderId}
+      try {
+        console.log(currentOrderId)
+        const response = await api.get(`/payments/${currentOrderId}`);
+        remoteData = response?.data || {};
+        console.log(remoteData)
+
+
+        // If this is an M-Pesa order, require status === 'Completed'
+        if (paymentType === 'mpesa') {
+          const statusVal = remoteData?.status || remoteData?.paymentStatus || remoteData?.state || null;
+          if (statusVal && String(statusVal).toLowerCase() === 'completed') {
+            paid = true;
+          } else {
+            // also accept "COMPLETED" or other casing via lowercase compare above
+            paid = false;
+          }
+        } else {
+          // Non-M-Pesa: accept multiple shapes
+          if (remoteData.paid === true ||
+              String(remoteData.paymentStatus || '').toLowerCase() === 'paid' ||
+              String(remoteData.status || '').toLowerCase() === 'paid' ||
+              String(remoteData.status || '').toLowerCase() === 'completed') {
+            paid = true;
+          } else if (String(remoteData.orderid || remoteData.orderId || remoteData.id) === String(currentOrderId) && (remoteData.paid === true || String(remoteData.status || '').toLowerCase() === 'paid')) {
+            paid = true;
+          } else {
+            paid = !!(remoteData.paid === true || String(remoteData.status || '').toLowerCase() === 'paid' || String(remoteData.paymentStatus || '').toLowerCase() === 'paid');
+          }
         }
       } catch (err) {
-        // If payments endpoint fails, we'll try the order endpoint below
-        console.warn('payments endpoint check failed, will try order endpoint:', err?.message || err);
+        console.warn('/payments endpoint check failed:', err?.message || err);
       }
 
-      // If not confirmed yet, try fetching order details (some servers expose status there)
+      // Fallback: /order/{orderId} to corroborate
       if (!paid) {
         try {
           const orderResp = await api.get(`/order/${currentOrderId}`);
           const od = orderResp?.data || {};
-          if (od && (od.paid === true || String(od.status).toLowerCase() === 'paid' || od.paymentStatus === 'PAID')) {
-            paid = true;
-          } else if (od && od.payment && (od.payment.paid === true || String(od.payment.status).toLowerCase() === 'paid')) {
-            paid = true;
+
+          // For M-Pesa, again check for explicit Completed
+          if (paymentType === 'mpesa') {
+            const statusVal = od?.status || od?.paymentStatus || (od.payment && od.payment.status) || null;
+            if (statusVal && String(statusVal).toLowerCase() === 'completed') {
+              paid = true;
+            }
+          } else {
+            if (od && (od.paid === true || String(od.status || '').toLowerCase() === 'paid' || String(od.paymentStatus || '').toLowerCase() === 'paid')) {
+              paid = true;
+            } else if (od && od.payment && (od.payment.paid === true || String(od.payment.status || '').toLowerCase() === 'paid')) {
+              paid = true;
+            }
           }
         } catch (err) {
-          console.warn('order endpoint check failed:', err?.message || err);
+          console.warn('/order endpoint check failed:', err?.message || err);
         }
       }
 
       if (paid) {
         toast.success('Payment confirmed — finalizing order');
-        // finalize: call handleOrderCompletion with the currentOrderId as orderNumber
         await handleOrderCompletion({ orderNumber: currentOrderId });
       } else {
-        toast.warning('Payment not yet confirmed. Try again shortly.');
+        // If remoteData is present and paymentType === 'mpesa', show explicit guidance
+        if (paymentType === 'mpesa' && remoteData) {
+          const observed = JSON.stringify(remoteData).slice(0, 200);
+          toast.warning(`Payment not marked Completed. Response: ${observed}...`);
+        } else {
+          toast.warning('Payment not yet confirmed. Try again shortly.');
+        }
       }
     } catch (err) {
       console.error('Payment check failed:', err);
@@ -1243,7 +1271,6 @@ export default function POS() {
   return (
     <div className="container-fluid py-4" style={{ background: '#f8f9fa', minHeight: '100vh', maxWidth: '100%', overflow: 'hidden' }}>
       <div className="row h-100" style={{ minHeight: 'calc(100vh - 2rem)' }}>
-        {/* Left side - Products (1/3 of screen) */}
         <div className="col-xl-4 col-lg-5 col-md-6 col-12 mb-4">
           <SearchHeader
             searchTerm={searchTerm}
@@ -1255,7 +1282,6 @@ export default function POS() {
             searchInputRef={searchInputRef}
           />
 
-          {/* Products Grid */}
           <div className="products-container" style={{ maxHeight: 'calc(100vh - 200px)', overflowY: 'auto', paddingRight: '10px' }}>
             <div className="row">
               <ProductsGrid
@@ -1282,10 +1308,8 @@ export default function POS() {
           </div>
         </div>
 
-        {/* Right side - Cart (2/3 of screen) */}
         <div className="col-xl-8 col-lg-7 col-md-6 col-12">
           <div className="cart-sidebar h-100 bg-white rounded-3 shadow-sm p-4 position-sticky" style={{ top: '20px', maxHeight: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
-            {/* Cart Header */}
             <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
               <h5 className="fw-semibold mb-0 d-flex align-items-center">
                 <i className="fas fa-shopping-cart me-2"></i>
@@ -1300,12 +1324,10 @@ export default function POS() {
               )}
             </div>
 
-            {/* Cart Items */}
             <div className="cart-items flex-grow-1" style={{ overflowY: 'auto', marginBottom: '20px' }}>
               <CartItems cart={cart} onRemoveItem={handleRemoveItem} KSH={KSH} />
             </div>
 
-            {/* Cart Total & Checkout */}
             {cart.length > 0 && (
               <div className="cart-checkout border-top pt-3">
                 <div className="d-flex justify-content-between align-items-center mb-3">
@@ -1323,7 +1345,6 @@ export default function POS() {
                   setCurrentOrderId={setCurrentOrderId}
                 />
 
-                {/* Payment Confirmation for M-Pesa and Hybrid */}
                 {currentOrderId && (paymentType === 'mpesa' || paymentType === 'both') && (
                   <div className="alert alert-warning py-2 mb-3">
                     <div className="d-flex justify-content-between align-items-center">
@@ -1348,7 +1369,6 @@ export default function POS() {
                   </div>
                 )}
 
-                {/* Checkout Button */}
                 <Button 
                   style={{ ...CTA, width: '100%', padding: '12px', fontSize: '1rem', fontWeight: '600' }} 
                   onClick={paymentType === 'both' ? createOrder : completeCheckout} 

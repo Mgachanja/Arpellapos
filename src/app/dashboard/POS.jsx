@@ -30,9 +30,9 @@ import { printOrderReceipt } from '../thermalPrinter/thermalPrinter';
 const CTA = { background: '#FF7F50', color: '#fff' };
 const KSH = (amt) => `Ksh ${Number(amt).toLocaleString()}`;
 
-/**
- * Debounced callback hook.
- */
+/* ----------------------------
+   Small util hooks / components
+   ---------------------------- */
 function useDebouncedCallback(fn, wait) {
   const timer = useRef(null);
   return useCallback((...args) => {
@@ -41,9 +41,6 @@ function useDebouncedCallback(fn, wait) {
   }, [fn, wait]);
 }
 
-/**
- * ProductCard (unchanged).
- */
 function ProductCard({ product, cartItems, onQuantityChange }) {
   const productId = product.id || product._id;
   const retailPrice = product.price || 0;
@@ -196,10 +193,9 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
   );
 }
 
-/**
- * SearchHeader - receives searchInputRef from parent.
- * NOTE: input is intentionally UNCONTROLLED for reliability.
- */
+/* ----------------------------
+   Search header (UNCONTROLLED input)
+   ---------------------------- */
 function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefresh, onClear, searchInputRef }) {
   return (
     <div className="mb-4 search-header-fixed">
@@ -209,7 +205,6 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
             <span className="input-group-text bg-white border-end-0">
               <i className={`fas ${searchType === 'barcode' ? 'fa-barcode' : 'fa-search'} text-muted`}></i>
             </span>
-            {/* uncontrolled input: no value prop */}
             <input
               ref={searchInputRef}
               type="text"
@@ -221,7 +216,6 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
               autoComplete="off"
               spellCheck={false}
             />
-            {/* clear button manipulated by DOM value (parent clear handler sets .value = '') */}
             <button className="btn btn-outline-secondary border-start-0" type="button" onClick={onClear} title="Clear search">
               <i className="fas fa-times"></i>
             </button>
@@ -253,10 +247,9 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
   );
 }
 
-/**
- * ProductsGrid, CartItems, PaymentForm are unchanged conceptually.
- * (I'll keep them as in your original file to minimize friction.)
- */
+/* ----------------------------
+   Other presentational pieces
+   ---------------------------- */
 function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarcode, cart, onQuantityChange, loadingProducts }) {
   const cartByProduct = cart.reduce((acc, item) => {
     const productId = item.id || item._id;
@@ -395,9 +388,9 @@ function CartItems({ cart, onRemoveItem, KSH }) {
   );
 }
 
-/**
- * PaymentForm - unchanged.
- */
+/* ----------------------------
+   Payment form (unchanged)
+   ---------------------------- */
 function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData, cartTotal, KSH, setCurrentOrderId }) {
   return (
     <>
@@ -565,9 +558,9 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
   );
 }
 
-/**
- * POS main screen component using an UNCONTROLLED search input for robustness.
- */
+/* ----------------------------
+   Main POS component
+   ---------------------------- */
 export default function POS() {
   const [searchTerm, setSearchTerm] = useState('');
   const [products, setProducts] = useState([]);
@@ -636,7 +629,7 @@ export default function POS() {
       .catch(() => toast.error('Failed to sync products'));
   }, [dispatch]);
 
-  // Barcode scanner keyboard capture.
+  /* Barcode scanner capture - only when target is not an input */
   useEffect(() => {
     const THRESHOLD_AVG_MS = 80;
     const CLEAR_TIMEOUT = 800;
@@ -647,16 +640,10 @@ export default function POS() {
 
       const now = Date.now();
       const s = scannerRef.current;
-
-      // Only run scanner capture when user is NOT actively typing in an editable element.
-      // IMPORTANT: we deliberately check the real event target (e.target) rather than document.activeElement.
       const target = e.target;
       const targetIsEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
-      if (targetIsEditable) {
-        // Let the input handle keystrokes (prevents interfering with user typing or the search input)
-        return;
-      }
+      if (targetIsEditable) return;
 
       if (e.key === 'Enter') {
         if (s.buffer.length >= MIN_BARCODE_LENGTH) {
@@ -665,10 +652,8 @@ export default function POS() {
           if (avg < THRESHOLD_AVG_MS) {
             const code = s.buffer;
             handleBarcodeScanned(code);
-            // push scanned code to visible search input for feedback
-            try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
-            setSearchTerm('');
-            safeFocusSearchInput();
+            // clear visible input the same way we do in order completion
+            clearSearchAndProducts();
             e.preventDefault();
             e.stopPropagation();
           }
@@ -700,12 +685,12 @@ export default function POS() {
       }
     };
 
-    window.addEventListener('keydown', onKeyDown, true); // capture phase to be more predictable
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
       clearTimeout(scannerRef.current.timer);
     };
-  }, []); // empty deps
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     if (navigator && navigator.geolocation) {
@@ -781,9 +766,7 @@ export default function POS() {
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
   useEffect(() => { debouncedSearch(searchTerm); }, [searchTerm, debouncedSearch]);
 
-  /**
-   * Robust focus helper - retries until focus succeeds.
-   */
+  /* Reliable focus helper (retry) */
   const safeFocusSearchInput = useCallback(() => {
     return new Promise((resolve) => {
       let attempts = 0;
@@ -802,7 +785,7 @@ export default function POS() {
             resolve(true);
             return;
           } catch (err) {
-            // swallow and retry
+            // ignore and retry
           }
         }
         if (attempts < MAX_ATTEMPTS) {
@@ -823,30 +806,30 @@ export default function POS() {
     });
   }, []);
 
-  /**
-   * New clearSearch uses the DOM value directly (uncontrolled input) — deterministic.
-   */
-  const clearSearch = useCallback(() => {
-    try {
-      if (searchInputRef.current) searchInputRef.current.value = '';
-    } catch (err) {
-      // ignore
-    }
+  /* ----------------------------
+     NEW: single clearing method used across flows
+     - replicates order completion's clearing behavior
+     ---------------------------- */
+  const clearSearchAndProducts = useCallback(() => {
+    // Clear DOM input (uncontrolled input) deterministically
+    try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
+    // Sync React state
     setSearchTerm('');
     setFilteredProducts([]);
     setHasSearched(false);
     setSearchType('');
 
-    // focus after DOM changes
+    // Focus the input reliably, after state changes
     setTimeout(() => {
       safeFocusSearchInput().catch(() => {});
     }, 0);
   }, [safeFocusSearchInput]);
 
+  /* Clear cart flow uses the same clearing method */
   const handleClearCart = useCallback(() => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
-      clearSearch();
+      clearSearchAndProducts();
       return;
     }
 
@@ -854,19 +837,17 @@ export default function POS() {
       dispatch(clearCart());
       toast.success('Cart cleared successfully');
 
+      // Reset payment and order state
       setCurrentOrderId(null);
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
-      // deterministic clear + focus
-      clearSearch();
+      // Use the same clearing method
+      clearSearchAndProducts();
     }
-  }, [cartItemCount, clearSearch, dispatch]);
+  }, [cartItemCount, clearSearchAndProducts, dispatch]);
 
-  /**
-   * Barcode scanned from keyboard capture (when focus is not inside inputs).
-   * Because we now block scanner when an input is the event target, this avoids interfering with typing.
-   */
+  /* Barcode scanned handler */
   const handleBarcodeScanned = async (barcode) => {
     try {
       const product = await indexedDb.getProductByBarcode(barcode);
@@ -889,12 +870,11 @@ export default function POS() {
 
       await handleQuantityChange(product.id || product._id, priceType, 1, product);
 
-      // Show product in results and give feedback
       setFilteredProducts([product]);
       setHasSearched(true);
       setSearchType('barcode');
 
-      // Clear visible search input and focus it deterministically
+      // Use same clearing method to reset input and focus (consistent)
       try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
       setSearchTerm('');
       setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
@@ -909,6 +889,7 @@ export default function POS() {
     }
   };
 
+  /* Quantity change flow (keeps behavior intact) */
   const handleQuantityChange = async (productId, priceType, newQuantity, productData = null) => {
     try {
       const product = productData || filteredProducts.find(p => (p.id || p._id) === productId);
@@ -1001,7 +982,7 @@ export default function POS() {
 
       setProductLoading(productId, false);
 
-      // keep search focused for workflow
+      // keep search focused
       setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     } catch (error) {
       console.error('handleQuantityChange error:', error);
@@ -1014,6 +995,8 @@ export default function POS() {
     if (window.confirm(`Remove "${productName}" (${priceType === 'Retail' ? 'Retail' : 'Wholesale'}) from cart?`)) {
       dispatch(removeItemFromCart(productId));
       toast.success('Item removed from cart');
+
+      // Use same clearing/focus approach for consistency
       setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     }
   };
@@ -1029,6 +1012,7 @@ export default function POS() {
     }
   };
 
+  /* Create / complete flows (unchanged behavior), but use clearSearchAndProducts when finishing */
   const createOrder = async () => {
     if (!paymentType) {
       toast.error('Please select a payment method');
@@ -1185,142 +1169,137 @@ export default function POS() {
     }
   };
 
- // consolidated order completion & printing logic
- const handleOrderCompletion = async (orderData) => {
-  toast.success('Order completed');
+  /* Order completion - uses the same clearing method for input/products */
+  const handleOrderCompletion = async (orderData) => {
+    toast.success('Order completed');
 
-  const receiptItems = cart.map(ci => {
-    const sellingPrice = ci.priceType === 'Retail' 
-      ? (ci.price || 0) 
-      : (ci.priceAfterDiscount || ci.price || 0);
-    const quantity = ci.quantity || 1;
-    const lineTotal = sellingPrice * quantity;
-    
-    return {
-      name: ci.name || ci.productName || 'Item',
-      productName: ci.name || ci.productName || 'Item',
-      salePrice: sellingPrice,
-      sellingPrice: sellingPrice,
-      price: sellingPrice,
-      quantity: quantity,
-      qty: quantity,
-      lineTotal: lineTotal,
-      total: lineTotal,
-      priceType: ci.priceType,
-      barcode: ci.barcode || ''
+    const receiptItems = cart.map(ci => {
+      const sellingPrice = ci.priceType === 'Retail' 
+        ? (ci.price || 0) 
+        : (ci.priceAfterDiscount || ci.price || 0);
+      const quantity = ci.quantity || 1;
+      const lineTotal = sellingPrice * quantity;
+      
+      return {
+        name: ci.name || ci.productName || 'Item',
+        productName: ci.name || ci.productName || 'Item',
+        salePrice: sellingPrice,
+        sellingPrice: sellingPrice,
+        price: sellingPrice,
+        quantity: quantity,
+        qty: quantity,
+        lineTotal: lineTotal,
+        total: lineTotal,
+        priceType: ci.priceType,
+        barcode: ci.barcode || ''
+      };
+    });
+
+    const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
+    const currentCartTotal = calculateCartTotal();
+
+    const getCashierName = () => {
+      if (!user) return 'Staff';
+      if (user.fullName) return user.fullName;
+      if (user.full_name) return user.full_name;
+      const firstName = user.firstName || user.first_name || '';
+      const lastName = user.lastName || user.last_name || '';
+      if (firstName || lastName) return `${firstName} ${lastName}`.trim();
+      if (user.userName || user.username) return user.userName || user.username;
+      return 'Staff';
     };
-  });
 
-  const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
-  const currentCartTotal = calculateCartTotal();
+    const storeSettings = {
+      storeName: 'ARPELLA STORE LIMITED',
+      storeAddress: 'Ngong, Matasia',
+      storePhone: '+254 7xx xxx xxx',
+      pin: 'P052336649L',
+      receiptFooter: 'Thank you for your business!'
+    };
 
-  const getCashierName = () => {
-    if (!user) return 'Staff';
-    if (user.fullName) return user.fullName;
-    if (user.full_name) return user.full_name;
-    const firstName = user.firstName || user.first_name || '';
-    const lastName = user.lastName || user.last_name || '';
-    if (firstName || lastName) return `${firstName} ${lastName}`.trim();
-    if (user.userName || user.username) return user.userName || user.username;
-    return 'Staff';
-  };
+    const receiptData = {
+      cart: receiptItems,
+      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 
+        ? cartTotalFromLines 
+        : currentCartTotal,
+      paymentType: paymentType || 'cash',
+      paymentData: {
+        cashAmount: paymentType === 'cash' 
+          ? Number(paymentData.cashAmount) 
+          : paymentType === 'both' 
+            ? Number(paymentData.cashAmount) || 0 
+            : 0,
+        mpesaAmount: paymentType === 'both' 
+          ? Number(paymentData.mpesaAmount) 
+          : (paymentType === 'mpesa' ? Number(paymentData.mpesaAmount) : 0) || 0,
+        change: paymentType === 'cash' 
+          ? Math.max(0, Number(paymentData.cashAmount) - currentCartTotal) 
+          : paymentType === 'both' 
+            ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal) 
+            : 0
+      },
+      user: {
+        firstName: user?.firstName || user?.first_name || 'Staff',
+        lastName: user?.lastName || user?.last_name || '',
+        fullName: getCashierName(),
+        phone: user?.phone || user?.phoneNumber || '',
+        userName: user?.userName || user?.username || ''
+      },
+      orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
+      customerPhone: paymentType === 'mpesa' || paymentType === 'both' 
+        ? (paymentData.mpesaPhone || '').trim() 
+        : '',
+      storeSettings: storeSettings
+    };
 
-  const storeSettings = {
-    storeName: 'ARPELLA STORE LIMITED',
-    storeAddress: 'Ngong, Matasia',
-    storePhone: '+254 7xx xxx xxx',
-    pin: 'P052336649L',
-    receiptFooter: 'Thank you for your business!'
-  };
-
-  const receiptData = {
-    cart: receiptItems,
-    cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 
-      ? cartTotalFromLines 
-      : currentCartTotal,
-    paymentType: paymentType || 'cash',
-    paymentData: {
-      cashAmount: paymentType === 'cash' 
-        ? Number(paymentData.cashAmount) 
-        : paymentType === 'both' 
-          ? Number(paymentData.cashAmount) || 0 
-          : 0,
-      mpesaAmount: paymentType === 'both' 
-        ? Number(paymentData.mpesaAmount) 
-        : (paymentType === 'mpesa' ? Number(paymentData.mpesaAmount) : 0) || 0,
-      change: paymentType === 'cash' 
-        ? Math.max(0, Number(paymentData.cashAmount) - currentCartTotal) 
-        : paymentType === 'both' 
-          ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal) 
-          : 0
-    },
-    user: {
-      firstName: user?.firstName || user?.first_name || 'Staff',
-      lastName: user?.lastName || user?.last_name || '',
-      fullName: getCashierName(),
-      phone: user?.phone || user?.phoneNumber || '',
-      userName: user?.userName || user?.username || ''
-    },
-    orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
-    customerPhone: paymentType === 'mpesa' || paymentType === 'both' 
-      ? (paymentData.mpesaPhone || '').trim() 
-      : '',
-    storeSettings: storeSettings
-  };
-
-  try {
-    const isElectron = !!(typeof window !== 'undefined' && window.require);
-    
-    if (isElectron) {
-      const { ipcRenderer } = window.require('electron');
-      const result = await ipcRenderer.invoke('print-receipt', receiptData, null, storeSettings);
-      if (result?.success) {
-        toast.success('Receipt printed successfully');
+    try {
+      const isElectron = !!(typeof window !== 'undefined' && window.require);
+      
+      if (isElectron) {
+        const { ipcRenderer } = window.require('electron');
+        const result = await ipcRenderer.invoke('print-receipt', receiptData, null, storeSettings);
+        if (result?.success) {
+          toast.success('Receipt printed successfully');
+        } else {
+          console.warn('Receipt print returned false:', result?.message);
+          toast.warning('Receipt printing may have failed - order still completed');
+        }
       } else {
-        console.warn('Receipt print returned false:', result?.message);
-        toast.warning('Receipt printing may have failed - order still completed');
+        console.log('Not in Electron, skipping thermal printer:', receiptData);
+        toast.info('Thermal printer not available in web mode');
       }
-    } else {
-      console.log('Not in Electron, skipping thermal printer:', receiptData);
-      toast.info('Thermal printer not available in web mode');
+    } catch (printError) {
+      console.error('Receipt printing error:', printError);
+      toast.warning('Order completed but receipt printing failed - try printing from settings');
     }
-  } catch (printError) {
-    console.error('Receipt printing error:', printError);
-    toast.warning('Order completed but receipt printing failed - try printing from settings');
-  }
 
-  // Clear cart and reset state
-  dispatch(clearCart());
-  setPaymentType('');
-  setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
-  setCurrentOrderId(null);
-  setProcessingOrder(false);
-  // clear visible search DOM value and state
-  try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
-  setSearchTerm('');
-  setFilteredProducts([]);
-  setHasSearched(false);
-  setSearchType('');
+    // Clear cart and reset state
+    dispatch(clearCart());
+    setPaymentType('');
+    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+    setCurrentOrderId(null);
+    setProcessingOrder(false);
 
-  if (paymentType === 'cash') {
-    const given = Number(paymentData.cashAmount);
-    const change = given - currentCartTotal;
-    if (!Number.isNaN(change) && change > 0) {
-      toast.info(`Change: ${KSH(change)}`);
+    // USE THE SAME CLEARING METHOD (this is the change you asked for)
+    clearSearchAndProducts();
+
+    // Show change info if needed
+    if (paymentType === 'cash') {
+      const given = Number(paymentData.cashAmount);
+      const change = given - currentCartTotal;
+      if (!Number.isNaN(change) && change > 0) {
+        toast.info(`Change: ${KSH(change)}`);
+      }
     }
-  }
 
-  if (paymentType === 'both') {
-    const totalGiven = (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0);
-    const change = totalGiven - currentCartTotal;
-    if (change > 0) {
-      toast.info(`Change: ${KSH(change)}`);
+    if (paymentType === 'both') {
+      const totalGiven = (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0);
+      const change = totalGiven - currentCartTotal;
+      if (change > 0) {
+        toast.info(`Change: ${KSH(change)}`);
+      }
     }
-  }
-
-  // focus input for next workflow
-  setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
-};
+  };
 
   const checkPaymentStatus = async () => {
     if (!currentOrderId) {
@@ -1394,6 +1373,9 @@ export default function POS() {
 
   const currentCartTotal = calculateCartTotal();
 
+  /* ----------------------------
+     Render
+     ---------------------------- */
   return (
     <div className="container-fluid py-4" style={{ background: '#f8f9fa', minHeight: '100vh', maxWidth: '100%', overflow: 'hidden' }}>
       <div className="row h-100" style={{ minHeight: 'calc(100vh - 2rem)' }}>
@@ -1404,7 +1386,7 @@ export default function POS() {
             searchType={searchType}
             loading={loading}
             onRefresh={refresh}
-            onClear={clearSearch}
+            onClear={clearSearchAndProducts}
             searchInputRef={searchInputRef}
           />
 

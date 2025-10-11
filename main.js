@@ -2,7 +2,6 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
-const user = "test cashier";
 
 // Auto-updater import
 const { autoUpdater } = require('electron-updater');
@@ -42,58 +41,6 @@ try {
 } catch (err) {
   log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
 }
-
-// =====================================================
-// RECEIPT FORMATTING UTILITIES
-// =====================================================
-
-/**
- * Formats a line with multiple columns based on specified widths
- * @param {Array} columns - Array of column values
- * @param {Array} widths - Array of column widths
- * @returns {string} Formatted line
- */
-const formatReceiptLine = (columns, widths) => {
-  return columns.map((col, idx) => {
-    const width = widths[idx];
-    const text = String(col);
-    
-    if (idx === 0) {
-      // Left align first column
-      return text.length > width ? text.substring(0, width - 3) + '...' : text.padEnd(width);
-    } else if (idx === columns.length - 1) {
-      // Right align last column
-      return text.padStart(width);
-    } else {
-      // Center align middle columns
-      const padding = width - text.length;
-      const leftPad = Math.floor(padding / 2);
-      return ' '.repeat(leftPad) + text + ' '.repeat(padding - leftPad);
-    }
-  }).join('');
-};
-
-/**
- * Formats a label-value pair with spacing
- * @param {string} label - Left side label
- * @param {string} value - Right side value
- * @param {number} totalWidth - Total character width (default 32)
- * @returns {string} Formatted line
- */
-const formatLabelValue = (label, value, totalWidth = 32) => {
-  const valueStr = String(value);
-  const labelStr = String(label);
-  const spacer = totalWidth - labelStr.length - valueStr.length;
-  return labelStr + ' '.repeat(Math.max(1, spacer)) + valueStr;
-};
-
-/**
- * Column configuration for receipt items
- */
-const RECEIPT_COLUMNS = {
-  widths: [16, 5, 11], // Total: 32 chars for 80mm thermal
-  headers: ['ITEM', 'QTY', 'TOTAL']
-};
 
 // =====================================================
 // AUTO-UPDATER CONFIGURATION
@@ -274,6 +221,10 @@ ipcMain.handle('get-update-info', () => {
   };
 });
 
+// =====================================================
+// FILE PATH RESOLVERS
+// =====================================================
+
 function resolveIconPath() {
   if (!app.isPackaged) {
     const devIcons = [
@@ -364,6 +315,10 @@ function findIndexHtmlCandidates() {
   return existing;
 }
 
+// =====================================================
+// MAIN WINDOW CREATION
+// =====================================================
+
 function createMainWindow() {
   const iconPath = resolveIconPath();
   log.info('Resolved icon path:', iconPath, 'packaged:', app.isPackaged);
@@ -440,6 +395,10 @@ function createMainWindow() {
   });
 }
 
+// =====================================================
+// PRINTER DETECTION & MANAGEMENT
+// =====================================================
+
 async function getAllAvailablePrinters() {
   try {
     let printWindow = window.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -498,6 +457,10 @@ ipcMain.handle('get-printers', async () => {
     return [];
   }
 });
+
+// =====================================================
+// TEST THERMAL PRINTER
+// =====================================================
 
 ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   if (!PosPrinter) {
@@ -594,6 +557,10 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   }
 });
 
+// =====================================================
+// RECEIPT PRINTING - SIMPLIFIED
+// =====================================================
+
 ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSettings) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -608,20 +575,28 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       paymentData = {},
       orderNumber = '',
       customerPhone = '',
+      user = {}
     } = orderData || {};
 
     const cashAmount = Number(paymentData.cashAmount || 0);
     const change = Math.max(0, cashAmount - Number(cartTotal));
 
     const formatCurrency = (amount) => {
-      return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
+      return `Ksh ${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     };
+
+    // Get cashier name
+    const cashierName = user?.fullName || 
+                       `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 
+                       user?.userName || 
+                       user?.username || 
+                       'Staff';
 
     const options = {
       preview: false,
       silent: true,
-      margin: '15 15 15 15',
-      timeOutPerLine: 500,
+      margin: '10 10 10 10',
+      timeOutPerLine: 400,
       pageSize: '80mm',
       copies: 1
     };
@@ -629,334 +604,96 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
     if (printerName && printerName !== '') {
       options.printerName = printerName;
       log.info('Printing receipt to specific printer:', printerName);
-    } else {
-      log.info('Printing receipt to default printer');
     }
 
     const printData = [];
 
+    // Logo (if available)
     const logoBase64 = getLogoBase64();
     if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '150px',
-        height: '75px',
-        style: { marginBottom: '8px' }
-      });
+      try {
+        printData.push({
+          type: 'image',
+          url: logoBase64,
+          position: 'center',
+          width: '150px',
+          height: '75px',
+          style: { marginBottom: '8px' }
+        });
+      } catch (logoErr) {
+        log.warn('Failed to add logo to receipt:', logoErr.message);
+      }
     }
 
-    printData.push(
-      {
+    // Helper function to add text
+    const addText = (value, isBold = false, isCenter = false) => {
+      printData.push({
         type: 'text',
-        value:'',
+        value: String(value),
         style: {
-          textAlign: 'center',
+          textAlign: isCenter ? 'center' : 'left',
+          fontWeight: isBold ? 'bold' : 'normal',
           fontSize: '12px',
-          marginBottom: '5px'
+          marginBottom: '2px'
         }
-      },
-      {
-        type: 'text',
-        value: storeSettings.storeName || 'ARPELLA STORE LIMITED',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '15px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.storeAddress || 'Ngong, Matasia',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `PIN: ${storeSettings.pin || 'P052336649L'}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '15px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'SALES RECEIPT',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '16px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Date: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          fontSize: '13px',
-          fontWeight: 'bold',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: `SALE #: ${orderNumber}`,
-        style: {
-          fontWeight: 'bold',
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: `Customer: ${customerPhone || 'Walk-in'}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: `Cashier: ${user}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '8px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: formatReceiptLine(RECEIPT_COLUMNS.headers, RECEIPT_COLUMNS.widths),
-        style: {
-          fontWeight: 'bold',
-          fontSize: '12px',
-          fontFamily: 'monospace',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      }
-    );
+      });
+    };
 
-    // Add cart items
+    // Header
+    addText(storeSettings?.storeName || 'ARPELLA STORE LIMITED', true, true);
+    addText(storeSettings?.storeAddress || 'Ngong, Matasia', false, true);
+    addText(`Tel: ${storeSettings?.storePhone || '+254 7xx xxx xxx'}`, false, true);
+    addText(`PIN: ${storeSettings?.pin || 'P052336649L'}`, false, true);
+    addText('================================', false, true);
+    addText('SALES RECEIPT', true, true);
+    addText('================================', false, true);
+
+    // Order Info
+    addText(`Date: ${new Date().toLocaleString('en-KE')}`, false);
+    addText(`Order #: ${orderNumber}`, true);
+    addText(`Customer: ${customerPhone || 'Walk-in'}`, false);
+    addText(`Cashier: ${cashierName}`, false);
+    addText('--------------------------------', false, true);
+
+    // Items header
+    addText('ITEM          QTY      TOTAL', true);
+    addText('--------------------------------', false, true);
+
+    // Cart items - simplified formatting
     for (const item of cart) {
-      const name = item.name || item.productName || 'Item';
+      const name = (item.name || item.productName || 'Item').substring(0, 15);
       const qty = item.quantity || item.qty || 1;
       const price = item.salePrice || item.price || 0;
       const total = (qty * price).toFixed(2);
       
-      printData.push({
-        type: 'text',
-        value: formatReceiptLine([name, qty, total], RECEIPT_COLUMNS.widths),
-        style: {
-          fontSize: '12px',
-          fontFamily: 'monospace',
-          marginBottom: '2px'
-        }
-      });
+      // Simple fixed-width formatting
+      const line = `${name.padEnd(15)} ${String(qty).padStart(3)} ${String(total).padStart(8)}`;
+      addText(line, false);
     }
 
-    // Totals Section
-    printData.push(
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginTop: '8px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: formatLabelValue('SUBTOTAL:', formatCurrency(cartTotal)),
-        style: {
-          fontSize: '13px',
-          fontFamily: 'monospace',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: formatLabelValue('TOTAL:', formatCurrency(cartTotal)),
-        style: {
-          fontWeight: 'bold',
-          fontSize: '15px',
-          fontFamily: 'monospace',
-          marginBottom: '8px'
-        }
-      }
-    );
+    // Totals
+    addText('================================', false, true);
+    addText(`Subtotal: ${formatCurrency(cartTotal)}`, false);
+    addText(`TOTAL: ${formatCurrency(cartTotal)}`, true);
 
-    // Payment Information
+    // Payment info
     if (paymentType.toLowerCase() === 'cash') {
-      printData.push(
-        {
-          type: 'text',
-          value: '--------------------------------',
-          style: {
-            textAlign: 'center',
-            fontSize: '12px',
-            marginBottom: '5px'
-          }
-        },
-        {
-          type: 'text',
-          value: formatLabelValue('Cash Received:', formatCurrency(cashAmount)),
-          style: {
-            fontSize: '13px',
-            fontFamily: 'monospace',
-            marginBottom: '3px'
-          }
-        }
-      );
-      
+      addText('--------------------------------', false, true);
+      addText(`Cash Received: ${formatCurrency(cashAmount)}`, false);
       if (change > 0) {
-        printData.push({
-          type: 'text',
-          value: formatLabelValue('CHANGE:', formatCurrency(change)),
-          style: {
-            fontWeight: 'bold',
-            fontSize: '14px',
-            fontFamily: 'monospace',
-            marginBottom: '8px'
-          }
-        });
+        addText(`Change: ${formatCurrency(change)}`, true);
       }
     }
 
-    printData.push(
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: formatLabelValue('Payment Method:', paymentType.toUpperCase()),
-        style: {
-          fontSize: '13px',
-          fontFamily: 'monospace',
-          marginBottom: '10px'
-        }
-      }
-    );
+    addText(`Payment: ${paymentType.toUpperCase()}`, false, true);
 
-    // Footer Section
-    printData.push(
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.receiptFooter || 'Thank you for your business!',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          fontWeight: 'bold',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'Visit us again soon!',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'Powered by Arpella',
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Print Time: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '15px'
-        }
-      }
-    );
+    // Footer
+    addText('================================', false, true);
+    addText(storeSettings?.receiptFooter || 'Thank you for your business!', true, true);
+    addText('Visit us again soon!', false, true);
+    addText('================================', false, true);
+    addText('Powered by Arpella', false, true);
+    addText(`Printed: ${new Date().toLocaleString('en-KE')}`, false, true);
 
     await PosPrinter.print(printData, options);
     log.info('Receipt printed successfully to:', printerName || 'default printer');
@@ -967,7 +704,10 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
   }
 });
 
-// New IPC handler to check logo availability
+// =====================================================
+// PRINTER STATUS & CAPABILITIES
+// =====================================================
+
 ipcMain.handle('check-receipt-logo', async () => {
   try {
     const logoPath = resolveLogoPath();
@@ -987,7 +727,6 @@ ipcMain.handle('check-receipt-logo', async () => {
   }
 });
 
-// Enhanced printer status check
 ipcMain.handle('check-printer-status', async (event, printerName) => {
   try {
     const printers = await getAllAvailablePrinters();
@@ -1017,7 +756,6 @@ ipcMain.handle('check-printer-status', async (event, printerName) => {
   }
 });
 
-// Additional IPC handler for printer capabilities
 ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
   try {
     const printers = await getAllAvailablePrinters();
@@ -1027,7 +765,6 @@ ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
       return { success: false, message: 'Printer not found' };
     }
 
-    // Basic capability info
     const capabilities = {
       name: printer.name,
       status: printer.status,
@@ -1048,7 +785,10 @@ ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
   }
 });
 
-/* Single instance handling */
+// =====================================================
+// APP LIFECYCLE
+// =====================================================
+
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1083,6 +823,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Debugging helpers
-ipcMain.on('log', (ev, msg) => log.info('Renderer log:', msg));
-ipcMain.on('open-devtools', () => mainWindow && mainWindow.webContents.openDevTools());
+app.on('before-quit', () => {
+  if (thermalHandlerInstance) thermalHandlerInstance.close();
+});

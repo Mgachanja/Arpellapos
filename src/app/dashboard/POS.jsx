@@ -219,6 +219,8 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
               placeholder="Search products by name or scan barcode..."
               className="form-control border-start-0 border-end-0 ps-0"
               style={{ fontSize: '1rem' }}
+              autoComplete="off"
+              spellCheck={false}
             />
             {searchTerm && (
               <button className="btn btn-outline-secondary border-start-0" type="button" onClick={onClear} title="Clear search">
@@ -568,9 +570,9 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
 /**
  * POS main screen component.
  * Primary fix: robust, React-friendly focus handling for the search input after clearing.
- * - Removed direct DOM writes to input.value (conflicts with controlled inputs)
- * - Use requestAnimationFrame + setTimeout fallback to reliably focus in all browsers / electron
- * - Keep behavior changes minimal and local to the focus/reset flow
+ * - centralize safeFocus logic with retries
+ * - call focus after state updates (small microtask)
+ * - use same helper everywhere that previously tried to focus directly
  */
 export default function POS() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -665,10 +667,8 @@ export default function POS() {
             const code = s.buffer;
             handleBarcodeScanned(code);
             setSearchTerm('');
-            if (searchInputRef.current) {
-              // Focus the search input using safe strategy (no direct value writes)
-              safeFocusSearchInput();
-            }
+            // focus with a robust helper
+            safeFocusSearchInput();
             e.preventDefault();
             e.stopPropagation();
           }
@@ -784,44 +784,58 @@ export default function POS() {
 
   /**
    * Centralized safe focus for the search input.
-   * Avoids direct DOM writes to `.value` (don't fight React).
-   * Uses requestAnimationFrame to ensure element is mounted, with setTimeout fallback for reliability.
+   * Robust: tries multiple times (rAF + repeated timeouts) until focus & selection are set.
+   * Returns a Promise that resolves true/false to indicate success (not required to await).
    */
   const safeFocusSearchInput = useCallback(() => {
-    const focusIfReady = () => {
-      const el = searchInputRef.current;
-      if (!el) return;
-      try {
-        // ensure it's not disabled and is focusable
-        if (typeof el.focus === 'function') {
-          el.focus({ preventScroll: true });
-          // put cursor at end
-          const len = el.value ? el.value.length : 0;
-          if (typeof el.setSelectionRange === 'function') {
-            el.setSelectionRange(len, len);
+    return new Promise((resolve) => {
+      let attempts = 0;
+      const MAX_ATTEMPTS = 8;
+
+      const focusIfReady = () => {
+        const el = searchInputRef.current;
+        attempts += 1;
+
+        if (el && !el.disabled && typeof el.focus === 'function') {
+          try {
+            el.focus({ preventScroll: true });
+            // ensure selection at end
+            const len = (el.value && typeof el.value.length === 'number') ? el.value.length : 0;
+            if (typeof el.setSelectionRange === 'function') {
+              el.setSelectionRange(len, len);
+            }
+            resolve(true);
+            return;
+          } catch (err) {
+            // swallow and retry
           }
         }
-      } catch (err) {
-        // ignore focus errors, not fatal
-      }
-    };
 
-    // Try rAF first (fast path), then a micro-delay fallback
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => {
-        focusIfReady();
-        setTimeout(focusIfReady, 50);
-      });
-    } else {
-      setTimeout(focusIfReady, 0);
-    }
+        if (attempts < MAX_ATTEMPTS) {
+          // retry after short delay - gives React time to apply updates and toasts time to render if they steal focus
+          setTimeout(focusIfReady, attempts < 3 ? 20 : 60);
+        } else {
+          resolve(false);
+        }
+      };
+
+      // try rAF fast path then fallback retries
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => {
+          focusIfReady();
+          // one extra scheduled attempt for safety
+          setTimeout(focusIfReady, 50);
+        });
+      } else {
+        setTimeout(focusIfReady, 0);
+      }
+    });
   }, []);
 
   /**
    * Robust clear search helper.
    * - Use controlled React state to clear the input value.
-   * - Then focus via safeFocusSearchInput.
-   * Rationale: don't mutate DOM `.value` directly for controlled inputs.
+   * - Then focus via safeFocusSearchInput (after state changes).
    */
   const clearSearch = useCallback(() => {
     setSearchTerm('');
@@ -829,15 +843,14 @@ export default function POS() {
     setHasSearched(false);
     setSearchType('');
 
-    // Focus after state updates; ensure input is mounted.
-    // Keep this reliable across electron / browsers.
-    safeFocusSearchInput();
+    // Defer to next tick to ensure React state has applied and DOM updated, then focus
+    setTimeout(() => {
+      safeFocusSearchInput().catch(() => {});
+    }, 0);
   }, [safeFocusSearchInput]);
 
   /**
-   * Clear cart flow. Minimal surface change:
-   * - Keep existing confirmation behavior
-   * - After clearing cart, ensure search input is focused using safeFocus
+   * Clear cart flow.
    */
   const handleClearCart = useCallback(() => {
     if (cartItemCount === 0) {
@@ -850,20 +863,20 @@ export default function POS() {
       dispatch(clearCart());
       toast.success('Cart cleared successfully');
 
-      // Reset payment and order state, mirror previous flow
+      // Reset payment and order state
       setCurrentOrderId(null);
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
       // Ensure search is cleared and focused after the DOM updates
-      // Use rAF via safeFocusSearchInput inside clearSearch already
-      clearSearch();
+      setTimeout(() => {
+        clearSearch();
+      }, 0);
     }
   }, [cartItemCount, clearSearch, dispatch]);
 
   /**
    * Product barcode scanned via keyboard scanner detection.
-   * Keep existing flow but remove direct DOM manipulations; use safeFocus instead.
    */
   const handleBarcodeScanned = async (barcode) => {
     try {
@@ -893,7 +906,7 @@ export default function POS() {
 
       // Clear search term but ensure search input remains focusable
       setSearchTerm('');
-      safeFocusSearchInput();
+      setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     } catch (error) {
       console.error('Barcode scan error:', error);
       toast.error(`Failed to process barcode: ${error?.message || 'Unexpected error'}`);
@@ -907,7 +920,6 @@ export default function POS() {
 
   /**
    * handleQuantityChange - validates stock, then updates cart.
-   * Kept intact except for small readability improvements.
    */
   const handleQuantityChange = async (productId, priceType, newQuantity, productData = null) => {
     try {
@@ -1000,6 +1012,9 @@ export default function POS() {
       }
 
       setProductLoading(productId, false);
+
+      // Keep search focused for quick scanning/typing workflow
+      setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     } catch (error) {
       console.error('handleQuantityChange error:', error);
       toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
@@ -1014,7 +1029,7 @@ export default function POS() {
       toast.success('Item removed from cart');
 
       // focus search after removing an item to keep keyboard workflow smooth
-      safeFocusSearchInput();
+      setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
     }
   };
 
@@ -1031,7 +1046,6 @@ export default function POS() {
 
   /**
    * Order creation and completion flows kept intact except focusing behavior after completion.
-   * handleOrderCompletion replaced with stable, consistent formatting for receipts and cart clearing.
    */
   const createOrder = async () => {
     if (!paymentType) {
@@ -1321,7 +1335,7 @@ export default function POS() {
   }
 
   // Keep input focused for continued workflow
-  safeFocusSearchInput();
+  setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
 };
 
   const checkPaymentStatus = async () => {

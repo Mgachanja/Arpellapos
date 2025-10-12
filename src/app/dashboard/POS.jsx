@@ -24,11 +24,11 @@ import {
 import api from '../../services/api';
 import { selectUser } from '../../redux/slices/userSlice';
 
-// Note: printing handled elsewhere (electron or fallback)
+// Use printer helper (centralizes ipcRenderer usage + logging)
 import { printOrderReceipt } from '../thermalPrinter/thermalPrinter';
 
 const CTA = { background: '#FF7F50', color: '#fff' };
-const KSH = (amt) => `Ksh ${Number(amt).toLocaleString()}`;
+const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 
 /* ----------------------------
    Small util hooks / components
@@ -45,14 +45,14 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
   const productId = product.id || product._id;
   const retailPrice = product.price || 0;
   const wholesalePrice = product.priceAfterDiscount || product.price || 0;
-  
-  const retailCartItem = cartItems.find(item => 
+
+  const retailCartItem = cartItems.find(item =>
     (item.id || item._id) === productId && item.priceType === 'Retail'
   );
-  const wholesaleCartItem = cartItems.find(item => 
+  const wholesaleCartItem = cartItems.find(item =>
     (item.id || item._id) === productId && item.priceType === 'Discounted'
   );
-  
+
   const retailQuantity = retailCartItem ? retailCartItem.quantity : 0;
   const wholesaleQuantity = wholesaleCartItem ? wholesaleCartItem.quantity : 0;
 
@@ -89,10 +89,10 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
       }}
     >
       <div className="flex-grow-1 mb-3">
-        <h6 className="product-name fw-semibold text-dark mb-2 lh-sm" style={{ fontSize: '0.9rem', minHeight: '2.4rem' }}>
+        <h6 className="product-name fw-semibold text-dark mb-2 lh-sm" style={{ fontSize: '0.9rem', minHeight: '2.4rem', overflow: 'hidden' }}>
           {product.name}
         </h6>
-        
+
         <div className="mb-2">
           <div className="d-flex justify-content-between align-items-center mb-1">
             <span className="small text-muted">Retail:</span>
@@ -103,7 +103,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
             <span className="fw-bold text-info" style={{ fontSize: '0.9rem' }}>{KSH(wholesalePrice)}</span>
           </div>
         </div>
-        
+
         {product.barcode && (
           <div className="text-muted small mt-1" style={{ fontSize: '0.75rem' }}>
             <i className="fas fa-barcode me-1"></i>
@@ -380,9 +380,10 @@ function CartItems({ cart, onRemoveItem, KSH }) {
                 <td className="text-center">
                   <button
                     className="remove-circle-btn"
-                    onClick={() => onRemoveItem(cartKey)}
+                    onClick={() => onRemoveItem(itemId, item.name, item.priceType)}
                     title={`Remove ${item.name} (${item.priceType})`}
                     aria-label={`Remove ${item.name}`}
+                    type="button"
                   >
                     ×
                   </button>
@@ -419,10 +420,10 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
             <button
               type="button"
               className="btn w-100"
-              onClick={() => { 
-                setPaymentType('cash'); 
-                setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
-                setCurrentOrderId(null); 
+              onClick={() => {
+                setPaymentType('cash');
+                setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+                setCurrentOrderId(null);
               }}
               style={paymentType === 'cash' ? cashActive : cashInactive}
             >
@@ -430,15 +431,15 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
               Cash
             </button>
           </div>
-          
+
           <div className="col-4">
             <button
               type="button"
               className="btn w-100"
-              onClick={() => { 
-                setPaymentType('mpesa'); 
-                setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
-                setCurrentOrderId(null); 
+              onClick={() => {
+                setPaymentType('mpesa');
+                setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+                setCurrentOrderId(null);
               }}
               style={paymentType === 'mpesa' ? mpesaActive : mpesaInactive}
             >
@@ -446,15 +447,15 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
               M-Pesa
             </button>
           </div>
-          
+
           <div className="col-4">
             <button
               type="button"
               className="btn w-100"
-              onClick={() => { 
-                setPaymentType('both'); 
-                setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
-                setCurrentOrderId(null); 
+              onClick={() => {
+                setPaymentType('both');
+                setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+                setCurrentOrderId(null);
               }}
               style={paymentType === 'both' ? bothActive : bothInactive}
             >
@@ -470,11 +471,11 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
           <Form.Label className="fw-semibold">Cash Amount Given</Form.Label>
           <div className="input-group input-group-lg">
             <span className="input-group-text">Ksh</span>
-            <Form.Control 
-              type="number" 
-              value={paymentData.cashAmount} 
-              onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })} 
-              placeholder="Enter amount received" 
+            <Form.Control
+              type="number"
+              value={paymentData.cashAmount}
+              onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })}
+              placeholder="Enter amount received"
               min={cartTotal}
               style={{ fontSize: '1.1rem' }}
             />
@@ -495,10 +496,10 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
           <Form.Label className="fw-semibold">M-Pesa Phone Number</Form.Label>
           <div className="input-group input-group-lg">
             <span className="input-group-text">📱</span>
-            <Form.Control 
-              type="tel" 
-              placeholder="254XXXXXXXXX" 
-              value={paymentData.mpesaPhone} 
+            <Form.Control
+              type="tel"
+              placeholder="254XXXXXXXXX"
+              value={paymentData.mpesaPhone}
               onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })}
               style={{ fontSize: '1.1rem' }}
             />
@@ -512,11 +513,11 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
             <Form.Label className="fw-semibold"><i className="fas fa-money-bill-wave me-2"></i>Cash Amount</Form.Label>
             <div className="input-group input-group-lg">
               <span className="input-group-text">Ksh</span>
-              <Form.Control 
-                type="number" 
-                value={paymentData.cashAmount} 
-                onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })} 
-                placeholder="Enter cash amount" 
+              <Form.Control
+                type="number"
+                value={paymentData.cashAmount}
+                onChange={(e) => setPaymentData({ ...paymentData, cashAmount: e.target.value })}
+                placeholder="Enter cash amount"
                 min={0}
                 style={{ fontSize: '1.1rem' }}
               />
@@ -527,11 +528,11 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
             <Form.Label className="fw-semibold"><i className="fas fa-mobile-alt me-2"></i>M-Pesa Amount</Form.Label>
             <div className="input-group input-group-lg">
               <span className="input-group-text">Ksh</span>
-              <Form.Control 
-                type="number" 
-                value={paymentData.mpesaAmount} 
-                onChange={(e) => setPaymentData({ ...paymentData, mpesaAmount: e.target.value })} 
-                placeholder="Enter M-Pesa amount" 
+              <Form.Control
+                type="number"
+                value={paymentData.mpesaAmount}
+                onChange={(e) => setPaymentData({ ...paymentData, mpesaAmount: e.target.value })}
+                placeholder="Enter M-Pesa amount"
                 min={0}
                 style={{ fontSize: '1.1rem' }}
               />
@@ -542,10 +543,10 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
             <Form.Label className="fw-semibold">M-Pesa Phone Number</Form.Label>
             <div className="input-group input-group-lg">
               <span className="input-group-text">📱</span>
-              <Form.Control 
-                type="tel" 
-                placeholder="2547XXXXXXXX" 
-                value={paymentData.mpesaPhone} 
+              <Form.Control
+                type="tel"
+                placeholder="2547XXXXXXXX"
+                value={paymentData.mpesaPhone}
                 onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })}
                 style={{ fontSize: '1.1rem' }}
               />
@@ -800,38 +801,33 @@ export default function POS() {
   const clearSearchAndProducts = useCallback(() => {
     // Clear DOM input immediately
     if (searchInputRef.current) {
-      searchInputRef.current.value = '';
+      try { searchInputRef.current.value = ''; } catch (e) {}
     }
-    
+
     // Batch state updates
     setSearchTerm('');
     setFilteredProducts([]);
     setHasSearched(false);
     setSearchType('');
-    
+
     // Non-blocking focus
     requestAnimationFrame(() => {
-      if (searchInputRef.current) {
-        try {
-          searchInputRef.current.focus({ preventScroll: true });
-        } catch (e) {}
-      } else {
-        focusSearchInput();
-      }
+      try {
+        if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+        else focusSearchInput();
+      } catch (e) {}
     });
   }, [focusSearchInput]);
 
-  /* Clear cart flow - NO confirm (immediate) */
+  /* Clear cart flow - immediate (no alert) */
   const handleClearCart = useCallback(() => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
-      // still ensure input focused
+      // ensure focus
       requestAnimationFrame(() => {
-        if (searchInputRef.current) {
-          try {
-            searchInputRef.current.focus({ preventScroll: true });
-          } catch (e) {}
-        }
+        try {
+          if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+        } catch (e) {}
       });
       return;
     }
@@ -844,16 +840,16 @@ export default function POS() {
     setPaymentType('');
     setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
-    // Clear and focus the search input non-blocking (fixes freeze)
+    // Clear and focus the search input non-blocking
     requestAnimationFrame(() => {
-      if (searchInputRef.current) {
-        try {
+      try {
+        if (searchInputRef.current) {
           searchInputRef.current.value = '';
           searchInputRef.current.focus({ preventScroll: true });
-        } catch (e) {}
-      } else {
-        focusSearchInput();
-      }
+        } else {
+          focusSearchInput();
+        }
+      } catch (e) {}
     });
   }, [cartItemCount, dispatch, focusSearchInput]);
 
@@ -869,7 +865,7 @@ export default function POS() {
       const priceType = await new Promise((resolve) => {
         const retailPrice = product.price || 0;
         const wholesalePrice = product.priceAfterDiscount || product.price || 0;
-        
+
         const result = window.confirm(
           `Select price type for "${product.name}":\n\n` +
           `Click OK for Retail (${KSH(retailPrice)})\n` +
@@ -886,10 +882,10 @@ export default function POS() {
 
       // Clear input and focus
       if (searchInputRef.current) {
-        searchInputRef.current.value = '';
+        try { searchInputRef.current.value = ''; } catch (e) {}
       }
       setSearchTerm('');
-      
+
       requestAnimationFrame(() => {
         focusSearchInput();
       });
@@ -913,7 +909,7 @@ export default function POS() {
         return;
       }
 
-      const existingCartItem = cart.find(item => 
+      const existingCartItem = cart.find(item =>
         (item.id || item._id) === productId && item.priceType === priceType
       );
 
@@ -925,9 +921,7 @@ export default function POS() {
 
           // focus input after remove
           requestAnimationFrame(() => {
-            if (searchInputRef.current) {
-              try { searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
-            }
+            try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
           });
         }
         return;
@@ -935,7 +929,7 @@ export default function POS() {
 
       const currentCartQty = existingCartItem ? existingCartItem.quantity : 0;
       const inventoryId = getInventoryId(product);
-      
+
       if (!inventoryId) {
         toast.error('Cannot validate stock - inventory ID missing');
         return;
@@ -945,7 +939,7 @@ export default function POS() {
 
       if (newQuantity > currentCartQty) {
         const qtyToAdd = newQuantity - currentCartQty;
-        
+
         try {
           const validation = await validateAndAddToCart({
             productId,
@@ -990,8 +984,8 @@ export default function POS() {
         toast.success('Cart updated');
       } else {
         dispatch(addItemToCart({
-          product: { 
-            ...product, 
+          product: {
+            ...product,
             id: productId,
             priceType: priceType,
             price: product.price,
@@ -1006,11 +1000,10 @@ export default function POS() {
 
       // Non-blocking focus
       requestAnimationFrame(() => {
-        if (searchInputRef.current) {
-          try { searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
-        } else {
-          focusSearchInput();
-        }
+        try {
+          if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+          else focusSearchInput();
+        } catch (e) {}
       });
     } catch (error) {
       console.error('handleQuantityChange error:', error);
@@ -1019,23 +1012,31 @@ export default function POS() {
     }
   };
 
-  /* Remove item - immediate, expects composite cart key "productId_priceType" */
-  const handleRemoveItem = (cartKey) => {
+  /* Remove item - immediate, expects (productId, productName, priceType) */
+  const handleRemoveItem = (productId, productName, priceType) => {
     try {
+      // Build same composite key other parts of app use
+      const cartKey = `${productId}_${priceType}`;
+      // log to help debug if slice not removing
+      console.log('Removing cart item:', { productId, priceType, cartKey });
       dispatch(removeItemFromCart(cartKey));
+      // Also dispatch alternative payload shape — some slices check payload.id
+      // (this is defensive; if your reducer expects an object payload, this helps)
+      try {
+        dispatch(removeItemFromCart({ id: cartKey }));
+      } catch (e) {
+        // ignore if fails — action creators may not accept object
+      }
+
       toast.success('Item removed from cart');
     } catch (err) {
       console.error('Failed to remove item:', err);
       toast.error('Failed to remove item');
     }
 
-    // Focus input non-blocking (fix freeze)
+    // Focus input non-blocking to avoid UI "freeze"
     requestAnimationFrame(() => {
-      if (searchInputRef.current) {
-        try {
-          searchInputRef.current.focus({ preventScroll: true });
-        } catch (e) {}
-      }
+      try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
     });
   };
 
@@ -1050,17 +1051,17 @@ export default function POS() {
     }
   };
 
-  /* OPTIMIZED: Async printing without blocking order completion */
+  /* Async printing via helper */
   const handleOrderCompletion = async (orderData) => {
     toast.success('Order completed');
 
     const receiptItems = cart.map(ci => {
-      const sellingPrice = ci.priceType === 'Retail' 
-        ? (ci.price || 0) 
+      const sellingPrice = ci.priceType === 'Retail'
+        ? (ci.price || 0)
         : (ci.priceAfterDiscount || ci.price || 0);
       const quantity = ci.quantity || 1;
       const lineTotal = sellingPrice * quantity;
-      
+
       return {
         name: ci.name || ci.productName || 'Item',
         productName: ci.name || ci.productName || 'Item',
@@ -1100,23 +1101,23 @@ export default function POS() {
 
     const receiptData = {
       cart: receiptItems,
-      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 
-        ? cartTotalFromLines 
+      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0
+        ? cartTotalFromLines
         : currentCartTotal,
       paymentType: paymentType || 'cash',
       paymentData: {
-        cashAmount: paymentType === 'cash' 
-          ? Number(paymentData.cashAmount) 
-          : paymentType === 'both' 
-            ? Number(paymentData.cashAmount) || 0 
+        cashAmount: paymentType === 'cash'
+          ? Number(paymentData.cashAmount)
+          : paymentType === 'both'
+            ? Number(paymentData.cashAmount) || 0
             : 0,
-        mpesaAmount: paymentType === 'both' 
-          ? Number(paymentData.mpesaAmount) 
+        mpesaAmount: paymentType === 'both'
+          ? Number(paymentData.mpesaAmount)
           : (paymentType === 'mpesa' ? Number(paymentData.mpesaAmount) : 0) || 0,
-        change: paymentType === 'cash' 
-          ? Math.max(0, Number(paymentData.cashAmount) - currentCartTotal) 
-          : paymentType === 'both' 
-            ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal) 
+        change: paymentType === 'cash'
+          ? Math.max(0, Number(paymentData.cashAmount) - currentCartTotal)
+          : paymentType === 'both'
+            ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal)
             : 0
       },
       user: {
@@ -1127,8 +1128,8 @@ export default function POS() {
         userName: user?.userName || user?.username || ''
       },
       orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
-      customerPhone: paymentType === 'mpesa' || paymentType === 'both' 
-        ? (paymentData.mpesaPhone || '').trim() 
+      customerPhone: paymentType === 'mpesa' || paymentType === 'both'
+        ? (paymentData.mpesaPhone || '').trim()
         : '',
       storeSettings: storeSettings
     };
@@ -1158,32 +1159,17 @@ export default function POS() {
       }
     }
 
-    // Handle receipt printing asynchronously (non-blocking)
+    // Use centralized print helper (it logs and returns result)
     try {
-      const isElectron = !!(typeof window !== 'undefined' && window.require);
-      
-      if (isElectron) {
-        // Use setTimeout to prevent blocking the UI
-        setTimeout(async () => {
-          try {
-            const { ipcRenderer } = window.require('electron');
-            const result = await ipcRenderer.invoke('print-receipt', receiptData, null, storeSettings);
-            if (result?.success) {
-              toast.success('Receipt printed successfully');
-            } else {
-              console.warn('Receipt print returned false:', result?.message);
-              toast.warning('Receipt printing may have failed');
-            }
-          } catch (printError) {
-            console.error('Receipt printing error:', printError);
-            toast.warning('Receipt printing failed - try printing from settings');
-          }
-        }, 0);
+      const res = await printOrderReceipt(receiptData);
+      if (res?.success) {
+        toast.success('Receipt printed successfully');
       } else {
-        console.log('Not in Electron, skipping thermal printer');
+        toast.warning(`Receipt printing: ${res?.message || 'failed'}`);
       }
     } catch (err) {
-      console.error('Error in print handler:', err);
+      console.error('Async print error:', err);
+      toast.warning('Receipt printing failed (see console)');
     }
   };
 
@@ -1524,10 +1510,10 @@ export default function POS() {
                   </div>
                 )}
 
-                <Button 
-                  style={{ ...CTA, width: '100%', padding: '14px', fontSize: '1.1rem', fontWeight: '600' }} 
-                  onClick={paymentType === 'both' ? createOrder : completeCheckout} 
-                  disabled={!paymentType || processingOrder} 
+                <Button
+                  style={{ ...CTA, width: '100%', padding: '14px', fontSize: '1.1rem', fontWeight: '600' }}
+                  onClick={paymentType === 'both' ? createOrder : completeCheckout}
+                  disabled={!paymentType || processingOrder}
                   size="lg"
                 >
                   {processingOrder ? (
@@ -1606,7 +1592,7 @@ export default function POS() {
         @media (max-width: 1199.98px) {
           .cart-sidebar { position: relative !important; max-height: none !important; margin-top: 20px; }
         }
-        
+
         @media (min-width: 1200px) {
           .col-xl-4 { flex: 0 0 40%; max-width: 40%; }
           .col-xl-8 { flex: 0 0 60%; max-width: 60%; }

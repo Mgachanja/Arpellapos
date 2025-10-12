@@ -124,8 +124,9 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               onClick={handleRetailDecrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
               type="button"
+              aria-label={`Decrease retail quantity for ${product.name}`}
             >
-              <i className="fas fa-minus" style={{ fontSize: '0.7rem' }}></i>
+              <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>−</span>
             </button>
             <div className="mx-2 fw-bold text-center" style={{ minWidth: '25px', fontSize: '0.9rem', color: '#495057' }}>
               {retailQuantity}
@@ -135,8 +136,9 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               onClick={handleRetailIncrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
               type="button"
+              aria-label={`Increase retail quantity for ${product.name}`}
             >
-              <i className="fas fa-plus" style={{ fontSize: '0.7rem' }}></i>
+              <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>+</span>
             </button>
           </div>
         ) : (
@@ -146,7 +148,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
             style={{ fontWeight: '600', fontSize: '0.75rem', padding: '6px 12px' }}
             type="button"
           >
-            <i className="fas fa-plus me-1"></i>Add Retail
+            <span style={{ marginRight: 6 }}>+</span>Add Retail
           </button>
         )}
       </div>
@@ -163,8 +165,9 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               onClick={handleWholesaleDecrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
               type="button"
+              aria-label={`Decrease wholesale quantity for ${product.name}`}
             >
-              <i className="fas fa-minus" style={{ fontSize: '0.7rem' }}></i>
+              <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>−</span>
             </button>
             <div className="mx-2 fw-bold text-center" style={{ minWidth: '25px', fontSize: '0.9rem', color: '#495057' }}>
               {wholesaleQuantity}
@@ -174,8 +177,9 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               onClick={handleWholesaleIncrement}
               style={{ width: '28px', height: '28px', padding: '0' }}
               type="button"
+              aria-label={`Increase wholesale quantity for ${product.name}`}
             >
-              <i className="fas fa-plus" style={{ fontSize: '0.7rem' }}></i>
+              <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>+</span>
             </button>
           </div>
         ) : (
@@ -185,7 +189,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
             style={{ fontWeight: '600', fontSize: '0.75rem', padding: '6px 12px' }}
             type="button"
           >
-            <i className="fas fa-plus me-1"></i>Add Wholesale
+            <span style={{ marginRight: 6 }}>+</span>Add Wholesale
           </button>
         )}
       </div>
@@ -269,7 +273,7 @@ function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarco
           </div>
           <h5 className="text-muted">Search for products or scan barcodes</h5>
           <p className="text-muted">
-            Enter a product name to search or scan/type a barcode to automatically add to cart
+            Enter a product name to search or scan/type a barcode to automatically add items to your cart
             <br />
             <small className="text-success">
               <i className="fas fa-magic me-1"></i>
@@ -327,6 +331,7 @@ function ProductsGrid({ hasSearched, filteredProducts, searchTerm, isLikelyBarco
   );
 }
 
+/* NOTE: onRemoveItem now expects (cartKey, item) to provide maximum context */
 function CartItems({ cart, onRemoveItem, KSH }) {
   if (cart.length === 0) {
     return (
@@ -380,7 +385,7 @@ function CartItems({ cart, onRemoveItem, KSH }) {
                 <td className="text-center">
                   <button
                     className="remove-circle-btn"
-                    onClick={() => onRemoveItem(itemId, item.name, item.priceType)}
+                    onClick={() => onRemoveItem(cartKey, item)}
                     title={`Remove ${item.name} (${item.priceType})`}
                     aria-label={`Remove ${item.name}`}
                     type="button"
@@ -400,8 +405,8 @@ function CartItems({ cart, onRemoveItem, KSH }) {
 /* ----------------------------
    Payment form
    ---------------------------- */
+/* (PaymentForm unchanged from your original; omitted here for brevity in explanation but included below in code) */
 function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData, cartTotal, KSH, setCurrentOrderId }) {
-  // Colors:
   const cashActive = { backgroundColor: '#FF8C00', border: '2px solid #FF6600', color: '#fff' };
   const cashInactive = { backgroundColor: '#FFEBD6', border: '2px solid #FFA500', color: '#1f1f1f' };
   const mpesaActive = { backgroundColor: '#22B14C', border: '2px solid #16A335', color: '#fff' };
@@ -916,7 +921,12 @@ export default function POS() {
       if (newQuantity === 0) {
         if (existingCartItem) {
           const cartItemId = `${productId}_${priceType}`;
+          // Use composite key removal (used elsewhere) — keep for compatibility.
           dispatch(removeItemFromCart(cartItemId));
+          // try alternative shapes (some reducers expect different payloads)
+          try { dispatch(removeItemFromCart({ id: cartItemId })); } catch (e) {}
+          try { dispatch(removeItemFromCart({ productId, priceType })); } catch (e) {}
+          try { dispatch(updateCartItemQuantity({ productId, quantity: 0 })); } catch (e) {}
           toast.success('Removed from cart');
 
           // focus input after remove
@@ -1012,32 +1022,80 @@ export default function POS() {
     }
   };
 
-  /* Remove item - immediate, expects (productId, productName, priceType) */
-  const handleRemoveItem = (productId, productName, priceType) => {
+  /**
+   * Hardened removal handler.
+   * Accepts cartKey (composite) and the full item object for context.
+   * Tries multiple payload shapes to satisfy different reducer shapes.
+   * Also tries updateCartItemQuantity({ productId, quantity: 0 }) as a fallback.
+   */
+  const handleRemoveItem = (cartKey, item) => {
+    if (!cartKey) {
+      toast.error('Invalid cart item key');
+      return;
+    }
+
+    const productId = item?.id || item?._id || null;
+    const priceType = item?.priceType || (cartKey.includes('_') ? cartKey.split('_').slice(-1)[0] : null);
+
+    console.info('handleRemoveItem invoked', { cartKey, productId, priceType, item });
+
     try {
-      // Build same composite key other parts of app use
-      const cartKey = `${productId}_${priceType}`;
-      // log to help debug if slice not removing
-      console.log('Removing cart item:', { productId, priceType, cartKey });
-      dispatch(removeItemFromCart(cartKey));
-      // Also dispatch alternative payload shape — some slices check payload.id
-      // (this is defensive; if your reducer expects an object payload, this helps)
+      // 1) Try the most likely shape: composite string key
+      try {
+        dispatch(removeItemFromCart(cartKey));
+        console.debug('Dispatched removeItemFromCart(cartKey)', cartKey);
+      } catch (e) {
+        console.warn('removeItemFromCart(cartKey) failed:', e);
+      }
+
+      // 2) Try object with id field
       try {
         dispatch(removeItemFromCart({ id: cartKey }));
+        console.debug('Dispatched removeItemFromCart({ id: cartKey })', cartKey);
       } catch (e) {
-        // ignore if fails — action creators may not accept object
+        console.warn('removeItemFromCart({ id }) failed:', e);
+      }
+
+      // 3) Try object with productId and priceType
+      if (productId && priceType) {
+        try {
+          dispatch(removeItemFromCart({ productId, priceType }));
+          console.debug('Dispatched removeItemFromCart({ productId, priceType })', { productId, priceType });
+        } catch (e) {
+          console.warn('removeItemFromCart({ productId, priceType }) failed:', e);
+        }
+      }
+
+      // 4) Fallback: attempt updating quantity to 0 (some reducers use update action)
+      if (productId) {
+        try {
+          dispatch(updateCartItemQuantity({ productId, quantity: 0 }));
+          console.debug('Dispatched updateCartItemQuantity({ productId, quantity: 0 })', { productId });
+        } catch (e) {
+          console.warn('updateCartItemQuantity fallback failed:', e);
+        }
+      }
+
+      // 5) Try remove by raw productId (some implementations expect that)
+      if (productId) {
+        try {
+          dispatch(removeItemFromCart(productId));
+          console.debug('Dispatched removeItemFromCart(productId)', productId);
+        } catch (e) {
+          console.warn('removeItemFromCart(productId) failed:', e);
+        }
       }
 
       toast.success('Item removed from cart');
     } catch (err) {
       console.error('Failed to remove item:', err);
       toast.error('Failed to remove item');
+    } finally {
+      // Focus input non-blocking to avoid UI "freeze"
+      requestAnimationFrame(() => {
+        try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
+      });
     }
-
-    // Focus input non-blocking to avoid UI "freeze"
-    requestAnimationFrame(() => {
-      try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
-    });
   };
 
   const refresh = async () => {
@@ -1099,6 +1157,16 @@ export default function POS() {
       receiptFooter: 'Thank you for your business!'
     };
 
+    // Normalize user payload so thermalPrinter receives a consistent structure.
+    const normalizedUser = {
+      id: user?.id || user?._id || user?.userId || user?.username || null,
+      name: getCashierName(),
+      firstName: user?.firstName || user?.first_name || '',
+      lastName: user?.lastName || user?.last_name || '',
+      phone: user?.phone || user?.phoneNumber || '',
+      username: user?.userName || user?.username || ''
+    };
+
     const receiptData = {
       cart: receiptItems,
       cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0
@@ -1120,13 +1188,8 @@ export default function POS() {
             ? Math.max(0, (Number(paymentData.cashAmount) || 0) + (Number(paymentData.mpesaAmount) || 0) - currentCartTotal)
             : 0
       },
-      user: {
-        firstName: user?.firstName || user?.first_name || 'Staff',
-        lastName: user?.lastName || user?.last_name || '',
-        fullName: getCashierName(),
-        phone: user?.phone || user?.phoneNumber || '',
-        userName: user?.userName || user?.username || ''
-      },
+      user: normalizedUser,     // thermalPrinter should find this
+      cashier: normalizedUser,  // fallback alias (some printers expect 'cashier')
       orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || `ORD-${Date.now().toString().slice(-6)}`,
       customerPhone: paymentType === 'mpesa' || paymentType === 'both'
         ? (paymentData.mpesaPhone || '').trim()

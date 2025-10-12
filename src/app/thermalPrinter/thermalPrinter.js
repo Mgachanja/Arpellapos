@@ -2,11 +2,10 @@
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
 
-// Internal state for printer connection and preferences
 let connectedPrinter = null;
 let printerCache = null;
 let cacheTimestamp = 0;
-const CACHE_DURATION = 5000; // 5 seconds cache
+const CACHE_DURATION = 5000;
 
 export const getThermalPrinters = async () => {
   if (!isElectron || !ipcRenderer) {
@@ -149,8 +148,7 @@ export const savePrinterPreference = (printerName) => {
 
 /**
  * Print order receipt to thermal printer
- * - Uses ipcRenderer.invoke('print-receipt', orderData, printerName, storeSettings)
- * - Returns the result object from main process, or a safe failure object
+ * Properly normalizes user data before sending to IPC
  */
 export const printOrderReceipt = async (receiptData, printerName = null, storeSettings = {}) => {
   if (!isElectron || !ipcRenderer) {
@@ -164,7 +162,7 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
   }
 
   try {
-    // Normalize incoming data and ensure numbers exist
+    // FIXED: Properly normalize all incoming data
     const {
       cart = [],
       cartTotal = 0,
@@ -172,62 +170,88 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
       paymentData = {},
       user = {},
       orderNumber = '',
-      customerPhone = ''
+      customerPhone = '',
+      storeSettings: incomingStoreSettings = {}
     } = receiptData || {};
 
-    // Sanitize items
+    // FIXED: Normalize cart items with safe type conversion
     const normalizedCart = (Array.isArray(cart) ? cart : []).map(item => {
-      const salePrice = Number(item.salePrice ?? item.price ?? 0) || 0;
+      const salePrice = Number(item.salePrice ?? item.price ?? item.sellingPrice ?? 0) || 0;
       const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
       return {
-        name: item.name || item.productName || 'Item',
-        productName: item.name || item.productName || 'Item',
+        name: String(item.name || item.productName || 'Item'),
+        productName: String(item.name || item.productName || 'Item'),
         quantity: qty,
-        qty,
-        salePrice,
+        qty: qty,
+        salePrice: salePrice,
         price: salePrice,
-        priceType: item.priceType || 'Retail',
-        barcode: item.barcode || '',
-        lineTotal: Number(item.lineTotal ?? item.total ?? (salePrice * qty)) || (salePrice * qty)
+        priceType: String(item.priceType || 'Retail'),
+        barcode: String(item.barcode || ''),
+        lineTotal: Number(item.lineTotal ?? (salePrice * qty)) || (salePrice * qty)
       };
     });
 
+    // FIXED: Better user object normalization
+    const normalizedUser = {
+      firstName: String(user?.firstName || user?.first_name || ''),
+      lastName: String(user?.lastName || user?.last_name || ''),
+      fullName: String(user?.fullName || user?.full_name || ''),
+      phone: String(user?.phone || user?.phoneNumber || ''),
+      userName: String(user?.userName || user?.username || '')
+    };
+
+    // FIXED: Ensure fullName is populated if it's empty
+    if (!normalizedUser.fullName && (normalizedUser.firstName || normalizedUser.lastName)) {
+      normalizedUser.fullName = `${normalizedUser.firstName} ${normalizedUser.lastName}`.trim();
+    }
+    if (!normalizedUser.fullName && normalizedUser.userName) {
+      normalizedUser.fullName = normalizedUser.userName;
+    }
+    if (!normalizedUser.fullName) {
+      normalizedUser.fullName = 'Staff';
+    }
+
+    // FIXED: Merge store settings properly
+    const finalStoreSettings = {
+      storeName: String(incomingStoreSettings.storeName || storeSettings.storeName || 'ARPELLA STORE LIMITED'),
+      storeAddress: String(incomingStoreSettings.storeAddress || storeSettings.storeAddress || 'Ngong, Matasia'),
+      storePhone: String(incomingStoreSettings.storePhone || storeSettings.storePhone || '+254 7xx xxx xxx'),
+      pin: String(incomingStoreSettings.pin || storeSettings.pin || 'P052336649L'),
+      receiptFooter: String(incomingStoreSettings.receiptFooter || storeSettings.receiptFooter || 'Thank you for your business!')
+    };
+
+    // FIXED: Build final payload with all normalized data
     const printPayload = {
       cart: normalizedCart,
       cartTotal: Number(cartTotal) || normalizedCart.reduce((s, it) => s + (it.lineTotal || 0), 0),
-      paymentType: String(paymentType).toLowerCase(),
+      paymentType: String(paymentType || 'cash').toLowerCase(),
       paymentData: {
-        cashAmount: Number(paymentData.cashAmount) || 0,
-        mpesaAmount: Number(paymentData.mpesaAmount) || 0,
-        change: Number(paymentData.change) || 0
+        cashAmount: Number(paymentData?.cashAmount) || 0,
+        mpesaAmount: Number(paymentData?.mpesaAmount) || 0,
+        change: Number(paymentData?.change) || 0
       },
-      user: {
-        firstName: user.firstName || user.first_name || '',
-        lastName: user.lastName || user.last_name || '',
-        fullName: user.fullName || user.full_name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        phone: user.phone || user.phoneNumber || '',
-        userName: user.userName || user.username || ''
-      },
-      orderNumber: String(orderNumber || ''),
-      customerPhone: String(customerPhone || '').trim()
+      user: normalizedUser,
+      orderNumber: String(orderNumber || 'N/A'),
+      customerPhone: String(customerPhone || 'Walk-in').trim(),
+      storeSettings: finalStoreSettings
     };
 
-    console.log('printOrderReceipt -> invoking print-receipt', {
+    console.log('printOrderReceipt -> invoking print-receipt with normalized data', {
       items: printPayload.cart.length,
       cartTotal: printPayload.cartTotal,
       orderNumber: printPayload.orderNumber,
       cashier: printPayload.user.fullName
     });
 
-    // Invoke main process handler - pass store settings as third arg
-    const result = await ipcRenderer.invoke('print-receipt', printPayload, printerName, storeSettings);
+    // Invoke main process with normalized payload
+    const result = await ipcRenderer.invoke('print-receipt', printPayload, printerName);
 
     if (result?.success) {
       console.log('printOrderReceipt: success', result);
       return { success: true, message: result?.message || 'Printed' };
     } else {
       console.error('printOrderReceipt: failure', result);
-      return { success: false, message: result?.message || 'Print failed (no details)' };
+      return { success: false, message: result?.message || 'Print failed' };
     }
   } catch (error) {
     console.error('Error in printOrderReceipt:', error);

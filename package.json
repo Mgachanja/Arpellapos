@@ -1,8 +1,8 @@
 {
   "name": "arpellapos",
-  "productName": "Arpella POS",
+  "productName": "Apella POS",
   "description": "Arpella store desktop POS",
-  "version": "0.1.62",
+  "version": "0.1.63",
   "private": true,
   "main": "main.js",
   "homepage": ".",

@@ -638,15 +638,22 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   }
 });
 
-// Replace your existing ipcMain.handle('print-receipt', ...) with this block:
+// Replace your existing ipcMain.handle('print-receipt', ...) in main.js with this version
 
 ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
+  log.info('=== PRINT RECEIPT HANDLER CALLED ===');
+  
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
     return { success: false, message: 'Thermal printer library not available' };
   }
 
   try {
+    // Log what we received
+    log.info('Received orderData keys:', Object.keys(orderData || {}));
+    log.info('Received printerName:', printerName);
+    log.info('Received storeSettingsArg:', storeSettingsArg);
+    
     // Destructure orderData safely
     const {
       cart = [],
@@ -655,10 +662,25 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       paymentData = {},
       orderNumber = '',
       customerPhone = '',
-      user: orderUser = {}
+      user: orderUser = {},
+      cashier: orderCashier = {}
     } = orderData || {};
 
-    // Normalize store settings: explicit arg takes precedence, then orderData.storeSettings, then defaults
+    log.info('Destructured values:', {
+      cartLength: cart.length,
+      cartTotal,
+      paymentType,
+      orderNumber,
+      customerPhone,
+      hasUser: !!orderUser,
+      hasCashier: !!orderCashier
+    });
+
+    // Use orderUser first, fallback to orderCashier
+    const userObj = orderUser && Object.keys(orderUser).length > 0 ? orderUser : orderCashier;
+    log.info('Selected userObj:', userObj);
+
+    // Normalize store settings
     const ss = (typeof storeSettingsArg === 'object' && storeSettingsArg !== null)
       ? storeSettingsArg
       : (orderData && orderData.storeSettings && typeof orderData.storeSettings === 'object')
@@ -673,21 +695,71 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       receiptFooter: String(ss.receiptFooter || 'Thank you for your business!')
     };
 
+    log.info('Store settings:', storeSettingsObj);
+
     // Helper to format currency
     const formatCurrency = (amount) => `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
 
     // Build cashier/display name safely from incoming user object
-    const cashierName = (() => {
-      if (!orderUser) return 'Staff';
-      if (orderUser.fullName) return orderUser.fullName;
-      if (orderUser.full_name) return orderUser.full_name;
-      const first = orderUser.firstName || orderUser.first_name || '';
-      const last = orderUser.lastName || orderUser.last_name || '';
-      if (first || last) return `${first} ${last}`.trim();
-      if (orderUser.userName || orderUser.username) return orderUser.userName || orderUser.username;
-      if (orderUser.name) return orderUser.name;
+    const getCashierName = () => {
+      if (!userObj || Object.keys(userObj).length === 0) {
+        log.warn('No user object available, using default "Staff"');
+        return 'Staff';
+      }
+      
+      log.info('Building cashier name from userObj:', userObj);
+      
+      // Try fullName variations
+      if (userObj.fullName && userObj.fullName.trim()) {
+        log.info('Using fullName:', userObj.fullName);
+        return userObj.fullName.trim();
+      }
+      if (userObj.full_name && userObj.full_name.trim()) {
+        log.info('Using full_name:', userObj.full_name);
+        return userObj.full_name.trim();
+      }
+      if (userObj.name && userObj.name.trim()) {
+        log.info('Using name:', userObj.name);
+        return userObj.name.trim();
+      }
+      
+      // Try first + last name
+      const firstName = (userObj.firstName || userObj.first_name || '').trim();
+      const lastName = (userObj.lastName || userObj.last_name || '').trim();
+      if (firstName || lastName) {
+        const combined = `${firstName} ${lastName}`.trim();
+        log.info('Using firstName + lastName:', combined);
+        return combined;
+      }
+      
+      // Try username variations
+      if (userObj.userName && userObj.userName.trim()) {
+        log.info('Using userName:', userObj.userName);
+        return userObj.userName.trim();
+      }
+      if (userObj.username && userObj.username.trim()) {
+        log.info('Using username:', userObj.username);
+        return userObj.username.trim();
+      }
+      
+      // Try email
+      if (userObj.email && userObj.email.trim()) {
+        log.info('Using email:', userObj.email);
+        return userObj.email.trim();
+      }
+      
+      log.warn('No valid name fields found, using "Staff"');
       return 'Staff';
-    })();
+    };
+
+    const cashierName = getCashierName();
+    log.info('Final cashier name:', cashierName);
+
+    // Validate cart
+    if (!Array.isArray(cart) || cart.length === 0) {
+      log.error('Invalid or empty cart');
+      return { success: false, message: 'Cart is empty or invalid' };
+    }
 
     // Build printData
     const printData = [];
@@ -695,6 +767,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     // Add logo if available
     const logoBase64 = getLogoBase64();
     if (logoBase64) {
+      log.info('Adding logo to receipt');
       printData.push({
         type: 'image',
         url: logoBase64,
@@ -703,9 +776,11 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
         height: '75px',
         style: { marginBottom: '8px' }
       });
+    } else {
+      log.warn('No logo available for receipt');
     }
 
-    // Header - using storeSettingsObj safely
+    // Header
     printData.push(
       { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '15px', marginBottom: '5px' } },
       { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
@@ -719,13 +794,15 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     // Order info including cashier
     printData.push(
       { type: 'text', value: `Date: ${new Date().toLocaleString('en-KE')}`, style: { fontSize: '13px', fontWeight: 'bold', marginBottom: '3px', textAlign: 'left' } },
-      { type: 'text', value: `SALE #: ${orderNumber || ''}`, style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
+      { type: 'text', value: `SALE #: ${orderNumber || 'N/A'}`, style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
       { type: 'text', value: `Customer: ${customerPhone || 'Walk-in'}`, style: { fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
       { type: 'text', value: `Cashier: ${cashierName}`, style: { fontSize: '13px', marginBottom: '8px', textAlign: 'left' } },
       { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '3px' } },
       { type: 'text', value: 'ITEM                 QTY   TOTAL', style: { fontWeight: 'bold', fontSize: '13px', fontFamily: 'monospace', marginBottom: '3px' } },
       { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } }
     );
+
+    log.info('Processing cart items:', cart.length);
 
     // Items
     for (const item of cart) {
@@ -750,10 +827,10 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginTop: '5px', marginBottom: '5px' } },
       { type: 'text', value: `SUBTOTAL: ${formatCurrency(cartTotal)}`, style: { fontSize: '14px', marginBottom: '3px', fontWeight: 'bold' } },
       { type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
-      { type: 'text', value: `Payment Method: ${String(paymentType || '').toUpperCase()}`, style: { fontSize: '13px', textAlign: 'center', marginBottom: '10px' } }
+      { type: 'text', value: `Payment Method: ${String(paymentType || 'CASH').toUpperCase()}`, style: { fontSize: '13px', textAlign: 'center', marginBottom: '10px' } }
     );
 
-    // Footer using storeSettingsObj
+    // Footer
     printData.push(
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
       { type: 'text', value: storeSettingsObj.receiptFooter, style: { textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' } },
@@ -762,6 +839,8 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '3px' } },
       { type: 'text', value: `Print Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '15px' } }
     );
+
+    log.info('Print data prepared, total sections:', printData.length);
 
     // Print using electron-pos-printer
     const options = {
@@ -773,17 +852,32 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       copies: 1
     };
 
-    if (printerName) options.printerName = printerName;
+    if (printerName && printerName.trim()) {
+      options.printerName = printerName.trim();
+      log.info('Using specified printer:', printerName);
+    } else {
+      log.info('Using default printer');
+    }
 
+    log.info('Calling PosPrinter.print with options:', options);
+    
     await PosPrinter.print(printData, options);
+    
     log.info('Receipt printed successfully to:', printerName || 'default printer');
     return { success: true, message: 'Receipt printed successfully' };
+    
   } catch (error) {
-    log.error('Print receipt failed:', error);
-    return { success: false, message: `Print failed: ${error.message}` };
+    log.error('Print receipt failed - Full error:', error);
+    log.error('Error name:', error?.name);
+    log.error('Error message:', error?.message);
+    log.error('Error stack:', error?.stack);
+    
+    return { 
+      success: false, 
+      message: `Print failed: ${error?.message || error?.toString() || 'Unknown error'}` 
+    };
   }
 });
-
 
 
 

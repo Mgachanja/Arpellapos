@@ -216,7 +216,7 @@ function SearchHeader({ searchTerm, setSearchTerm, searchType, loading, onRefres
               autoComplete="off"
               spellCheck={false}
             />
-            <button className="btn btn-outline-secondary border-start-0" type="button" onClick={onClear} title="Clear search">
+            <button className="btn btn-outline-secondary border-start-0" type="button" onClick={onClear} title="Clear search" aria-label="Clear search">
               <i className="fas fa-times"></i>
             </button>
           </div>
@@ -355,9 +355,10 @@ function CartItems({ cart, onRemoveItem, KSH }) {
             const itemPrice = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
             const itemTotal = itemPrice * (item.quantity || 1);
             const itemId = item.id || item._id;
+            const cartKey = `${itemId}_${item.priceType}`;
 
             return (
-              <tr key={itemId + (item.priceType || '')}>
+              <tr key={cartKey}>
                 <td style={{ fontSize: '0.75rem' }}>
                   <div className="text-truncate" style={{ maxWidth: '400px', fontSize: '1.01rem' }} title={item.name}>
                     <strong>{item.name}</strong>
@@ -375,7 +376,13 @@ function CartItems({ cart, onRemoveItem, KSH }) {
                 </td>
                 <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>{KSH(itemTotal)}</td>
                 <td className="text-center">
-                  <button className="btn btn-outline-danger btn-sm rounded-circle" onClick={() => onRemoveItem(itemId, item.name, item.priceType)} title={`Remove ${item.name} (${item.priceType})`} style={{ width: '24px', height: '24px', padding: '0', fontSize: '0.6rem' }}>
+                  <button
+                    className="btn btn-outline-danger btn-sm rounded-circle"
+                    onClick={() => onRemoveItem(cartKey, item.name, item.priceType)}
+                    title={`Remove ${item.name} (${item.priceType})`}
+                    aria-label={`Remove ${item.name}`}
+                    style={{ width: '28px', height: '28px', padding: '0', fontSize: '0.7rem' }}
+                  >
                     <i className="fas fa-times"></i>
                   </button>
                 </td>
@@ -389,9 +396,17 @@ function CartItems({ cart, onRemoveItem, KSH }) {
 }
 
 /* ----------------------------
-   Payment form (unchanged)
+   Payment form
    ---------------------------- */
 function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData, cartTotal, KSH, setCurrentOrderId }) {
+  // Colors:
+  const cashActive = { backgroundColor: '#FF8C00', border: '2px solid #FF6600', color: '#fff' };
+  const cashInactive = { backgroundColor: '#FFEBD6', border: '2px solid #FFA500', color: '#1f1f1f' };
+  const mpesaActive = { backgroundColor: '#22B14C', border: '2px solid #16A335', color: '#fff' };
+  const mpesaInactive = { backgroundColor: '#E6F8EA', border: '2px solid #22B14C', color: '#1f1f1f' };
+  const bothActive = { backgroundColor: '#0056B3', border: '2px solid #004494', color: '#fff' };
+  const bothInactive = { backgroundColor: '#E7F1FF', border: '2px solid #0078D4', color: '#1f1f1f' };
+
   return (
     <>
       <div className="mb-3">
@@ -402,13 +417,13 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
           <div className="col-4">
             <button
               type="button"
-              className={`btn w-100 ${paymentType === 'cash' ? 'btn-success' : 'btn-outline-success'}`}
+              className="btn w-100"
               onClick={() => { 
                 setPaymentType('cash'); 
                 setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
                 setCurrentOrderId(null); 
               }}
-              style={{ padding: '14px 8px', fontSize: '0.85rem' }}
+              style={paymentType === 'cash' ? cashActive : cashInactive}
             >
               <i className="fas fa-money-bill-wave d-block mb-1" style={{ fontSize: '1.2rem' }}></i>
               Cash
@@ -418,13 +433,13 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
           <div className="col-4">
             <button
               type="button"
-              className={`btn w-100 ${paymentType === 'mpesa' ? 'btn-primary' : 'btn-outline-primary'}`}
+              className="btn w-100"
               onClick={() => { 
                 setPaymentType('mpesa'); 
                 setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
                 setCurrentOrderId(null); 
               }}
-              style={{ padding: '14px 8px', fontSize: '0.85rem' }}
+              style={paymentType === 'mpesa' ? mpesaActive : mpesaInactive}
             >
               <i className="fas fa-mobile-alt d-block mb-1" style={{ fontSize: '1.2rem' }}></i>
               M-Pesa
@@ -434,13 +449,13 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
           <div className="col-4">
             <button
               type="button"
-              className={`btn w-100 ${paymentType === 'both' ? 'btn-info' : 'btn-outline-info'}`}
+              className="btn w-100"
               onClick={() => { 
                 setPaymentType('both'); 
                 setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
                 setCurrentOrderId(null); 
               }}
-              style={{ padding: '14px 8px', fontSize: '0.85rem' }}
+              style={paymentType === 'both' ? bothActive : bothInactive}
             >
               <i className="fas fa-exchange-alt d-block mb-1" style={{ fontSize: '1.2rem' }}></i>
               Hybrid
@@ -795,31 +810,51 @@ export default function POS() {
     
     // Non-blocking focus
     requestAnimationFrame(() => {
-      focusSearchInput();
+      if (searchInputRef.current) {
+        try {
+          searchInputRef.current.focus({ preventScroll: true });
+        } catch (e) {}
+      } else {
+        focusSearchInput();
+      }
     });
   }, [focusSearchInput]);
 
-  /* Clear cart flow */
+  /* Clear cart flow - NO confirm (immediate) */
   const handleClearCart = useCallback(() => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
-      clearSearchAndProducts();
+      // still ensure input focused
+      requestAnimationFrame(() => {
+        if (searchInputRef.current) {
+          try {
+            searchInputRef.current.focus({ preventScroll: true });
+          } catch (e) {}
+        }
+      });
       return;
     }
 
-    if (window.confirm('Are you sure you want to clear all items from the cart?')) {
-      dispatch(clearCart());
-      toast.success('Cart cleared successfully');
+    dispatch(clearCart());
+    toast.success('Cart cleared');
 
-      // Batch state updates
-      setCurrentOrderId(null);
-      setPaymentType('');
-      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+    // Batch state updates
+    setCurrentOrderId(null);
+    setPaymentType('');
+    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
-      // Focus input non-blocking
-      focusSearchInput();
-    }
-  }, [cartItemCount, clearSearchAndProducts, dispatch, focusSearchInput]);
+    // Clear and focus the search input non-blocking (fixes freeze)
+    requestAnimationFrame(() => {
+      if (searchInputRef.current) {
+        try {
+          searchInputRef.current.value = '';
+          searchInputRef.current.focus({ preventScroll: true });
+        } catch (e) {}
+      } else {
+        focusSearchInput();
+      }
+    });
+  }, [cartItemCount, dispatch, focusSearchInput]);
 
   /* Barcode scanned handler */
   const handleBarcodeScanned = async (barcode) => {
@@ -886,6 +921,13 @@ export default function POS() {
           const cartItemId = `${productId}_${priceType}`;
           dispatch(removeItemFromCart(cartItemId));
           toast.success('Removed from cart');
+
+          // focus input after remove
+          requestAnimationFrame(() => {
+            if (searchInputRef.current) {
+              try { searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
+            }
+          });
         }
         return;
       }
@@ -963,7 +1005,11 @@ export default function POS() {
 
       // Non-blocking focus
       requestAnimationFrame(() => {
-        focusSearchInput();
+        if (searchInputRef.current) {
+          try { searchInputRef.current.focus({ preventScroll: true }); } catch (e) {}
+        } else {
+          focusSearchInput();
+        }
       });
     } catch (error) {
       console.error('handleQuantityChange error:', error);
@@ -972,16 +1018,20 @@ export default function POS() {
     }
   };
 
-  const handleRemoveItem = (productId, productName, priceType) => {
-    if (window.confirm(`Remove "${productName}" (${priceType === 'Retail' ? 'Retail' : 'Wholesale'}) from cart?`)) {
-      dispatch(removeItemFromCart(productId));
-      toast.success('Item removed from cart');
+  /* Remove item - NO confirm, immediate */
+  const handleRemoveItem = (cartKey, productName, priceType) => {
+    // cartKey is expected to be `${productId}_${priceType}`
+    dispatch(removeItemFromCart(cartKey));
+    toast.success('Item removed from cart');
 
-      // Non-blocking focus
-      requestAnimationFrame(() => {
-        focusSearchInput();
-      });
-    }
+    // Focus input non-blocking (fix freeze)
+    requestAnimationFrame(() => {
+      if (searchInputRef.current) {
+        try {
+          searchInputRef.current.focus({ preventScroll: true });
+        } catch (e) {}
+      }
+    });
   };
 
   const refresh = async () => {
@@ -1411,9 +1461,14 @@ export default function POS() {
                 {cartItemCount > 0 && <span className="badge bg-primary ms-2">{cartItemCount} items</span>}
               </h5>
               {cartItemCount > 0 && (
-                <button className="btn btn-outline-danger btn-sm" onClick={handleClearCart} title="Clear all items">
-                  <i className="fas fa-trash me-1"></i>
-                  Clear
+                <button
+                  className="btn btn-outline-danger btn-sm rounded-circle"
+                  onClick={handleClearCart}
+                  title="Clear all items"
+                  aria-label="Clear cart"
+                  style={{ width: '36px', height: '36px', padding: '0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <i className="fas fa-trash"></i>
                 </button>
               )}
             </div>
@@ -1496,7 +1551,7 @@ export default function POS() {
           padding-bottom: 10px;
         }
         .table-hover tbody tr:hover { background-color: rgba(0, 123, 255, 0.05); }
-        .btn-outline-danger:hover { transform: scale(1.05); }
+        .btn-outline-danger:hover { transform: scale(1.03); }
         .product-card:hover { border-color: #007bff !important; }
         .form-control:focus { border-color: #007bff; box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25); }
         .product-card .text-muted.small { opacity: 0.7; transition: opacity 0.2s; }

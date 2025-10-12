@@ -172,11 +172,14 @@ function sendUpdateMessage(message) {
 }
 
 // Enhanced IPC handlers for auto-updater
+// Enhanced IPC handlers for auto-updater
 ipcMain.handle('check-for-updates', async () => {
   try {
     log.info('Manual update check initiated');
-    const result = await autoUpdater.checkForUpdates();
-    return { success: true, result };
+    // Don't return the full result object - it can't be cloned
+    // Just trigger the check and let event handlers notify renderer
+    autoUpdater.checkForUpdates();
+    return { success: true, message: 'Update check initiated' };
   } catch (error) {
     log.error('Manual update check failed:', error);
     return { success: false, error: error.message };

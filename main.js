@@ -638,14 +638,16 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   }
 });
 
-// ---- ✅ ENHANCED RECEIPT PRINTING WITH IMPROVED STYLING AND CENTERING
-ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSettings) => {
+// ---- ✅ ENHANCED RECEIPT PRINTING WITH ROBUST CASHIER HANDLING
+ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettings = {}) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
     return { success: false, message: 'Thermal printer library not available' };
   }
 
   try {
+    log.info('print-receipt called, orderData keys:', Object.keys(orderData || {}));
+
     const {
       cart = [],
       cartTotal = 0,
@@ -653,22 +655,56 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       paymentData = {},
       orderNumber = '',
       customerPhone = '',
+      user: orderUser = null
     } = orderData || {};
 
-    const cashAmount = Number(paymentData.cashAmount || 0);
-    const change = Math.max(0, cashAmount - Number(cartTotal));
-
+    // Helper: format currency
     const formatCurrency = (amount) => {
       return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
     };
 
-    // Enhanced print options for better centering and quality
+    // Resolve cashier name robustly:
+    // - Accepts orderData.user as object { firstName, lastName, fullName, userName }
+    // - Or as an array [ { firstName, ... } ]
+    // - Or as a plain string
+    const resolveCashierName = (u) => {
+      try {
+        if (!u) return 'Staff';
+        if (Array.isArray(u) && u.length > 0) {
+          const uu = u[0];
+          if (!uu) return 'Staff';
+          if (uu.fullName && String(uu.fullName).trim()) return String(uu.fullName).trim();
+          const parts = `${uu.firstName || ''} ${uu.lastName || ''}`.trim();
+          if (parts) return parts;
+          if (uu.userName || uu.username) return uu.userName || uu.username;
+          return 'Staff';
+        }
+        if (typeof u === 'object') {
+          if (u.fullName && String(u.fullName).trim()) return String(u.fullName).trim();
+          const parts = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+          if (parts) return parts;
+          if (u.userName || u.username) return u.userName || u.username;
+          return 'Staff';
+        }
+        // fallback for string or other primitives
+        return String(u).trim() || 'Staff';
+      } catch (err) {
+        return 'Staff';
+      }
+    };
+
+    const cashierName = resolveCashierName(orderUser);
+
+    // Gather payment/calc values
+    const cashAmount = Number(paymentData.cashAmount || 0);
+    const change = Math.max(0, cashAmount - Number(cartTotal));
+
     const options = {
       preview: false,
       silent: true,
-      margin: '15 15 15 15', // Increased margins for better centering
+      margin: '15 15 15 15',
       timeOutPerLine: 500,
-      pageSize: '80mm', // Standard thermal printer width
+      pageSize: '80mm',
       copies: 1
     };
 
@@ -681,7 +717,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
 
     const printData = [];
 
-    // Add logo at the top if available
+    // Optional logo
     const logoBase64 = getLogoBase64();
     /*
     if (logoBase64) {
@@ -691,315 +727,133 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
         position: 'center',
         width: '150px',
         height: '75px',
-        style: {
-          marginBottom: '8px'
-        }
+        style: { marginBottom: '8px' }
       });
     }
-      */
+    */
 
+    // Header / store info
     printData.push(
-      {
-        type: 'text',
-        value:'',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: 'px'
-        }
-      },
+      { type: 'text', value: '', style: { textAlign: 'center', fontSize: '12px', marginBottom: 'px' } },
       {
         type: 'text',
         value: storeSettings.storeName || 'ARPELLA STORE LIMITED',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '15px',
-          marginBottom: '5px'
-        }
+        style: { textAlign: 'center', fontWeight: 'bold', fontSize: '15px', marginBottom: '5px' }
       },
       {
         type: 'text',
         value: storeSettings.storeAddress || 'Ngong, Matasia',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '3px'
-        }
+        style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' }
       },
       {
         type: 'text',
         value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
+        style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' }
       },
       {
         type: 'text',
         value: `PIN: ${storeSettings.pin || 'P052336649L'}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
+        style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' }
       },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '15px',
-          marginBottom: '8px'
-        }
-      },
-      
-      // Receipt Title
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '15px', marginBottom: '8px' } },
+
+      // Receipt title
       {
         type: 'text',
         value: 'SALES RECEIPT',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '16px',
-          marginBottom: '8px'
-        }
+        style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' }
       },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      
-      // Order Information
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
+
+      // Order info
       {
         type: 'text',
         value: `Date: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          fontSize: '13px',
-          fontWeight: 'bold',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
+        style: { fontSize: '13px', fontWeight: 'bold', marginBottom: '3px', textAlign: 'left' }
       },
       {
         type: 'text',
         value: `SALE #: ${orderNumber}`,
-        style: {
-          fontWeight: 'bold',
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
+        style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '3px', textAlign: 'left' }
       },
       {
         type: 'text',
         value: `Customer: ${customerPhone || 'Walk-in'}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
+        style: { fontSize: '13px', marginBottom: '3px', textAlign: 'left' }
       },
       {
         type: 'text',
-        value: `Cashier: ${user[0].firstName} ${user[0].lastName || 'Staff'}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '8px',
-          textAlign: 'left'
-        }
+        value: `Cashier: ${cashierName}`,
+        style: { fontSize: '13px', marginBottom: '8px', textAlign: 'left' }
       },
-      
-      // Items Header
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
-      },
+
+      // Items header
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '3px' } },
       {
         type: 'text',
         value: 'ITEM                 QTY   TOTAL',
-        style: {
-          fontWeight: 'bold',
-          fontSize: '13px',
-          fontFamily: 'monospace',
-          marginBottom: '3px'
-        }
+        style: { fontWeight: 'bold', fontSize: '13px', fontFamily: 'monospace', marginBottom: '3px' }
       },
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      }
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } }
     );
 
-    // Add cart items with improved formatting
+    // Items
     for (const item of cart) {
       const name = item.name || item.productName || 'Item';
       const qty = item.quantity || item.qty || 1;
       const price = item.salePrice || item.price || 0;
       const total = qty * price;
-      
-      // Enhanced item formatting for better alignment
+
       const truncatedName = name.length > 18 ? name.slice(0, 15) + '...' : name;
       const paddedName = truncatedName.padEnd(18);
-      const qtyStr = qty.toString().padStart(4);
+      const qtyStr = String(qty).padStart(4);
       const totalStr = formatCurrency(total).padStart(8);
-      
+
       printData.push({
         type: 'text',
         value: `${paddedName} ${qtyStr} ${totalStr}`,
-        style: {
-          fontSize: '12px',
-          fontFamily: 'monospace',
-          textAlign: 'left',
-          marginBottom: '2px'
-        }
+        style: { fontSize: '12px', fontFamily: 'monospace', textAlign: 'left', marginBottom: '2px' }
       });
     }
 
-    // Totals Section with enhanced styling
+    // Totals
     printData.push(
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginTop: '5px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `SUBTOTAL: ${formatCurrency(cartTotal)}`,
-        style: {
-          fontSize: '14px',
-          marginBottom: '3px',
-          fontWeight: 'bold'
-        }
-      },
-      {
-        type: 'text',
-        value: `TOTAL: ${formatCurrency(cartTotal)}`,
-        style: {
-          fontWeight: 'bold',
-          fontSize: '16px',
-          marginBottom: '8px'
-        }
-      }
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginTop: '5px', marginBottom: '5px' } },
+      { type: 'text', value: `SUBTOTAL: ${formatCurrency(cartTotal)}`, style: { fontSize: '14px', marginBottom: '3px', fontWeight: 'bold' } },
+      { type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } }
     );
 
-    // Payment Information
-    if (paymentType.toLowerCase() === 'cash') {
-      printData.push(
-        {
-          type: 'text',
-          value: `Cash Received: ${formatCurrency(cashAmount)}`,
-          style: {
-            fontSize: '13px',
-            marginBottom: '3px'
-          }
-        }
-      );
-      
+    // Payment info
+    if (String(paymentType || '').toLowerCase() === 'cash') {
+      printData.push({
+        type: 'text',
+        value: `Cash Received: ${formatCurrency(cashAmount)}`,
+        style: { fontSize: '13px', marginBottom: '3px' }
+      });
+
       if (change > 0) {
         printData.push({
           type: 'text',
           value: `CHANGE: ${formatCurrency(change)}`,
-          style: {
-            fontWeight: 'bold',
-            fontSize: '15px',
-            textAlign: 'center',
-            marginBottom: '5px'
-          }
+          style: { fontWeight: 'bold', fontSize: '15px', textAlign: 'center', marginBottom: '5px' }
         });
       }
     }
 
-    printData.push(
-      {
-        type: 'text',
-        value: `Payment Method: ${paymentType.toUpperCase()}`,
-        style: {
-          fontSize: '13px',
-          textAlign: 'center',
-          marginBottom: '10px'
-        }
-      }
-    );
+    printData.push({
+      type: 'text',
+      value: `Payment Method: ${String(paymentType || '').toUpperCase()}`,
+      style: { fontSize: '13px', textAlign: 'center', marginBottom: '10px' }
+    });
 
-    // Footer Section
+    // Footer
     printData.push(
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.receiptFooter || 'Thank you for your business!',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          fontWeight: 'bold',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'Visit us again soon!',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Powered by Arpella `,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Print Time: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '15px'
-        }
-      }
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettings.receiptFooter || 'Thank you for your business!', style: { textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' } },
+      { type: 'text', value: 'Visit us again soon!', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
+      { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '3px' } },
+      { type: 'text', value: `Print Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '15px' } }
     );
 
     await PosPrinter.print(printData, options);
@@ -1010,6 +864,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
     return { success: false, message: `Print failed: ${error.message}` };
   }
 });
+
 
 // New IPC handler to check logo availability
 ipcMain.handle('check-receipt-logo', async () => {

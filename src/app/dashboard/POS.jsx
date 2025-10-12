@@ -347,7 +347,7 @@ function CartItems({ cart, onRemoveItem, KSH }) {
             <th style={{ fontSize: '0.8rem' }} className="text-center">Type</th>
             <th style={{ fontSize: '0.8rem' }} className="text-center">Qty</th>
             <th style={{ fontSize: '0.8rem' }} className="text-end">Total</th>
-            <th style={{ fontSize: '0.8rem', width: '40px' }}></th>
+            <th style={{ fontSize: '0.8rem', width: '80px' }}></th>
           </tr>
         </thead>
         <tbody>
@@ -377,13 +377,13 @@ function CartItems({ cart, onRemoveItem, KSH }) {
                 <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>{KSH(itemTotal)}</td>
                 <td className="text-center">
                   <button
-                    className="btn btn-outline-danger btn-sm rounded-circle"
-                    onClick={() => onRemoveItem(cartKey, item.name, item.priceType)}
+                    className="btn btn-danger btn-sm"
+                    onClick={() => onRemoveItem(itemId, item.priceType, item.name)}
                     title={`Remove ${item.name} (${item.priceType})`}
                     aria-label={`Remove ${item.name}`}
-                    style={{ width: '28px', height: '28px', padding: '0', fontSize: '0.7rem' }}
+                    style={{ padding: '6px 8px', fontSize: '0.8rem' }}
                   >
-                    <i className="fas fa-times"></i>
+                    <i className="fas fa-trash me-1"></i>Remove
                   </button>
                 </td>
               </tr>
@@ -1018,11 +1018,37 @@ export default function POS() {
     }
   };
 
-  /* Remove item - NO confirm, immediate */
-  const handleRemoveItem = (cartKey, productName, priceType) => {
-    // cartKey is expected to be `${productId}_${priceType}`
-    dispatch(removeItemFromCart(cartKey));
-    toast.success('Item removed from cart');
+  /* Remove item - NO confirm, immediate.
+     This tries to remove by the composite key used elsewhere (productId_priceType).
+     If that doesn't match anything, falls back to using the plain product id.
+  */
+  const handleRemoveItem = (productIdOrKey, priceType, productName) => {
+    // productIdOrKey is either the product id or product id used above.
+    // Determine the actual cart item to remove from current cart.
+    const matched = cart.find(c => {
+      const id = c.id || c._id;
+      if (!id) return false;
+      if (String(id) === String(productIdOrKey) && c.priceType === priceType) return true;
+      // also allow case where productIdOrKey itself is the composite key
+      if (`${id}_${c.priceType}` === String(productIdOrKey)) return true;
+      return false;
+    });
+
+    if (matched) {
+      const id = matched.id || matched._id;
+      const composite = `${id}_${matched.priceType}`;
+      dispatch(removeItemFromCart(composite));
+      toast.success('Item removed from cart');
+    } else {
+      // fallback - try dispatching the passed id/key directly
+      try {
+        dispatch(removeItemFromCart(productIdOrKey));
+        toast.success('Item removed from cart');
+      } catch (err) {
+        console.error('remove fallback failed', err);
+        toast.error('Failed to remove item');
+      }
+    }
 
     // Focus input non-blocking (fix freeze)
     requestAnimationFrame(() => {
@@ -1462,13 +1488,14 @@ export default function POS() {
               </h5>
               {cartItemCount > 0 && (
                 <button
-                  className="btn btn-outline-danger btn-sm rounded-circle"
+                  className="btn btn-outline-danger btn-sm"
                   onClick={handleClearCart}
                   title="Clear all items"
                   aria-label="Clear cart"
-                  style={{ width: '36px', height: '36px', padding: '0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                 >
                   <i className="fas fa-trash"></i>
+                  Clear
                 </button>
               )}
             </div>

@@ -652,8 +652,10 @@ export default function POS() {
           if (avg < THRESHOLD_AVG_MS) {
             const code = s.buffer;
             handleBarcodeScanned(code);
-            // clear visible input the same way we do in order completion
-            clearSearchAndProducts();
+            // Reset scanner state
+            s.buffer = '';
+            s.firstTime = 0;
+            s.lastTime = 0;
             e.preventDefault();
             e.stopPropagation();
           }
@@ -766,66 +768,38 @@ export default function POS() {
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
   useEffect(() => { debouncedSearch(searchTerm); }, [searchTerm, debouncedSearch]);
 
-  /* Reliable focus helper (retry) */
-  const safeFocusSearchInput = useCallback(() => {
-    return new Promise((resolve) => {
-      let attempts = 0;
-      const MAX_ATTEMPTS = 8;
-
-      const focusIfReady = () => {
-        attempts += 1;
-        const el = searchInputRef.current;
-        if (el && !el.disabled && typeof el.focus === 'function') {
-          try {
-            el.focus({ preventScroll: true });
-            const len = (el.value && typeof el.value.length === 'number') ? el.value.length : 0;
-            if (typeof el.setSelectionRange === 'function') {
-              el.setSelectionRange(len, len);
-            }
-            resolve(true);
-            return;
-          } catch (err) {
-            // ignore and retry
-          }
-        }
-        if (attempts < MAX_ATTEMPTS) {
-          setTimeout(focusIfReady, attempts < 3 ? 20 : 60);
-        } else {
-          resolve(false);
-        }
-      };
-
-      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-        window.requestAnimationFrame(() => {
-          focusIfReady();
-          setTimeout(focusIfReady, 50);
-        });
-      } else {
-        setTimeout(focusIfReady, 0);
+  /* OPTIMIZED: Fast focus without retries or delays */
+  const focusSearchInput = useCallback(() => {
+    const el = searchInputRef.current;
+    if (el && typeof el.focus === 'function') {
+      try {
+        el.focus({ preventScroll: true });
+      } catch (err) {
+        // Fail silently
       }
-    });
+    }
   }, []);
 
-  /* ----------------------------
-     NEW: single clearing method used across flows
-     - replicates order completion's clearing behavior
-     ---------------------------- */
+  /* OPTIMIZED: Batch clear operation with minimal re-renders */
   const clearSearchAndProducts = useCallback(() => {
-    // Clear DOM input (uncontrolled input) deterministically
-    try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
-    // Sync React state
+    // Clear DOM input immediately
+    if (searchInputRef.current) {
+      searchInputRef.current.value = '';
+    }
+    
+    // Batch state updates
     setSearchTerm('');
     setFilteredProducts([]);
     setHasSearched(false);
     setSearchType('');
+    
+    // Non-blocking focus
+    requestAnimationFrame(() => {
+      focusSearchInput();
+    });
+  }, [focusSearchInput]);
 
-    // Focus the input reliably, after state changes
-    setTimeout(() => {
-      safeFocusSearchInput().catch(() => {});
-    }, 0);
-  }, [safeFocusSearchInput]);
-
-  /* Clear cart flow uses the same clearing method */
+  /* Clear cart flow */
   const handleClearCart = useCallback(() => {
     if (cartItemCount === 0) {
       toast.info('Cart is already empty');
@@ -837,15 +811,15 @@ export default function POS() {
       dispatch(clearCart());
       toast.success('Cart cleared successfully');
 
-      // Reset payment and order state
+      // Batch state updates
       setCurrentOrderId(null);
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
 
-      // Use the same clearing method
-      clearSearchAndProducts();
+      // Focus input non-blocking
+      focusSearchInput();
     }
-  }, [cartItemCount, clearSearchAndProducts, dispatch]);
+  }, [cartItemCount, clearSearchAndProducts, dispatch, focusSearchInput]);
 
   /* Barcode scanned handler */
   const handleBarcodeScanned = async (barcode) => {
@@ -874,10 +848,15 @@ export default function POS() {
       setHasSearched(true);
       setSearchType('barcode');
 
-      // Use same clearing method to reset input and focus (consistent)
-      try { if (searchInputRef.current) searchInputRef.current.value = ''; } catch (err) {}
+      // Clear input and focus
+      if (searchInputRef.current) {
+        searchInputRef.current.value = '';
+      }
       setSearchTerm('');
-      setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
+      
+      requestAnimationFrame(() => {
+        focusSearchInput();
+      });
     } catch (error) {
       console.error('Barcode scan error:', error);
       toast.error(`Failed to process barcode: ${error?.message || 'Unexpected error'}`);
@@ -889,7 +868,7 @@ export default function POS() {
     }
   };
 
-  /* Quantity change flow (keeps behavior intact) */
+  /* Quantity change flow */
   const handleQuantityChange = async (productId, priceType, newQuantity, productData = null) => {
     try {
       const product = productData || filteredProducts.find(p => (p.id || p._id) === productId);
@@ -982,8 +961,10 @@ export default function POS() {
 
       setProductLoading(productId, false);
 
-      // keep search focused
-      setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
+      // Non-blocking focus
+      requestAnimationFrame(() => {
+        focusSearchInput();
+      });
     } catch (error) {
       console.error('handleQuantityChange error:', error);
       toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
@@ -996,8 +977,10 @@ export default function POS() {
       dispatch(removeItemFromCart(productId));
       toast.success('Item removed from cart');
 
-      // Use same clearing/focus approach for consistency
-      setTimeout(() => safeFocusSearchInput().catch(() => {}), 0);
+      // Non-blocking focus
+      requestAnimationFrame(() => {
+        focusSearchInput();
+      });
     }
   };
 
@@ -1012,164 +995,7 @@ export default function POS() {
     }
   };
 
-  /* Create / complete flows (unchanged behavior), but use clearSearchAndProducts when finishing */
-  const createOrder = async () => {
-    if (!paymentType) {
-      toast.error('Please select a payment method');
-      return;
-    }
-
-    const currentCartTotal = calculateCartTotal();
-
-    if (paymentType === 'both') {
-      const cashVal = Number(paymentData.cashAmount) || 0;
-      const mpesaVal = Number(paymentData.mpesaAmount) || 0;
-
-      if (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0) {
-        toast.error('Please enter M-Pesa phone number');
-        return;
-      }
-
-      if (mpesaVal <= 0) {
-        toast.error('Please enter a valid M-Pesa amount');
-        return;
-      }
-
-      if ((cashVal + mpesaVal) < currentCartTotal) {
-        toast.error('Total payment amount must be >= cart total');
-        return;
-      }
-    }
-
-    const payload = {
-      buyerPin: 'N/A',
-      latitude: coords?.lat ?? 0,
-      longitude: coords?.lng ?? 0,
-      orderItems: cart.map(ci => ({
-        productId: Number(ci.id || ci._id),
-        quantity: ci.quantity,
-        priceType: ci.priceType
-      })),
-      orderPaymentType: paymentType === 'cash' ? 'Cash' : paymentType === 'mpesa' ? 'Mpesa' : 'Hybrid',
-      phoneNumber: paymentType === 'mpesa' || paymentType === 'both' ? (paymentData.mpesaPhone || '').trim() : (user && user.phone) || 'N/A'
-    };
-
-    if (paymentType === 'both') {
-      payload.total = Number(paymentData.mpesaAmount) || 0;
-      payload.cashAmount = Number(paymentData.cashAmount) || 0;
-      payload.userId = (user && (user.phone || user.userName)) || '';
-    }
-
-    if (paymentType === 'mpesa') {
-      payload.userId = (user && (user.phone || user.userName)) || '';
-    }
-
-    if (paymentType === 'cash') {
-      payload.cashAmount = Number(paymentData.cashAmount) || 0;
-    }
-
-    try {
-      setProcessingOrder(true);
-      toast.info('Creating order...');
-
-      const res = await api.post('/order', payload, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
-      if (orderId) {
-        setCurrentOrderId(orderId);
-        toast.success(`Order created. ID: ${orderId}`);
-
-        if (paymentType !== 'both') {
-          await handleOrderCompletion(res.data);
-        } else {
-          toast.info('Hybrid order created. Confirm M-Pesa payment.');
-        }
-      } else {
-        toast.success('Order created.');
-        if (paymentType !== 'both') {
-          await handleOrderCompletion(res.data);
-        }
-      }
-    } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || 'Order failed';
-      toast.error(msg);
-    } finally {
-      setProcessingOrder(false);
-    }
-  };
-
-  const completeCheckout = async () => {
-    if (!paymentType) {
-      toast.error('Please select a payment method');
-      return;
-    }
-
-    const currentCartTotal = calculateCartTotal();
-
-    if (paymentType === 'cash') {
-      const cashVal = Number(paymentData.cashAmount);
-      if (!paymentData.cashAmount || Number.isNaN(cashVal) || cashVal < currentCartTotal) {
-        toast.error('Please enter a valid cash amount (>= total)');
-        return;
-      }
-    }
-
-    if (paymentType === 'mpesa' && (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0)) {
-      toast.error('Please enter M-Pesa phone number');
-      return;
-    }
-
-    const payload = {
-      buyerPin: 'N/A',
-      latitude: coords?.lat ?? 0,
-      longitude: coords?.lng ?? 0,
-      orderItems: cart.map(ci => ({
-        productId: Number(ci.id || ci._id),
-        quantity: ci.quantity,
-        priceType: ci.priceType
-      })),
-      orderPaymentType: paymentType === 'cash' ? 'Cash' : 'Mpesa',
-      phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || 'N/A'
-    };
-
-    if (paymentType === 'mpesa') {
-      payload.userId = (user && (user.phone || user.userName)) || '';
-    }
-
-    if (paymentType === 'cash') {
-      payload.cashAmount = Number(paymentData.cashAmount) || 0;
-    }
-
-    try {
-      setProcessingOrder(true);
-      toast.info(paymentType === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
-
-      const res = await api.post('/order', payload, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
-      if (paymentType === 'mpesa') {
-        if (orderId) {
-          setCurrentOrderId(orderId);
-          toast.success(`M-Pesa order created. ID: ${orderId}`);
-        } else {
-          toast.success('M-Pesa order created.');
-        }
-      } else {
-        await handleOrderCompletion(res.data);
-      }
-    } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || 'Checkout failed';
-      toast.error(msg);
-    } finally {
-      setProcessingOrder(false);
-    }
-  };
-
-  /* Order completion - uses the same clearing method for input/products */
+  /* OPTIMIZED: Async printing without blocking order completion */
   const handleOrderCompletion = async (orderData) => {
     toast.success('Order completed');
 
@@ -1252,35 +1078,12 @@ export default function POS() {
       storeSettings: storeSettings
     };
 
-    try {
-      const isElectron = !!(typeof window !== 'undefined' && window.require);
-      
-      if (isElectron) {
-        const { ipcRenderer } = window.require('electron');
-        const result = await ipcRenderer.invoke('print-receipt', receiptData, null, storeSettings);
-        if (result?.success) {
-          toast.success('Receipt printed successfully');
-        } else {
-          console.warn('Receipt print returned false:', result?.message);
-          toast.warning('Receipt printing may have failed - order still completed');
-        }
-      } else {
-        console.log('Not in Electron, skipping thermal printer:', receiptData);
-        toast.info('Thermal printer not available in web mode');
-      }
-    } catch (printError) {
-      console.error('Receipt printing error:', printError);
-      toast.warning('Order completed but receipt printing failed - try printing from settings');
-    }
-
-    // Clear cart and reset state
+    // Batch clear cart and state BEFORE async printing
     dispatch(clearCart());
     setPaymentType('');
     setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
     setCurrentOrderId(null);
     setProcessingOrder(false);
-
-    // USE THE SAME CLEARING METHOD (this is the change you asked for)
     clearSearchAndProducts();
 
     // Show change info if needed
@@ -1298,6 +1101,189 @@ export default function POS() {
       if (change > 0) {
         toast.info(`Change: ${KSH(change)}`);
       }
+    }
+
+    // Handle receipt printing asynchronously (non-blocking)
+    try {
+      const isElectron = !!(typeof window !== 'undefined' && window.require);
+      
+      if (isElectron) {
+        // Use setTimeout to prevent blocking the UI
+        setTimeout(async () => {
+          try {
+            const { ipcRenderer } = window.require('electron');
+            const result = await ipcRenderer.invoke('print-receipt', receiptData, null, storeSettings);
+            if (result?.success) {
+              toast.success('Receipt printed successfully');
+            } else {
+              console.warn('Receipt print returned false:', result?.message);
+              toast.warning('Receipt printing may have failed');
+            }
+          } catch (printError) {
+            console.error('Receipt printing error:', printError);
+            toast.warning('Receipt printing failed - try printing from settings');
+          }
+        }, 0);
+      } else {
+        console.log('Not in Electron, skipping thermal printer');
+      }
+    } catch (err) {
+      console.error('Error in print handler:', err);
+    }
+  };
+
+  const createOrder = async () => {
+    if (!paymentType) {
+      toast.error('Please select a payment method');
+      return;
+    }
+
+    const currentCartTotal = calculateCartTotal();
+
+    if (paymentType === 'both') {
+      const cashVal = Number(paymentData.cashAmount) || 0;
+      const mpesaVal = Number(paymentData.mpesaAmount) || 0;
+
+      if (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0) {
+        toast.error('Please enter M-Pesa phone number');
+        return;
+      }
+
+      if (mpesaVal <= 0) {
+        toast.error('Please enter a valid M-Pesa amount');
+        return;
+      }
+
+      if ((cashVal + mpesaVal) < currentCartTotal) {
+        toast.error('Total payment amount must be >= cart total');
+        return;
+      }
+    }
+
+    const payload = {
+      buyerPin: 'N/A',
+      latitude: coords?.lat ?? 0,
+      longitude: coords?.lng ?? 0,
+      orderItems: cart.map(ci => ({
+        productId: Number(ci.id || ci._id),
+        quantity: ci.quantity,
+        priceType: ci.priceType
+      })),
+      orderPaymentType: paymentType === 'cash' ? 'Cash' : paymentType === 'mpesa' ? 'Mpesa' : 'Hybrid',
+      phoneNumber: paymentType === 'mpesa' || paymentType === 'both' ? (paymentData.mpesaPhone || '').trim() : (user && user.phone) || 'N/A'
+    };
+
+    if (paymentType === 'both') {
+      payload.total = Number(paymentData.mpesaAmount) || 0;
+      payload.cashAmount = Number(paymentData.cashAmount) || 0;
+      payload.userId = (user && (user.phone || user.userName)) || '';
+    }
+
+    if (paymentType === 'mpesa') {
+      payload.userId = (user && (user.phone || user.userName)) || '';
+    }
+
+    if (paymentType === 'cash') {
+      payload.cashAmount = Number(paymentData.cashAmount) || 0;
+    }
+
+    try {
+      setProcessingOrder(true);
+      toast.info('Creating order...');
+
+      const res = await api.post('/order', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
+      if (orderId) {
+        setCurrentOrderId(orderId);
+        toast.success(`Order created. ID: ${orderId}`);
+
+        if (paymentType !== 'both') {
+          await handleOrderCompletion(res.data);
+        } else {
+          toast.info('Hybrid order created. Confirm M-Pesa payment.');
+        }
+      } else {
+        toast.success('Order created.');
+        if (paymentType !== 'both') {
+          await handleOrderCompletion(res.data);
+        }
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Order failed';
+      toast.error(msg);
+      setProcessingOrder(false);
+    }
+  };
+
+  const completeCheckout = async () => {
+    if (!paymentType) {
+      toast.error('Please select a payment method');
+      return;
+    }
+
+    const currentCartTotal = calculateCartTotal();
+
+    if (paymentType === 'cash') {
+      const cashVal = Number(paymentData.cashAmount);
+      if (!paymentData.cashAmount || Number.isNaN(cashVal) || cashVal < currentCartTotal) {
+        toast.error('Please enter a valid cash amount (>= total)');
+        return;
+      }
+    }
+
+    if (paymentType === 'mpesa' && (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0)) {
+      toast.error('Please enter M-Pesa phone number');
+      return;
+    }
+
+    const payload = {
+      buyerPin: 'N/A',
+      latitude: coords?.lat ?? 0,
+      longitude: coords?.lng ?? 0,
+      orderItems: cart.map(ci => ({
+        productId: Number(ci.id || ci._id),
+        quantity: ci.quantity,
+        priceType: ci.priceType
+      })),
+      orderPaymentType: paymentType === 'cash' ? 'Cash' : 'Mpesa',
+      phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || 'N/A'
+    };
+
+    if (paymentType === 'mpesa') {
+      payload.userId = (user && (user.phone || user.userName)) || '';
+    }
+
+    if (paymentType === 'cash') {
+      payload.cashAmount = Number(paymentData.cashAmount) || 0;
+    }
+
+    try {
+      setProcessingOrder(true);
+      toast.info(paymentType === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
+
+      const res = await api.post('/order', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
+      if (paymentType === 'mpesa') {
+        if (orderId) {
+          setCurrentOrderId(orderId);
+          toast.success(`M-Pesa order created. ID: ${orderId}`);
+        } else {
+          toast.success('M-Pesa order created.');
+        }
+        setProcessingOrder(false);
+      } else {
+        await handleOrderCompletion(res.data);
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Checkout failed';
+      toast.error(msg);
+      setProcessingOrder(false);
     }
   };
 

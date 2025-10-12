@@ -638,7 +638,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   }
 });
 
-ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSettings) => {
+// Replace your existing ipcMain.handle('print-receipt', ...) with this block:
+
+ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
     return { success: false, message: 'Thermal printer library not available' };
@@ -656,6 +658,21 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       user: orderUser = {}
     } = orderData || {};
 
+    // Normalize store settings: explicit arg takes precedence, then orderData.storeSettings, then defaults
+    const ss = (typeof storeSettingsArg === 'object' && storeSettingsArg !== null)
+      ? storeSettingsArg
+      : (orderData && orderData.storeSettings && typeof orderData.storeSettings === 'object')
+        ? orderData.storeSettings
+        : {};
+
+    const storeSettingsObj = {
+      storeName: String(ss.storeName || 'ARPELLA STORE LIMITED'),
+      storeAddress: String(ss.storeAddress || 'Ngong, Matasia'),
+      storePhone: String(ss.storePhone || '+254 7xx xxx xxx'),
+      pin: String(ss.pin || 'P052336649L'),
+      receiptFooter: String(ss.receiptFooter || 'Thank you for your business!')
+    };
+
     // Helper to format currency
     const formatCurrency = (amount) => `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
 
@@ -668,13 +685,14 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       const last = orderUser.lastName || orderUser.last_name || '';
       if (first || last) return `${first} ${last}`.trim();
       if (orderUser.userName || orderUser.username) return orderUser.userName || orderUser.username;
+      if (orderUser.name) return orderUser.name;
       return 'Staff';
     })();
 
-    // Build printData as before (you can keep your earlier logic)
+    // Build printData
     const printData = [];
 
-    // (Optional) Add logo if you want - you already have helpers for that
+    // Add logo if available
     const logoBase64 = getLogoBase64();
     if (logoBase64) {
       printData.push({
@@ -687,12 +705,12 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       });
     }
 
-    // Header
+    // Header - using storeSettingsObj safely
     printData.push(
-      { type: 'text', value: storeSettings.storeName || 'ARPELLA STORE LIMITED', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '15px', marginBottom: '5px' } },
-      { type: 'text', value: storeSettings.storeAddress || 'Ngong, Matasia', style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
-      { type: 'text', value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`, style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' } },
-      { type: 'text', value: `PIN: ${storeSettings.pin || 'P052336649L'}`, style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '15px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
+      { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' } },
+      { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' } },
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
       { type: 'text', value: 'SALES RECEIPT', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } }
@@ -735,10 +753,10 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       { type: 'text', value: `Payment Method: ${String(paymentType || '').toUpperCase()}`, style: { fontSize: '13px', textAlign: 'center', marginBottom: '10px' } }
     );
 
-    // Footer
+    // Footer using storeSettingsObj
     printData.push(
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
-      { type: 'text', value: storeSettings.receiptFooter || 'Thank you for your business!', style: { textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.receiptFooter, style: { textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' } },
       { type: 'text', value: 'Visit us again soon!', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
       { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '3px' } },
@@ -765,6 +783,7 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
     return { success: false, message: `Print failed: ${error.message}` };
   }
 });
+
 
 
 

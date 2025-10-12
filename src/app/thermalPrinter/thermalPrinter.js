@@ -162,7 +162,7 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
   }
 
   try {
-    // FIXED: Properly normalize all incoming data
+    // Accept flexible incoming shapes
     const {
       cart = [],
       cartTotal = 0,
@@ -174,7 +174,7 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
       storeSettings: incomingStoreSettings = {}
     } = receiptData || {};
 
-    // FIXED: Normalize cart items with safe type conversion
+    // Normalize cart
     const normalizedCart = (Array.isArray(cart) ? cart : []).map(item => {
       const salePrice = Number(item.salePrice ?? item.price ?? item.sellingPrice ?? 0) || 0;
       const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
@@ -191,36 +191,32 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
       };
     });
 
-    // FIXED: Better user object normalization
+    // Normalize user
     const normalizedUser = {
       firstName: String(user?.firstName || user?.first_name || ''),
       lastName: String(user?.lastName || user?.last_name || ''),
-      fullName: String(user?.fullName || user?.full_name || ''),
+      fullName: String(user?.fullName || user?.full_name || user?.name || ''),
       phone: String(user?.phone || user?.phoneNumber || ''),
       userName: String(user?.userName || user?.username || '')
     };
 
-    // FIXED: Ensure fullName is populated if it's empty
     if (!normalizedUser.fullName && (normalizedUser.firstName || normalizedUser.lastName)) {
       normalizedUser.fullName = `${normalizedUser.firstName} ${normalizedUser.lastName}`.trim();
     }
     if (!normalizedUser.fullName && normalizedUser.userName) {
       normalizedUser.fullName = normalizedUser.userName;
     }
-    if (!normalizedUser.fullName) {
-      normalizedUser.fullName = 'Staff';
-    }
+    if (!normalizedUser.fullName) normalizedUser.fullName = 'Staff';
 
-    // FIXED: Merge store settings properly
+    // Merge store settings: prefer explicit arg > receiptData.storeSettings > provided default param
     const finalStoreSettings = {
-      storeName: String(incomingStoreSettings.storeName || storeSettings.storeName || 'ARPELLA STORE LIMITED'),
-      storeAddress: String(incomingStoreSettings.storeAddress || storeSettings.storeAddress || 'Ngong, Matasia'),
-      storePhone: String(incomingStoreSettings.storePhone || storeSettings.storePhone || '+254 7xx xxx xxx'),
-      pin: String(incomingStoreSettings.pin || storeSettings.pin || 'P052336649L'),
-      receiptFooter: String(incomingStoreSettings.receiptFooter || storeSettings.receiptFooter || 'Thank you for your business!')
+      storeName: String((storeSettings && storeSettings.storeName) || incomingStoreSettings.storeName || storeSettings?.storeName || 'ARPELLA STORE LIMITED'),
+      storeAddress: String((storeSettings && storeSettings.storeAddress) || incomingStoreSettings.storeAddress || storeSettings?.storeAddress || 'Ngong, Matasia'),
+      storePhone: String((storeSettings && storeSettings.storePhone) || incomingStoreSettings.storePhone || storeSettings?.storePhone || '+254 7xx xxx xxx'),
+      pin: String((storeSettings && storeSettings.pin) || incomingStoreSettings.pin || storeSettings?.pin || 'P052336649L'),
+      receiptFooter: String((storeSettings && storeSettings.receiptFooter) || incomingStoreSettings.receiptFooter || storeSettings?.receiptFooter || 'Thank you for your business!')
     };
 
-    // FIXED: Build final payload with all normalized data
     const printPayload = {
       cart: normalizedCart,
       cartTotal: Number(cartTotal) || normalizedCart.reduce((s, it) => s + (it.lineTotal || 0), 0),
@@ -243,8 +239,8 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
       cashier: printPayload.user.fullName
     });
 
-    // Invoke main process with normalized payload
-    const result = await ipcRenderer.invoke('print-receipt', printPayload, printerName);
+    // IMPORTANT: pass finalStoreSettings explicitly as the 3rd (or 4th) argument
+    const result = await ipcRenderer.invoke('print-receipt', printPayload, printerName, finalStoreSettings);
 
     if (result?.success) {
       console.log('printOrderReceipt: success', result);

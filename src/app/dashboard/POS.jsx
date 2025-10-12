@@ -726,16 +726,26 @@ export default function POS() {
     }
   }, []);
 
-  useEffect(() => {
+   useEffect(() => {
     const handleCheckoutEnter = (e) => {
-      if (e.key === 'Enter' && paymentType && cart.length > 0 && !processingOrder) {
-        const activeElement = document.activeElement;
-        const isTypingInInput = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
-        if (!isTypingInInput) {
-          e.preventDefault();
-          if (paymentType === 'both') createOrder();
-          else completeCheckout();
-        }
+      if (e.key !== 'Enter') return;
+      if (!paymentType) return;
+      if (cart.length === 0) return;
+      if (processingOrder) return;
+
+      // Prevent any default form submission / input side-effects
+      try {
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (err) { /* ignore */ }
+
+      // Trigger the appropriate flow
+      if (paymentType === 'both') {
+        // Create hybrid order
+        createOrder();
+      } else {
+        // Complete single-method checkout
+        completeCheckout();
       }
     };
 

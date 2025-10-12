@@ -640,6 +640,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
 
 // Replace your existing ipcMain.handle('print-receipt', ...) in main.js with this version
 
+// Replace your ipcMain.handle('print-receipt', ...) in main.js with this version
+// Logo printing removed to fix the "Invalid url" error
+
 ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
   log.info('=== PRINT RECEIPT HANDLER CALLED ===');
   
@@ -764,28 +767,16 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     // Build printData
     const printData = [];
 
-    // Add logo if available
-    const logoBase64 = getLogoBase64();
-    if (logoBase64) {
-      log.info('Adding logo to receipt');
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '150px',
-        height: '75px',
-        style: { marginBottom: '8px' }
-      });
-    } else {
-      log.warn('No logo available for receipt');
-    }
+    // LOGO REMOVED - Skip logo printing to avoid base64 URL issues
+    log.info('Skipping logo (not compatible with electron-pos-printer base64)');
 
-    // Header
+    // Header - Start with store name
     printData.push(
-      { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '15px', marginBottom: '5px' } },
-      { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
-      { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' } },
-      { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '14px', marginBottom: '5px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '13px', marginBottom: '3px' } },
+      { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
+      { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
       { type: 'text', value: 'SALES RECEIPT', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } }

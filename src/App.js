@@ -72,10 +72,11 @@ function AutoUpdateStatus() {
 
     const onAvailable = (event, info) => {
       setUpdateInfo(info || null);
-      setUpdateStatus(`Update available: v${info?.version || ''}`);
+      setUpdateStatus(`Downloading v${info?.version || ''} in background...`);
       setUpdateAvailable(true);
       setShowUpdatePanel(true);
       setIsChecking(false);
+      setDownloadProgress(1); // Start showing progress
       toast.info('New update available — downloading in background.', { autoClose: 4000 });
     };
 

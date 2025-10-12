@@ -209,7 +209,6 @@ export const printOrderReceipt = async (receiptData) => {
   }
 
   try {
-    // Ensure all required fields exist
     const {
       cart = [],
       cartTotal = 0,

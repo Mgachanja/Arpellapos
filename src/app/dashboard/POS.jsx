@@ -340,14 +340,14 @@ function CartItems({ cart, onRemoveItem, KSH }) {
 
   return (
     <div className="table-responsive">
-      <table className="table table-sm table-hover">
+      <table className="table table-sm table-hover align-middle">
         <thead className="table-light">
           <tr>
-            <th style={{ fontSize: '0.8rem' }}>Product</th>
+            <th style={{ fontSize: '0.8rem', width: '55%' }}>Product</th>
             <th style={{ fontSize: '0.8rem' }} className="text-center">Type</th>
             <th style={{ fontSize: '0.8rem' }} className="text-center">Qty</th>
             <th style={{ fontSize: '0.8rem' }} className="text-end">Total</th>
-            <th style={{ fontSize: '0.8rem', width: '80px' }}></th>
+            <th style={{ fontSize: '0.8rem', width: '60px' }}></th>
           </tr>
         </thead>
         <tbody>
@@ -360,8 +360,10 @@ function CartItems({ cart, onRemoveItem, KSH }) {
             return (
               <tr key={cartKey}>
                 <td style={{ fontSize: '0.75rem' }}>
-                  <div className="text-truncate" style={{ maxWidth: '400px', fontSize: '1.01rem' }} title={item.name}>
-                    <strong>{item.name}</strong>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <div className="cart-product-name" title={item.name} style={{ fontSize: '1.01rem', fontWeight: 600 }}>
+                      {item.name}
+                    </div>
                     <div className={`small ${item.priceType === 'Retail' ? 'text-success' : 'text-info'}`}>{KSH(itemPrice)}</div>
                     {item.barcode && <div className="text-muted" style={{ fontSize: '0.65rem' }}><i className="fas fa-barcode me-1"></i>{item.barcode}</div>}
                   </div>
@@ -377,13 +379,12 @@ function CartItems({ cart, onRemoveItem, KSH }) {
                 <td className="text-end fw-semibold" style={{ fontSize: '0.75rem' }}>{KSH(itemTotal)}</td>
                 <td className="text-center">
                   <button
-                    className="btn btn-danger btn-sm"
-                    onClick={() => onRemoveItem(itemId, item.priceType, item.name)}
+                    className="remove-circle-btn"
+                    onClick={() => onRemoveItem(cartKey)}
                     title={`Remove ${item.name} (${item.priceType})`}
                     aria-label={`Remove ${item.name}`}
-                    style={{ padding: '6px 8px', fontSize: '0.8rem' }}
                   >
-                    <i className="fas fa-trash me-1"></i>Remove
+                    ×
                   </button>
                 </td>
               </tr>
@@ -1018,36 +1019,14 @@ export default function POS() {
     }
   };
 
-  /* Remove item - NO confirm, immediate.
-     This tries to remove by the composite key used elsewhere (productId_priceType).
-     If that doesn't match anything, falls back to using the plain product id.
-  */
-  const handleRemoveItem = (productIdOrKey, priceType, productName) => {
-    // productIdOrKey is either the product id or product id used above.
-    // Determine the actual cart item to remove from current cart.
-    const matched = cart.find(c => {
-      const id = c.id || c._id;
-      if (!id) return false;
-      if (String(id) === String(productIdOrKey) && c.priceType === priceType) return true;
-      // also allow case where productIdOrKey itself is the composite key
-      if (`${id}_${c.priceType}` === String(productIdOrKey)) return true;
-      return false;
-    });
-
-    if (matched) {
-      const id = matched.id || matched._id;
-      const composite = `${id}_${matched.priceType}`;
-      dispatch(removeItemFromCart(composite));
+  /* Remove item - immediate, expects composite cart key "productId_priceType" */
+  const handleRemoveItem = (cartKey) => {
+    try {
+      dispatch(removeItemFromCart(cartKey));
       toast.success('Item removed from cart');
-    } else {
-      // fallback - try dispatching the passed id/key directly
-      try {
-        dispatch(removeItemFromCart(productIdOrKey));
-        toast.success('Item removed from cart');
-      } catch (err) {
-        console.error('remove fallback failed', err);
-        toast.error('Failed to remove item');
-      }
+    } catch (err) {
+      console.error('Failed to remove item:', err);
+      toast.error('Failed to remove item');
     }
 
     // Focus input non-blocking (fix freeze)
@@ -1593,7 +1572,37 @@ export default function POS() {
         .products-container::-webkit-scrollbar-track { background: #f8f9fa; border-radius: 4px; }
         .products-container::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 4px; }
         .products-container::-webkit-scrollbar-thumb:hover { background: #ced4da; }
-        
+
+        /* Remove circle button (red border with 'x') */
+        .remove-circle-btn {
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          border: 1px solid #dc3545;
+          background: transparent;
+          color: #dc3545;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          line-height: 1;
+          padding: 0;
+          cursor: pointer;
+        }
+        .remove-circle-btn:hover {
+          background: #dc3545;
+          color: #fff;
+        }
+
+        /* Cart product name truncation/ellipsis */
+        .cart-product-name {
+          max-width: 100%;
+          display: inline-block;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
         @media (max-width: 1199.98px) {
           .cart-sidebar { position: relative !important; max-height: none !important; margin-top: 20px; }
         }

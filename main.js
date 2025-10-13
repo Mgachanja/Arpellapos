@@ -96,23 +96,37 @@ function setupAutoUpdater() {
     }
   });
 
-  autoUpdater.on('download-progress', (progressObj) => {
-    let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
-    log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
-    log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
-    log.info(log_message);
+ autoUpdater.on('download-progress', (progressObj) => {
+  let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
+  log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
+  log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
+  log.info(log_message);
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // CRITICAL FIX: Send 'update-download-progress' not 'download-progress'
+    mainWindow.webContents.send('update-download-progress', {
+      percent: progressObj.percent, // Don't round here, let renderer handle it
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  log.info('Update downloaded:', info);
+  updateDownloaded = true;
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-downloaded', {
+      version: info.version,
+      releaseNotes: info.releaseNotes,
+      releaseName: info.releaseName,
+      releaseDate: info.releaseDate
+    });
     
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('download-progress', {
-        percent: Math.round(progressObj.percent),
-        bytesPerSecond: progressObj.bytesPerSecond,
-        transferred: progressObj.transferred,
-        total: progressObj.total,
-        transferredMB: Math.round(progressObj.transferred / 1024 / 1024),
-        totalMB: Math.round(progressObj.total / 1024 / 1024)
-      });
-    }
-  });
+  }
+});
 
   autoUpdater.on('update-downloaded', async (info) => {
     log.info('Update downloaded:', info);

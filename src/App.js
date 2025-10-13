@@ -1,4 +1,3 @@
-// src/App.js
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useSelector } from 'react-redux';
@@ -66,34 +65,54 @@ function AutoUpdateStatus() {
     })();
 
     const onChecking = () => {
+      if (!mounted) return;
+      console.log('🔍 Update check started');
       setUpdateStatus('Checking for updates...');
       setIsChecking(true);
+      setDownloadProgress(0);
     };
 
     const onAvailable = (event, info) => {
+      if (!mounted) return;
+      console.log('✅ Update available:', info);
       setUpdateInfo(info || null);
-      setUpdateStatus(`Downloading v${info?.version || ''} in background...`);
+      setUpdateStatus(`Update available - preparing download...`);
       setUpdateAvailable(true);
       setShowUpdatePanel(true);
       setIsChecking(false);
-      setDownloadProgress(1); // Start showing progress
-      toast.info('New update available — downloading in background.', { autoClose: 4000 });
+      setDownloadProgress(0);
+      toast.info('New update available — download starting...', { autoClose: 4000 });
     };
 
     const onNotAvailable = () => {
+      if (!mounted) return;
+      console.log('ℹ️ No update available');
       setUpdateStatus('No updates available');
       setUpdateAvailable(false);
       setIsChecking(false);
+      setDownloadProgress(0);
       toast.info('You are running the latest version.', { autoClose: 2500 });
     };
 
+    // CRITICAL FIX: Listen to 'update-download-progress' not 'download-progress'
     const onProgress = (event, progress) => {
+      if (!mounted) return;
+      console.log('📥 Download progress event received:', progress);
       const pct = Math.round(progress?.percent || 0);
-      setDownloadProgress(pct);
+      
+      setDownloadProgress(prevProgress => {
+        if (prevProgress !== pct) {
+          console.log(`Progress updated: ${prevProgress}% -> ${pct}%`);
+          return pct;
+        }
+        return prevProgress;
+      });
       setUpdateStatus(`Downloading: ${pct}%`);
     };
 
     const onDownloaded = (event, info) => {
+      if (!mounted) return;
+      console.log('✅ Update downloaded:', info);
       setUpdateInfo(info || null);
       setDownloadProgress(100);
       setUpdateStatus('Update ready to install');
@@ -103,9 +122,12 @@ function AutoUpdateStatus() {
     };
 
     const onError = (event, err) => {
+      if (!mounted) return;
+      console.error('❌ Update error:', err);
       const msg = err?.message || err?.toString() || 'Update error';
       setUpdateStatus(`Error: ${msg}`);
       setIsChecking(false);
+      setDownloadProgress(0);
       
       if (msg.includes('404') || msg.includes('Not Found')) {
         toast.error('Update not available on server.', { autoClose: 5000 });
@@ -116,11 +138,12 @@ function AutoUpdateStatus() {
       }
     };
 
-    // Register listeners
+    // Register listeners - MUST match exact event names from main process
+    console.log('📡 Registering update listeners...');
     ipcRenderer.on('update-checking', onChecking);
     ipcRenderer.on('update-available', onAvailable);
     ipcRenderer.on('update-not-available', onNotAvailable);
-    ipcRenderer.on('update-download-progress', onProgress);
+    ipcRenderer.on('update-download-progress', onProgress); // This is the correct event name
     ipcRenderer.on('update-downloaded', onDownloaded);
     ipcRenderer.on('update-error', onError);
 
@@ -153,6 +176,7 @@ function AutoUpdateStatus() {
 
     setIsChecking(true);
     setUpdateStatus('Checking for updates...');
+    setDownloadProgress(0);
     
     try {
       const res = await ipcRenderer.invoke('check-for-updates');
@@ -264,15 +288,35 @@ function AutoUpdateStatus() {
             </div>
           )}
 
-          {downloadProgress > 0 && downloadProgress < 100 && (
+          {downloadProgress >= 0 && downloadProgress < 100 && updateAvailable && (
             <div className="mb-3">
-              <div className="small mb-1">Downloading: {downloadProgress}%</div>
-              <div className="progress" style={{ height: 6 }}>
+              <div className="small mb-1 d-flex justify-content-between align-items-center">
+                <span>
+                  {downloadProgress === 0 ? 'Initializing download...' : `Downloading: ${downloadProgress}%`}
+                </span>
+                {downloadProgress > 0 && (
+                  <span className="badge bg-primary">{downloadProgress}%</span>
+                )}
+              </div>
+              <div className="progress" style={{ height: 8 }}>
                 <div 
-                  className="progress-bar progress-bar-striped progress-bar-animated" 
-                  style={{ width: `${downloadProgress}%` }} 
+                  className="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
+                  role="progressbar"
+                  style={{ 
+                    width: downloadProgress === 0 ? '100%' : `${downloadProgress}%`,
+                    transition: 'width 0.3s ease'
+                  }}
+                  aria-valuenow={downloadProgress}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
                 />
               </div>
+              {downloadProgress === 0 && (
+                <div className="small text-muted mt-1">
+                  <i className="bi bi-hourglass-split me-1"></i>
+                  Connecting to update server...
+                </div>
+              )}
             </div>
           )}
 

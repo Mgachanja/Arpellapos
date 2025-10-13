@@ -11,7 +11,7 @@ export const baseUrl ="https://api.arpellastore.com";
  * @returns {Promise} - Axios response promise
  */
 export const fetchProductsApi = async (pageNumber = 1, pageSize = 200) => {
-  const url = `${baseUrl}/paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
+  const url = `${baseUrl}/pos-paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
   return axios.get(url);
 };
 

@@ -637,12 +637,6 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     return { success: false, message: `Print failed: ${error.message}` };
   }
 });
-
-// Replace your existing ipcMain.handle('print-receipt', ...) in main.js with this version
-
-// Replace your ipcMain.handle('print-receipt', ...) in main.js with this version
-// Logo printing removed to fix the "Invalid url" error
-
 ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
   log.info('=== PRINT RECEIPT HANDLER CALLED ===');
   
@@ -652,12 +646,6 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
   }
 
   try {
-    // Log what we received
-    log.info('Received orderData keys:', Object.keys(orderData || {}));
-    log.info('Received printerName:', printerName);
-    log.info('Received storeSettingsArg:', storeSettingsArg);
-    
-    // Destructure orderData safely
     const {
       cart = [],
       cartTotal = 0,
@@ -750,13 +738,9 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
         log.info('Using email:', userObj.email);
         return userObj.email.trim();
       }
-      
-      log.warn('No valid name fields found, using "Staff"');
-      return 'Staff';
     };
 
     const cashierName = getCashierName();
-    log.info('Final cashier name:', cashierName);
 
     // Validate cart
     if (!Array.isArray(cart) || cart.length === 0) {
@@ -767,12 +751,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     // Build printData
     const printData = [];
 
-    // LOGO REMOVED - Skip logo printing to avoid base64 URL issues
-    log.info('Skipping logo (not compatible with electron-pos-printer base64)');
-
-    // Header - Start with store name
     printData.push(
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
       { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' } },
       { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '13px', marginBottom: '3px' } },
       { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
@@ -782,7 +761,6 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } }
     );
 
-    // Order info including cashier
     printData.push(
       { type: 'text', value: `Date: ${new Date().toLocaleString('en-KE')}`, style: { fontSize: '13px', fontWeight: 'bold', marginBottom: '3px', textAlign: 'left' } },
       { type: 'text', value: `SALE #: ${orderNumber || 'N/A'}`, style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
@@ -818,7 +796,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginTop: '5px', marginBottom: '5px' } },
       { type: 'text', value: `SUBTOTAL: ${formatCurrency(cartTotal)}`, style: { fontSize: '14px', marginBottom: '3px', fontWeight: 'bold' } },
       { type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
-      { type: 'text', value: `Payment Method: ${String(paymentType || 'CASH').toUpperCase()}`, style: { fontSize: '13px', textAlign: 'center', marginBottom: '10px' } }
+      { type: 'text', value: `Payment Method: ${String(paymentType || 'CASH').toUpperCase()}`, style: { fontSize: '13px', marginBottom: '10px' } }
     );
 
     // Footer
@@ -831,15 +809,14 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: `Print Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '15px' } }
     );
 
-    log.info('Print data prepared, total sections:', printData.length);
 
     // Print using electron-pos-printer
     const options = {
       preview: false,
       silent: true,
-      margin: '15 15 15 15',
+      margin: '15 0 0 15',
       timeOutPerLine: 500,
-      pageSize: '80mm',
+      pageSize: '75mm',
       copies: 1
     };
 

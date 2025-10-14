@@ -1430,6 +1430,7 @@ const handleOrderCompletion = async (orderData) => {
 
     const payload = {
       buyerPin: 'N/A',
+      orderSource: "POS",
       latitude: coords?.lat ?? 0,
       longitude: coords?.lng ?? 0,
       orderItems: cart.map(ci => ({

@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
+const user = "test cashier";
 
 // Auto-updater import
 const { autoUpdater } = require('electron-updater');
@@ -95,23 +96,37 @@ function setupAutoUpdater() {
     }
   });
 
-  autoUpdater.on('download-progress', (progressObj) => {
-    let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
-    log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
-    log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
-    log.info(log_message);
+ autoUpdater.on('download-progress', (progressObj) => {
+  let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
+  log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
+  log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
+  log.info(log_message);
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // CRITICAL FIX: Send 'update-download-progress' not 'download-progress'
+    mainWindow.webContents.send('update-download-progress', {
+      percent: progressObj.percent, // Don't round here, let renderer handle it
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  log.info('Update downloaded:', info);
+  updateDownloaded = true;
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-downloaded', {
+      version: info.version,
+      releaseNotes: info.releaseNotes,
+      releaseName: info.releaseName,
+      releaseDate: info.releaseDate
+    });
     
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('download-progress', {
-        percent: Math.round(progressObj.percent),
-        bytesPerSecond: progressObj.bytesPerSecond,
-        transferred: progressObj.transferred,
-        total: progressObj.total,
-        transferredMB: Math.round(progressObj.transferred / 1024 / 1024),
-        totalMB: Math.round(progressObj.total / 1024 / 1024)
-      });
-    }
-  });
+  }
+});
 
   autoUpdater.on('update-downloaded', async (info) => {
     log.info('Update downloaded:', info);
@@ -171,11 +186,14 @@ function sendUpdateMessage(message) {
 }
 
 // Enhanced IPC handlers for auto-updater
+// Enhanced IPC handlers for auto-updater
 ipcMain.handle('check-for-updates', async () => {
   try {
     log.info('Manual update check initiated');
-    const result = await autoUpdater.checkForUpdates();
-    return { success: true, result };
+    // Don't return the full result object - it can't be cloned
+    // Just trigger the check and let event handlers notify renderer
+    autoUpdater.checkForUpdates();
+    return { success: true, message: 'Update check initiated' };
   } catch (error) {
     log.error('Manual update check failed:', error);
     return { success: false, error: error.message };
@@ -634,9 +652,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     return { success: false, message: `Print failed: ${error.message}` };
   }
 });
-
-// ---- ✅ ENHANCED RECEIPT PRINTING WITH IMPROVED STYLING AND CENTERING
-ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSettings) => {
+ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
+  log.info('=== PRINT RECEIPT HANDLER CALLED ===');
+  
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
     return { success: false, message: 'Thermal printer library not available' };
@@ -648,359 +666,203 @@ ipcMain.handle('print-receipt', async (event, orderData, printerName, storeSetti
       cartTotal = 0,
       paymentType = '',
       paymentData = {},
-      user = {},
       orderNumber = '',
       customerPhone = '',
+      user: orderUser = {},
+      cashier: orderCashier = {}
     } = orderData || {};
 
-    const cashAmount = Number(paymentData.cashAmount || 0);
-    const change = Math.max(0, cashAmount - Number(cartTotal));
+    log.info('Destructured values:', {
+      cartLength: cart.length,
+      cartTotal,
+      paymentType,
+      orderNumber,
+      customerPhone,
+      hasUser: !!orderUser,
+      hasCashier: !!orderCashier
+    });
 
-    const formatCurrency = (amount) => {
-      return `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
+    // Use orderUser first, fallback to orderCashier
+    const userObj = orderUser && Object.keys(orderUser).length > 0 ? orderUser : orderCashier;
+    log.info('Selected userObj:', userObj);
+
+    // Normalize store settings
+    const ss = (typeof storeSettingsArg === 'object' && storeSettingsArg !== null)
+      ? storeSettingsArg
+      : (orderData && orderData.storeSettings && typeof orderData.storeSettings === 'object')
+        ? orderData.storeSettings
+        : {};
+
+    const storeSettingsObj = {
+      storeName: String(ss.storeName || 'ARPELLA STORE LIMITED'),
+      storeAddress: String(ss.storeAddress || 'Ngong, Matasia'),
+      storePhone: String(ss.storePhone || '+254 7xx xxx xxx'),
+      pin: String(ss.pin || 'P052336649L'),
+      receiptFooter: String(ss.receiptFooter || 'Thank you for your business!')
     };
 
-    // Enhanced print options for better centering and quality
-    const options = {
-      preview: false,
-      silent: true,
-      margin: '15 15 15 15', // Increased margins for better centering
-      timeOutPerLine: 500,
-      pageSize: '80mm', // Standard thermal printer width
-      copies: 1
+    log.info('Store settings:', storeSettingsObj);
+
+    // Helper to format currency
+    const formatCurrency = (amount) => `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
+
+    // Build cashier/display name safely from incoming user object
+    const getCashierName = () => {
+      if (!userObj || Object.keys(userObj).length === 0) {
+        log.warn('No user object available, using default "Staff"');
+        return 'Staff';
+      }
+      
+      log.info('Building cashier name from userObj:', userObj);
+      
+      // Try fullName variations
+      if (userObj.fullName && userObj.fullName.trim()) {
+        log.info('Using fullName:', userObj.fullName);
+        return userObj.fullName.trim();
+      }
+      if (userObj.full_name && userObj.full_name.trim()) {
+        log.info('Using full_name:', userObj.full_name);
+        return userObj.full_name.trim();
+      }
+      if (userObj.name && userObj.name.trim()) {
+        log.info('Using name:', userObj.name);
+        return userObj.name.trim();
+      }
+      
+      // Try first + last name
+      const firstName = (userObj.firstName || userObj.first_name || '').trim();
+      const lastName = (userObj.lastName || userObj.last_name || '').trim();
+      if (firstName || lastName) {
+        const combined = `${firstName} ${lastName}`.trim();
+        log.info('Using firstName + lastName:', combined);
+        return combined;
+      }
+      
+      // Try username variations
+      if (userObj.userName && userObj.userName.trim()) {
+        log.info('Using userName:', userObj.userName);
+        return userObj.userName.trim();
+      }
+      if (userObj.username && userObj.username.trim()) {
+        log.info('Using username:', userObj.username);
+        return userObj.username.trim();
+      }
+      
+      // Try email
+      if (userObj.email && userObj.email.trim()) {
+        log.info('Using email:', userObj.email);
+        return userObj.email.trim();
+      }
     };
 
-    if (printerName && printerName !== '') {
-      options.printerName = printerName;
-      log.info('Printing receipt to specific printer:', printerName);
-    } else {
-      log.info('Printing receipt to default printer');
+    const cashierName = getCashierName();
+
+    // Validate cart
+    if (!Array.isArray(cart) || cart.length === 0) {
+      log.error('Invalid or empty cart');
+      return { success: false, message: 'Cart is empty or invalid' };
     }
 
+    // Build printData
     const printData = [];
 
-    // Add logo at the top if available
-    const logoBase64 = getLogoBase64();
-    /*
-    if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '150px',
-        height: '75px',
-        style: {
-          marginBottom: '8px'
-        }
-      });
-    }
-      */
-
     printData.push(
-      {
-        type: 'text',
-        value:'',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: 'px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.storeName || 'ARPELLA STORE',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '15px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.storeAddress || 'Ngong, Matasia',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Tel: ${storeSettings.storePhone || '+254 7xx xxx xxx'}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      
-      // Receipt Title
-      {
-        type: 'text',
-        value: 'SALES RECEIPT',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '16px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      
-      // Order Information
-      {
-        type: 'text',
-        value: `Date: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: `Order #: ${orderNumber}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: `Customer: ${customerPhone || 'Walk-in'}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '3px',
-          textAlign: 'left'
-        }
-      },
-      {
-        type: 'text',
-        value: `Cashier: ${user?.userName || user?.name || 'Staff'}`,
-        style: {
-          fontSize: '13px',
-          marginBottom: '8px',
-          textAlign: 'left'
-        }
-      },
-      
-      // Items Header
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'ITEM                 QTY   TOTAL',
-        style: {
-          fontWeight: 'bold',
-          fontSize: '13px',
-          fontFamily: 'monospace',
-          textAlign: 'center',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      }
+      { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '13px', marginBottom: '3px' } },
+      { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
+      { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
+      { type: 'text', value: 'SALES RECEIPT', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } }
     );
 
-    // Add cart items with improved formatting
+    printData.push(
+      { type: 'text', value: `Date: ${new Date().toLocaleString('en-KE')}`, style: { fontSize: '13px', fontWeight: 'bold', marginBottom: '3px', textAlign: 'left' } },
+      { type: 'text', value: `SALE #: ${orderNumber || 'N/A'}`, style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
+      { type: 'text', value: `Customer: ${customerPhone || 'Walk-in'}`, style: { fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
+      { type: 'text', value: `Cashier: ${cashierName}`, style: { fontSize: '13px', marginBottom: '8px', textAlign: 'left' } },
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '3px' } },
+      { type: 'text', value: 'ITEM                 QTY   TOTAL', style: { fontWeight: 'bold', fontSize: '13px', fontFamily: 'monospace', marginBottom: '3px' } },
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } }
+    );
+
+    log.info('Processing cart items:', cart.length);
+
+    // Items
     for (const item of cart) {
       const name = item.name || item.productName || 'Item';
       const qty = item.quantity || item.qty || 1;
       const price = item.salePrice || item.price || 0;
       const total = qty * price;
-      
-      // Enhanced item formatting for better alignment
-      const truncatedName = name.length > 18 ? name.slice(0, 15) + '...' : name;
-      const paddedName = truncatedName.padEnd(18);
-      const qtyStr = qty.toString().padStart(4);
+      const truncated = name.length > 18 ? name.slice(0, 15) + '...' : name;
+      const paddedName = truncated.padEnd(18);
+      const qtyStr = String(qty).padStart(4);
       const totalStr = formatCurrency(total).padStart(8);
-      
+
       printData.push({
         type: 'text',
         value: `${paddedName} ${qtyStr} ${totalStr}`,
-        style: {
-          fontSize: '12px',
-          fontFamily: 'monospace',
-          textAlign: 'left',
-          marginBottom: '2px'
-        }
+        style: { fontSize: '12px', fontFamily: 'monospace', textAlign: 'left', marginBottom: '2px' }
       });
     }
 
-    // Totals Section with enhanced styling
+    // Totals & payment
     printData.push(
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginTop: '5px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `SUBTOTAL: ${formatCurrency(cartTotal)}`,
-        style: {
-          fontSize: '14px',
-          textAlign: 'right',
-          marginBottom: '3px',
-          fontWeight: 'bold'
-        }
-      },
-      {
-        type: 'text',
-        value: `TOTAL: ${formatCurrency(cartTotal)}`,
-        style: {
-          fontWeight: 'bold',
-          fontSize: '16px',
-          textAlign: 'center',
-          marginBottom: '8px'
-        }
-      }
+      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginTop: '5px', marginBottom: '5px' } },
+      { type: 'text', value: `SUBTOTAL: ${formatCurrency(cartTotal)}`, style: { fontSize: '14px', marginBottom: '3px', fontWeight: 'bold' } },
+      { type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
+      { type: 'text', value: `Payment Method: ${String(paymentType || 'CASH').toUpperCase()}`, style: { fontSize: '13px', marginBottom: '10px' } }
     );
 
-    // Payment Information
-    if (paymentType.toLowerCase() === 'cash') {
-      printData.push(
-        {
-          type: 'text',
-          value: `Cash Received: ${formatCurrency(cashAmount)}`,
-          style: {
-            fontSize: '13px',
-            textAlign: 'center',
-            marginBottom: '3px'
-          }
-        }
-      );
-      
-      if (change > 0) {
-        printData.push({
-          type: 'text',
-          value: `CHANGE: ${formatCurrency(change)}`,
-          style: {
-            fontWeight: 'bold',
-            fontSize: '15px',
-            textAlign: 'center',
-            marginBottom: '5px'
-          }
-        });
-      }
+    // Footer
+    printData.push(
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
+      { type: 'text', value: storeSettingsObj.receiptFooter, style: { textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' } },
+      { type: 'text', value: 'Visit us again soon!', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
+      { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '3px' } },
+      { type: 'text', value: `Print Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '15px' } }
+    );
+
+
+    // Print using electron-pos-printer
+    const options = {
+      preview: false,
+      silent: true,
+      margin: '15 0 0 15',
+      timeOutPerLine: 500,
+      pageSize: '75mm',
+      copies: 1
+    };
+
+    if (printerName && printerName.trim()) {
+      options.printerName = printerName.trim();
+      log.info('Using specified printer:', printerName);
+    } else {
+      log.info('Using default printer');
     }
 
-    printData.push(
-      {
-        type: 'text',
-        value: `Payment Method: ${paymentType.toUpperCase()}`,
-        style: {
-          fontSize: '13px',
-          textAlign: 'center',
-          marginBottom: '10px'
-        }
-      }
-    );
-
-    // Footer Section
-    printData.push(
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: storeSettings.receiptFooter || 'Thank you for your business!',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          fontWeight: 'bold',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'Visit us again soon!',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '8px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Powered by Arpella `,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Print Time: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '10px',
-          marginBottom: '15px'
-        }
-      }
-    );
-
+    log.info('Calling PosPrinter.print with options:', options);
+    
     await PosPrinter.print(printData, options);
+    
     log.info('Receipt printed successfully to:', printerName || 'default printer');
     return { success: true, message: 'Receipt printed successfully' };
+    
   } catch (error) {
-    log.error('Print receipt failed:', error);
-    return { success: false, message: `Print failed: ${error.message}` };
+    log.error('Print receipt failed - Full error:', error);
+    log.error('Error name:', error?.name);
+    log.error('Error message:', error?.message);
+    log.error('Error stack:', error?.stack);
+    
+    return { 
+      success: false, 
+      message: `Print failed: ${error?.message || error?.toString() || 'Unknown error'}` 
+    };
   }
 });
+
+
 
 // New IPC handler to check logo availability
 ipcMain.handle('check-receipt-logo', async () => {

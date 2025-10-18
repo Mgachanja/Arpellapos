@@ -1,8 +1,8 @@
 {
   "name": "arpellapos",
-  "productName": "Arpella POS",
+  "productName": "Apella POS",
   "description": "Arpella store desktop POS",
-  "version": "0.1.31",
+  "version": "1.0.1",
   "private": true,
   "main": "main.js",
   "homepage": ".",
@@ -14,6 +14,8 @@
   "dependencies": {
     "@emotion/react": "^11.13.5",
     "@emotion/styled": "^11.13.5",
+    "@fortawesome/free-solid-svg-icons": "^7.1.0",
+    "@fortawesome/react-fontawesome": "^3.1.0",
     "@mui/icons-material": "^6.1.8",
     "@mui/material": "^6.1.8",
     "@reduxjs/toolkit": "^2.6.0",
@@ -85,7 +87,9 @@
       "icon": "buildResources/icons/icons/win/icon.ico",
       "publisherName": "Arpella Systems",
       "verifyUpdateCodeSignature": false,
-      "publish": ["github"]
+      "publish": [
+        "github"
+      ]
     },
     "mac": {
       "target": [
@@ -99,7 +103,9 @@
       ],
       "icon": "buildResources/icons/icons/mac/icon.icns",
       "category": "public.app-category.business",
-      "publish": ["github"]
+      "publish": [
+        "github"
+      ]
     },
     "linux": {
       "target": [
@@ -118,7 +124,9 @@
       ],
       "icon": "buildResources/icons/icons/linux/icon.png",
       "category": "Office",
-      "publish": ["github"]
+      "publish": [
+        "github"
+      ]
     },
     "nsis": {
       "oneClick": false,

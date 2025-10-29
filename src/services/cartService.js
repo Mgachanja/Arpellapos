@@ -94,10 +94,11 @@ async function getInventoryQuantity(inventoryId, forceRefresh = false) {
     }
   }
 
-  // Fetch from API
+  // Fetch from API - IMPORTANT: URL encode the inventoryId to handle special characters like slashes
   try {
     console.log(`Fetching inventory from API for ${inventoryId}`);
-    const response = await api.get(`/inventory/${inventoryId}`);
+    const encodedInventoryId = encodeURIComponent(inventoryId);
+    const response = await api.get(`/inventory/${encodedInventoryId}`);
     const data = response.data || response;
     
     // Extract quantity from response

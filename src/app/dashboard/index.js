@@ -8,13 +8,10 @@ import { useSelector, useDispatch } from 'react-redux';
 import { selectUser, logout as logoutAction } from '../../redux/slices/userSlice';
 
 /**
- * Dashboard layout with auto-logout on inactivity.
+ * Dashboard layout with optional auto-logout on inactivity.
  *
- * How it works:
- * - Resets on user activity events (mousemove, keydown, touchstart, click, scroll)
- * - Uses localStorage key "arpella:lastActivity" so activity in another tab resets timers here too.
- * - Shows a warning modal `warningMs` before automatic logout; user can choose to stay signed in.
- * - On timeout dispatches logout() and navigates to "/login" (adjust if you use a different login route).
+ * The auto-logout feature is implemented below but **not activated** by default.
+ * To re-enable it, uncomment the <AutoLogout ... /> line in the JSX where indicated.
  */
 
 const COLORS = {
@@ -29,7 +26,7 @@ export default function DashboardLayout() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const user = useSelector(selectUser);
-  console.log(selectUser)
+
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile offcanvas
   const [collapsed, setCollapsed] = useState(false); // desktop collapsed
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' ? window.innerWidth >= 992 : true);
@@ -68,9 +65,8 @@ export default function DashboardLayout() {
     );
   }
 
-  /* ----------------- AutoLogout component (embedded) - FIXED ----------------- */
+  /* ----------------- AutoLogout component (embedded but optional) ----------------- */
   function AutoLogout({ timeoutMs = 30 * 60 * 1000, warningMs = 60 * 1000 }) {
-    // Configurable: timeoutMs = inactivity timeout, warningMs = how long before expiry to show modal
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const [showWarning, setShowWarning] = useState(false);
@@ -80,19 +76,16 @@ export default function DashboardLayout() {
     const countdownTimerRef = useRef(null);
     const lastActivityKey = 'arpella:lastActivity';
 
-    // helper: get now in ms
     const now = () => Date.now();
 
-    // set last activity in localStorage (used for cross-tab)
     const setLastActivity = useCallback((ts = now()) => {
       try {
         localStorage.setItem(lastActivityKey, String(ts));
       } catch (e) {
-        // ignore storage errors (private mode)
+        // ignore storage errors
       }
     }, []);
 
-    // read last activity
     const getLastActivity = useCallback(() => {
       try {
         const v = localStorage.getItem(lastActivityKey);
@@ -102,7 +95,6 @@ export default function DashboardLayout() {
       }
     }, []);
 
-    // clear timers
     const clearAll = useCallback(() => {
       if (warningTimerRef.current) { clearTimeout(warningTimerRef.current); warningTimerRef.current = null; }
       if (logoutTimerRef.current) { clearTimeout(logoutTimerRef.current); logoutTimerRef.current = null; }
@@ -111,43 +103,34 @@ export default function DashboardLayout() {
       setSecondsLeft(0);
     }, []);
 
-    // perform logout
     const performLogout = useCallback(() => {
       clearAll();
       dispatch(logoutAction());
-      // navigate to login (adjust route if different). You may want /login or '/'
       navigate('/login', { replace: true });
     }, [dispatch, navigate, clearAll]);
 
-    // start new timers based on lastActivity timestamp
     const scheduleTimers = useCallback((lastTs) => {
       clearAll();
       const elapsed = Math.max(0, now() - (lastTs || now()));
       const timeLeft = Math.max(0, timeoutMs - elapsed);
 
       if (timeLeft <= 0) {
-        // already expired -> sign out immediately
         performLogout();
         return;
       }
 
-      // If timeLeft longer than warningMs, schedule warning to appear at (timeLeft - warningMs)
       const showWarningIn = Math.max(0, timeLeft - warningMs);
 
-      // schedule logout
       logoutTimerRef.current = setTimeout(() => {
         clearAll();
         performLogout();
       }, timeLeft);
 
-      // schedule the warning (if warningMs > 0)
       if (warningMs > 0 && timeLeft <= warningMs) {
-        // Show warning immediately if we're already in warning period
         setShowWarning(true);
         const actualSecondsLeft = Math.ceil(timeLeft / 1000);
         setSecondsLeft(actualSecondsLeft);
-        
-        // Start countdown
+
         countdownTimerRef.current = setInterval(() => {
           setSecondsLeft((s) => {
             if (s <= 1) {
@@ -159,13 +142,11 @@ export default function DashboardLayout() {
           });
         }, 1000);
       } else if (warningMs > 0) {
-        // Schedule warning to appear later
         warningTimerRef.current = setTimeout(() => {
           setShowWarning(true);
           const actualSecondsLeft = Math.ceil(warningMs / 1000);
           setSecondsLeft(actualSecondsLeft);
-          
-          // Start countdown
+
           countdownTimerRef.current = setInterval(() => {
             setSecondsLeft((s) => {
               if (s <= 1) {
@@ -180,16 +161,13 @@ export default function DashboardLayout() {
       }
     }, [clearAll, performLogout, timeoutMs, warningMs]);
 
-    // reset activity: update lastActivity and reschedule timers
     const resetActivity = useCallback((ts = now()) => {
       setLastActivity(ts);
       scheduleTimers(ts);
     }, [setLastActivity, scheduleTimers]);
 
-    // activity events handler
     const activityHandler = useCallback(() => resetActivity(now()), [resetActivity]);
 
-    // storage event handler (cross-tabs)
     const storageHandler = useCallback((ev) => {
       if (!ev.key) return;
       if (ev.key === lastActivityKey) {
@@ -198,22 +176,16 @@ export default function DashboardLayout() {
       }
     }, [getLastActivity, scheduleTimers]);
 
-    // mount/unmount
     useEffect(() => {
       if (!user) {
-        // not logged in - do nothing
         return () => {};
       }
-        console.log("test test",user)
 
-      // initial set
       resetActivity(now());
 
-      // attach events
       const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll', 'wheel'];
       events.forEach((name) => window.addEventListener(name, activityHandler, { passive: true }));
 
-      // visibility change: if tab becomes visible, re-check lastActivity
       const onVisibility = () => {
         if (document.visibilityState === 'visible') {
           const last = getLastActivity();
@@ -223,10 +195,8 @@ export default function DashboardLayout() {
       };
       document.addEventListener('visibilitychange', onVisibility);
 
-      // storage for cross-tab
       window.addEventListener('storage', storageHandler);
 
-      // cleanup
       return () => {
         events.forEach((name) => window.removeEventListener(name, activityHandler));
         document.removeEventListener('visibilitychange', onVisibility);
@@ -236,20 +206,17 @@ export default function DashboardLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user, activityHandler, storageHandler, resetActivity, scheduleTimers, getLastActivity, clearAll]);
 
-    // If user logs out elsewhere, hide modal
     useEffect(() => {
       if (!user) {
         clearAll();
       }
     }, [user, clearAll]);
 
-    // Expose "stay signed in" to cancel timers and reset
     const staySignedIn = () => {
       clearAll();
       resetActivity(now());
     };
 
-    // render warning modal
     return (
       <>
         {showWarning && user && (
@@ -451,7 +418,6 @@ export default function DashboardLayout() {
               <div className="d-flex align-items-center gap-2 px-3 py-2 rounded" style={{ backgroundColor: 'rgba(214, 195, 164, 0.2)', border: '1px solid rgba(214, 195, 164, 0.3)'}}>
                 <MdPerson size={20} style={{ color: '#3d2b1f' }} />
                 <span style={{ fontWeight: 500, color: '#3d2b1f', fontSize: '0.95rem' }}>
-                  {/* show the user name safely; if not available show 'Test Username' */}
                   {user[0]?.firstName ? `${user[0].firstName} ${user[0].lastName || ''}`.trim() : (user[0]?.userName || 'Arpella POS')}
                 </span>
               </div>
@@ -461,8 +427,9 @@ export default function DashboardLayout() {
 
         {/* Main content */}
         <main className="flex-grow-1" style={{ overflow: 'auto', minHeight: 'calc(100vh - 70px)', backgroundColor: COLORS.bg, padding: 18 }}>
-          {/* AutoLogout runs here so it's active while dashboard layout is mounted */}
-          <AutoLogout timeoutMs={30 * 60 * 1000} warningMs={60 * 1000} />
+          {/* AutoLogout is implemented but currently disabled.
+              To enable the inactivity auto-logout, uncomment the line below. */}
+          { /* <AutoLogout timeoutMs={30 * 60 * 1000} warningMs={60 * 1000} /> */ }
           <Outlet />
         </main>
       </div>

@@ -30,7 +30,6 @@ import { printOrderReceipt } from '../thermalPrinter/thermalPrinter';
 const CTA = { background: '#FF7F50', color: '#fff' };
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 
-/* Utilities */
 function useDebouncedCallback(fn, wait) {
   const timer = useRef(null);
   return useCallback((...args) => {
@@ -54,6 +53,24 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
 
   const retailQuantity = retailCartItem ? retailCartItem.quantity : 0;
   const wholesaleQuantity = wholesaleCartItem ? wholesaleCartItem.quantity : 0;
+
+  const [retailInput, setRetailInput] = useState(retailQuantity.toString() || '');
+  const [wholesaleInput, setWholesaleInput] = useState(wholesaleQuantity.toString() || '');
+
+  useEffect(() => setRetailInput(String(retailQuantity || '')), [retailQuantity]);
+  useEffect(() => setWholesaleInput(String(wholesaleQuantity || '')), [wholesaleQuantity]);
+
+  const applyRetail = () => {
+    const v = parseInt(retailInput, 10);
+    const qty = Number.isFinite(v) ? Math.max(0, v) : 0;
+    onQuantityChange(productId, 'Retail', qty);
+  };
+
+  const applyWholesale = () => {
+    const v = parseInt(wholesaleInput, 10);
+    const qty = Number.isFinite(v) ? Math.max(0, v) : 0;
+    onQuantityChange(productId, 'Discounted', qty);
+  };
 
   return (
     <div className="product-card p-3 rounded-3 shadow-sm border-0 h-100 d-flex flex-column"
@@ -83,15 +100,24 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
           {retailQuantity > 0 && <span className="badge bg-success">{retailQuantity}</span>}
         </div>
 
-        {retailQuantity > 0 ? (
-          <div className="d-flex align-items-center justify-content-center">
-            <button className="btn btn-outline-success btn-sm rounded-circle" onClick={() => onQuantityChange(productId, 'Retail', Math.max(0, retailQuantity - 1))} style={{ width: 28, height: 28, padding: 0 }} type="button">−</button>
-            <div className="mx-2 fw-bold text-center" style={{ minWidth: 25 }}>{retailQuantity}</div>
-            <button className="btn btn-outline-success btn-sm rounded-circle" onClick={() => onQuantityChange(productId, 'Retail', retailQuantity + 1)} style={{ width: 28, height: 28, padding: 0 }} type="button">+</button>
+        <div className="d-flex gap-2 align-items-center">
+          <div style={{ flex: 1 }}>
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              value={retailInput}
+              onChange={(e) => setRetailInput(e.target.value.replace(/[^\d]/g, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyRetail(); }}
+              className="form-control form-control-sm"
+              aria-label="Retail quantity"
+              placeholder="e.g., 20"
+            />
           </div>
-        ) : (
-          <button className="btn btn-success btn-sm w-100 rounded-pill" onClick={() => onQuantityChange(productId, 'Retail', 1)} type="button">+ Add Retail</button>
-        )}
+          <div style={{ width: 70 }}>
+            <button className="btn btn-success btn-sm w-100" onClick={applyRetail} type="button">{retailQuantity > 0 ? 'Set' : 'Add'}</button>
+          </div>
+        </div>
       </div>
 
       <div className="wholesale-controls">
@@ -100,15 +126,24 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
           {wholesaleQuantity > 0 && <span className="badge bg-info">{wholesaleQuantity}</span>}
         </div>
 
-        {wholesaleQuantity > 0 ? (
-          <div className="d-flex align-items-center justify-content-center">
-            <button className="btn btn-outline-info btn-sm rounded-circle" onClick={() => onQuantityChange(productId, 'Discounted', Math.max(0, wholesaleQuantity - 1))} style={{ width: 28, height: 28, padding: 0 }} type="button">−</button>
-            <div className="mx-2 fw-bold text-center" style={{ minWidth: 25 }}>{wholesaleQuantity}</div>
-            <button className="btn btn-outline-info btn-sm rounded-circle" onClick={() => onQuantityChange(productId, 'Discounted', wholesaleQuantity + 1)} style={{ width: 28, height: 28, padding: 0 }} type="button">+</button>
+        <div className="d-flex gap-2 align-items-center">
+          <div style={{ flex: 1 }}>
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              value={wholesaleInput}
+              onChange={(e) => setWholesaleInput(e.target.value.replace(/[^\d]/g, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyWholesale(); }}
+              className="form-control form-control-sm"
+              aria-label="Wholesale quantity"
+              placeholder="e.g., 20"
+            />
           </div>
-        ) : (
-          <button className="btn btn-info btn-sm w-100 rounded-pill" onClick={() => onQuantityChange(productId, 'Discounted', 1)} type="button">+ Add Wholesale</button>
-        )}
+          <div style={{ width: 70 }}>
+            <button className="btn btn-info btn-sm w-100" onClick={applyWholesale} type="button">{wholesaleQuantity > 0 ? 'Set' : 'Add'}</button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -158,7 +193,6 @@ function SearchTools({ loading, onRefresh, onClear, defaultPriceType, setDefault
               style={{ minWidth: 0, padding: '6px 8px' }}
             >
               {loading ? <span className="spinner-border spinner-border-sm" /> : <FontAwesomeIcon icon={faUndoAlt} />}
-
             </button>
 
             <button
@@ -308,6 +342,13 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
   const bothActive = { backgroundColor: '#0056B3', border: '2px solid #004494', color: '#fff' };
   const bothInactive = { backgroundColor: '#E7F1FF', border: '2px solid #0078D4', color: '#1f1f1f' };
 
+  const handleMpesaInputChange = (raw) => {
+    const digits = (raw || '').replace(/\D/g, '').slice(0, 9);
+    setPaymentData({ ...paymentData, mpesaPhone: digits ? `254${digits}` : '' });
+  };
+
+  const mpesaValueWithoutPrefix = paymentData.mpesaPhone ? paymentData.mpesaPhone.replace(/^254/, '') : '';
+
   return (
     <>
       <div className="mb-3">
@@ -350,7 +391,16 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
           <Form.Label className="fw-semibold">M-Pesa Phone Number</Form.Label>
           <div className="input-group input-group-lg">
             <span className="input-group-text">📱</span>
-            <Form.Control type="tel" placeholder="254XXXXXXXXX" value={paymentData.mpesaPhone} onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })} style={{ fontSize: '1.1rem' }} />
+            <span className="input-group-text">254</span>
+            <Form.Control
+              type="tel"
+              placeholder="7XXXXXXXX"
+              value={mpesaValueWithoutPrefix}
+              onChange={(e) => handleMpesaInputChange(e.target.value)}
+              style={{ fontSize: '1.1rem' }}
+              inputMode="numeric"
+              maxLength={9}
+            />
           </div>
         </Form.Group>
       )}
@@ -377,7 +427,16 @@ function PaymentForm({ paymentType, setPaymentType, paymentData, setPaymentData,
             <Form.Label className="fw-semibold">M-Pesa Phone Number</Form.Label>
             <div className="input-group input-group-lg">
               <span className="input-group-text">📱</span>
-              <Form.Control type="tel" placeholder="2547XXXXXXXX" value={paymentData.mpesaPhone} onChange={(e) => setPaymentData({ ...paymentData, mpesaPhone: e.target.value })} style={{ fontSize: '1.1rem' }} />
+              <span className="input-group-text">254</span>
+              <Form.Control
+                type="tel"
+                placeholder="7XXXXXXXX"
+                value={mpesaValueWithoutPrefix}
+                onChange={(e) => handleMpesaInputChange(e.target.value)}
+                style={{ fontSize: '1.1rem' }}
+                inputMode="numeric"
+                maxLength={9}
+              />
             </div>
           </Form.Group>
         </>
@@ -525,7 +584,7 @@ export default function POS() {
 
     window.addEventListener('keydown', handleCheckoutEnter);
     return () => window.removeEventListener('keydown', handleCheckoutEnter);
-  }, [paymentType, cart.length, paymentData, processingOrder]); // createOrder/completeCheckout referenced at runtime
+  }, [paymentType, cart.length, paymentData, processingOrder]);
 
   const performSearch = useCallback(async (term) => {
     if (!term || term.trim().length === 0) {
@@ -558,9 +617,13 @@ export default function POS() {
 
       setFilteredProducts(allResults);
 
-      if (foundByBarcode && isLikelyBarcode(originalTerm)) barcodeResultsRef.current = allResults.slice();
+      if (foundByBarcode && isLikelyBarcode(originalTerm)) {
+        barcodeResultsRef.current = allResults.slice();
+        if (searchInputRef.current) try { searchInputRef.current.value = ''; } catch (e) {}
+        setSearchTerm('');
+        requestAnimationFrame(() => { try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {} });
+      }
     } catch (error) {
-      console.error('Search error:', error);
       toast.error('Search failed');
       setFilteredProducts([]);
       setSearchType('');
@@ -612,7 +675,6 @@ export default function POS() {
       setSearchTerm('');
       requestAnimationFrame(() => focusSearchInput());
     } catch (error) {
-      console.error('Barcode scan error:', error);
       toast.error(`Failed to process barcode: ${error?.message || 'Unexpected error'}`);
       setLoadingProducts(prev => { const s = new Set(prev); s.clear(); return s; });
     }
@@ -654,12 +716,12 @@ export default function POS() {
           const validation = await validateAndAddToCart({ productId, inventoryId, qty: qtyToAdd, currentCartQty });
           if (validation.status === 'conflict' || validation.status === 'error') { toast.error(validation.message); setProductLoading(productId, false); return; }
           if (validation.status === 'warning') toast.warning(validation.message);
-        } catch (validationError) { console.warn('Stock validation failed, proceeding anyway:', validationError); }
+        } catch (validationError) { /* proceed if validation service fails */ }
       } else {
         try {
           const validation = await validateCartQuantityChange({ productId, inventoryId, newQty: newQuantity, currentCartQty });
           if (validation.status === 'conflict' || validation.status === 'error') { toast.error(validation.message); setProductLoading(productId, false); return; }
-        } catch (validationError) { console.warn('Cart quantity validation failed, proceeding anyway:', validationError); }
+        } catch (validationError) { /* proceed if validation service fails */ }
       }
 
       if (existingCartItem) {
@@ -667,13 +729,18 @@ export default function POS() {
         toast.success('Cart updated');
       } else {
         dispatch(addItemToCart({ product: { ...product, id: productId, priceType, price: product.price, priceAfterDiscount: product.priceAfterDiscount }, quantity: newQuantity }));
+        // CLEAR search input after item is added to cart (requested behavior)
+        if (searchInputRef.current) {
+          try { searchInputRef.current.value = ''; } catch (e) {}
+        }
+        setSearchTerm('');
+        requestAnimationFrame(() => { try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {} });
         toast.success(`Added to cart (${priceType === 'Retail' ? 'Retail' : 'Wholesale'})`);
       }
 
       setProductLoading(productId, false);
       requestAnimationFrame(() => { try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); else focusSearchInput(); } catch (e) {} });
     } catch (error) {
-      console.error('handleQuantityChange error:', error);
       toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
       setProductLoading(productId, false);
     }
@@ -694,7 +761,6 @@ export default function POS() {
       }
       toast.success('Item removed from cart');
     } catch (err) {
-      console.error('Failed to remove item:', err);
       toast.error('Failed to remove item');
     } finally {
       requestAnimationFrame(() => { try { if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); } catch (e) {} });
@@ -710,6 +776,15 @@ export default function POS() {
     } catch {
       toast.error('Failed to refresh products');
     }
+  };
+
+  // Helper: mask phone for display/receipt
+  const maskPhoneForReceipt = (rawPhone) => {
+    if (!rawPhone) return 'Walk-in';
+    const s = String(rawPhone).trim();
+    if (s.length < 6) return s;
+    const idx = s.length - 6;
+    return s.substring(0, idx) + '***' + s.substring(s.length - 3);
   };
 
   const handleOrderCompletion = async (orderData) => {
@@ -728,16 +803,20 @@ export default function POS() {
 
     const getCashierName = () => {
       if (!actualUser) return 'Staff';
-      if (actualUser.fullName && actualUser.fullName.trim()) return actualUser.fullName.trim();
-      if (actualUser.full_name && actualUser.full_name.trim()) return actualUser.full_name.trim();
-      if (actualUser.name && actualUser.name.trim()) return actualUser.name.trim();
-      const firstName = (actualUser.firstName || actualUser.first_name || '').trim();
-      const lastName = (actualUser.lastName || actualUser.last_name || '').trim();
-      if (firstName || lastName) { const combined = `${firstName} ${lastName}`.trim(); if (combined) return combined; }
-      if (actualUser.userName && actualUser.userName.trim()) return actualUser.userName.trim();
-      if (actualUser.username && actualUser.username.trim()) return actualUser.username.trim();
-      if (actualUser.email && actualUser.email.trim()) return actualUser.email.trim();
-      return 'Staff';
+      // prefer structured names, fallback to username/email; then return only the first token (first name)
+      const candidates = [
+        actualUser.fullName,
+        actualUser.full_name,
+        actualUser.name,
+        ((actualUser.firstName || actualUser.first_name) ? `${actualUser.firstName || actualUser.first_name} ${actualUser.lastName || actualUser.last_name || ''}` : null),
+        actualUser.userName,
+        actualUser.username,
+        actualUser.email
+      ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
+
+      const chosen = candidates.length > 0 ? candidates[0] : 'Staff';
+      const firstToken = (chosen.split(/\s+/)[0] || chosen).trim();
+      return firstToken || 'Staff';
     };
 
     const cashierName = getCashierName();
@@ -763,6 +842,10 @@ export default function POS() {
       phone: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', phoneNumber: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', email: actualUser?.email || ''
     };
 
+    // Mask customer phone for receipt output only
+    const rawCustomerPhone = (paymentType === 'mpesa' || paymentType === 'both') ? (paymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
+    const maskedCustomerPhone = rawCustomerPhone ? maskPhoneForReceipt(rawCustomerPhone) : 'Walk-in';
+
     const receiptData = {
       cart: receiptItems,
       cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 ? cartTotalFromLines : currentCartTotal,
@@ -771,7 +854,7 @@ export default function POS() {
       user: normalizedUser, cashier: normalizedUser,
       orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || orderData?.id || `ORD-${Date.now().toString().slice(-6)}`,
       orderId: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || orderData?.id || `ORD-${Date.now().toString().slice(-6)}`,
-      customerPhone: (paymentType === 'mpesa' || paymentType === 'both') ? (paymentData.mpesaPhone || '').trim() || 'Walk-in' : 'Walk-in',
+      customerPhone: maskedCustomerPhone,
       storeSettings
     };
 
@@ -785,8 +868,7 @@ export default function POS() {
       const res = await printOrderReceipt(receiptData, null, storeSettings);
       if (res?.success) toast.success('Receipt printed successfully'); else toast.warning(`Receipt printing: ${res?.message || 'failed'}`);
     } catch (err) {
-      console.error('Async print error:', err);
-      toast.error('Receipt printing failed - check console for details');
+      toast.error('Receipt printing failed - check printer');
     }
   };
 
@@ -879,7 +961,7 @@ export default function POS() {
         } else {
           if (remoteData.paid === true || String(remoteData.paymentStatus || '').toLowerCase() === 'paid' || String(remoteData.status || '').toLowerCase() === 'paid' || String(remoteData.status || '').toLowerCase() === 'completed') paid = true;
         }
-      } catch (err) { console.warn('/payments check failed:', err?.message || err); }
+      } catch (err) { /* ignore */ }
 
       if (!paid) {
         try {
@@ -892,13 +974,13 @@ export default function POS() {
             if (od && (od.paid === true || String(od.status || '').toLowerCase() === 'paid' || String(od.paymentStatus || '').toLowerCase() === 'paid')) paid = true;
             else if (od && od.payment && (od.payment.paid === true || String(od.payment.status || '').toLowerCase() === 'paid')) paid = true;
           }
-        } catch (err) { console.warn('/order check failed:', err?.message || err); }
+        } catch (err) { /* ignore */ }
       }
 
       if (paid) { toast.success('Payment confirmed'); await handleOrderCompletion({ orderNumber: currentOrderId }); }
       else toast.warning('Payment not confirmed yet');
     } catch (err) {
-      console.error('Payment check failed:', err); toast.error('Payment check failed');
+      toast.error('Payment check failed');
     } finally {
       setCheckingPayment(false);
     }

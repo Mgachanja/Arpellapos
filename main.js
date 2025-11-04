@@ -753,6 +753,8 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
         log.info('Using email:', userObj.email);
         return userObj.email.trim();
       }
+
+      return 'Staff';
     };
 
     const cashierName = getCashierName();
@@ -763,75 +765,145 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       return { success: false, message: 'Cart is empty or invalid' };
     }
 
-    // Build printData
+    // ========== NEW: Professional, consistent receipt layout ==========
     const printData = [];
 
-    printData.push(
-      { type: 'text', value: storeSettingsObj.storeName, style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' } },
-      { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '13px', marginBottom: '3px' } },
-      { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
-      { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '13px', marginBottom: '5px' } },
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
-      { type: 'text', value: 'SALES RECEIPT', style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } }
-    );
-
-    printData.push(
-      { type: 'text', value: `Date: ${new Date().toLocaleString('en-KE')}`, style: { fontSize: '13px', fontWeight: 'bold', marginBottom: '3px', textAlign: 'left' } },
-      { type: 'text', value: `SALE #: ${orderNumber || 'N/A'}`, style: { fontWeight: 'bold', fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
-      { type: 'text', value: `Customer: ${customerPhone || 'Walk-in'}`, style: { fontSize: '13px', marginBottom: '3px', textAlign: 'left' } },
-      { type: 'text', value: `Cashier: ${cashierName}`, style: { fontSize: '13px', marginBottom: '8px', textAlign: 'left' } },
-      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '3px' } },
-      { type: 'text', value: 'ITEM                 QTY   TOTAL', style: { fontWeight: 'bold', fontSize: '13px', fontFamily: 'monospace', marginBottom: '3px' } },
-      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } }
-    );
-
-    log.info('Processing cart items:', cart.length);
-
-    // Items
-    for (const item of cart) {
-      const name = item.name || item.productName || 'Item';
-      const qty = item.quantity || item.qty || 1;
-      const price = item.salePrice || item.price || 0;
-      const total = qty * price;
-      const truncated = name.length > 18 ? name.slice(0, 15) + '...' : name;
-      const paddedName = truncated.padEnd(18);
-      const qtyStr = String(qty).padStart(4);
-      const totalStr = formatCurrency(total).padStart(8);
-
+    // Add logo if available (centered)
+    const logoBase64 = getLogoBase64();
+    if (logoBase64) {
       printData.push({
-        type: 'text',
-        value: `${paddedName} ${qtyStr} ${totalStr}`,
-        style: { fontSize: '12px', fontFamily: 'monospace', textAlign: 'left', marginBottom: '2px' }
+        type: 'image',
+        url: logoBase64,
+        position: 'center',
+        width: '120px',
+        height: '60px',
+        style: { marginBottom: '6px' }
       });
     }
 
-    // Totals & payment
+    // Header: store details (centered)
     printData.push(
-      { type: 'text', value: '--------------------------------', style: { textAlign: 'center', fontSize: '12px', marginTop: '5px', marginBottom: '5px' } },
-      { type: 'text', value: `SUBTOTAL: ${formatCurrency(cartTotal)}`, style: { fontSize: '14px', marginBottom: '3px', fontWeight: 'bold' } },
-      { type: 'text', value: `TOTAL: ${formatCurrency(cartTotal)}`, style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' } },
-      { type: 'text', value: `Payment Method: ${String(paymentType || 'CASH').toUpperCase()}`, style: { fontSize: '13px', marginBottom: '10px' } }
+      { type: 'text', value: storeSettingsObj.storeName.toUpperCase(), style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '4px' } },
+      { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '12px', marginBottom: '2px' } },
+      { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '12px', marginBottom: '6px' } },
+      { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } },
+
+      // A clean divider
+      { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
-    // Footer
+    // Transaction meta data (left aligned)
+    const timestamp = new Date();
     printData.push(
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
-      { type: 'text', value: storeSettingsObj.receiptFooter, style: { textAlign: 'center', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' } },
-      { type: 'text', value: 'Visit us again soon!', style: { textAlign: 'center', fontSize: '12px', marginBottom: '8px' } },
-      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
-      { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '3px' } },
-      { type: 'text', value: `Print Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '15px' } }
+      { type: 'text', value: `Date: ${timestamp.toLocaleString('en-KE')}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
+      { type: 'text', value: `Sale #: ${orderNumber || `ORD-${String(Date.now()).slice(-8)}`}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
+      { type: 'text', value: `Cashier: ${cashierName}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
+      { type: 'text', value: `Customer: ${customerPhone || 'Walk-in'}`, style: { fontSize: '11px', marginBottom: '6px', textAlign: 'left' } },
+      { type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
+    // Column headers using monospace spacing
+    // Layout columns: Item (max 20 chars) | QTY (3) | UNIT (10) | LINE (10)
+    const itemCol = 20;
+    const qtyCol = 3;
+    const unitCol = 10;
+    const lineCol = 10;
+
+    const headerLine = `${'ITEM'.padEnd(itemCol)} ${'QTY'.padStart(qtyCol)} ${'UNIT'.padStart(unitCol)} ${'LINE'.padStart(lineCol)}`;
+    printData.push(
+      { type: 'text', value: headerLine, style: { fontWeight: 'bold', fontSize: '12px', fontFamily: 'monospace', marginBottom: '4px' } },
+      { type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
+    );
+
+    // Items (monospace aligned)
+    let subtotalCalc = 0;
+    for (const item of cart) {
+      const nameRaw = String(item.name || item.productName || 'Item');
+      const qty = Number(item.quantity || item.qty || 1);
+      const unit = Number(item.salePrice || item.price || 0);
+      const lineTotal = qty * unit;
+      subtotalCalc += lineTotal;
+
+      // Truncate item name to fit
+      const truncatedName = nameRaw.length > itemCol ? (nameRaw.slice(0, itemCol - 3) + '...') : nameRaw;
+      // Format currency strings without the Ksh prefix first (we'll add label later)
+      const unitStr = formatCurrency(unit).replace('Ksh ', '');
+      const lineStr = formatCurrency(lineTotal).replace('Ksh ', '');
+
+      const line = `${truncatedName.padEnd(itemCol)} ${String(qty).padStart(qtyCol)} ${unitStr.padStart(unitCol)} ${lineStr.padStart(lineCol)}`;
+      printData.push({ type: 'text', value: line, style: { fontSize: '11px', fontFamily: 'monospace', marginBottom: '2px' } });
+    }
+
+    // Totals block
+    printData.push({ type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginTop: '6px', marginBottom: '6px' } });
+
+    // Optional tax calculation - default 0% (adjust as needed)
+    const TAX_RATE = typeof ss.taxRate === 'number' ? ss.taxRate : 0; // expecting 0.0 - 1.0
+    const taxAmount = +(subtotalCalc * (TAX_RATE || 0));
+    const totalAfterTax = subtotalCalc + taxAmount;
+
+    // Discounts - if any
+    const discountAmount = typeof ss.discountAmount === 'number' ? ss.discountAmount : 0;
+    const grandTotal = Math.max(0, totalAfterTax - (discountAmount || 0));
+
+    // Subtotal, tax, discounts, total
+    const rightColWidth = 10;
+    const labelColWidth = 28; // for left text
+
+    const pushTotalRow = (label, value) => {
+      const labelText = label.padStart(labelColWidth);
+      const valText = formatCurrency(value).padStart(rightColWidth);
+      printData.push({ type: 'text', value: `${labelText} ${valText}`, style: { fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace', marginBottom: '3px' } });
+    };
+
+    pushTotalRow('SUBTOTAL:', subtotalCalc);
+    if (TAX_RATE && taxAmount > 0) pushTotalRow(`TAX (${(TAX_RATE * 100).toFixed(0)}%):`, taxAmount);
+    if (discountAmount && discountAmount > 0) pushTotalRow('DISCOUNT:', -Math.abs(discountAmount));
+    pushTotalRow('TOTAL:', grandTotal);
+
+    // Payment breakdown
+    printData.push({ type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginTop: '6px', marginBottom: '6px' } });
+
+    // Compose payment lines
+    if (String(paymentType).toLowerCase() === 'cash') {
+      const cash = Number(paymentData.cashAmount || 0);
+      const change = Math.max(0, cash - grandTotal);
+      pushTotalRow('Paid (Cash):', cash);
+      if (change > 0) pushTotalRow('Change:', change);
+    } else if (String(paymentType).toLowerCase() === 'mpesa') {
+      const mpesa = Number(paymentData.mpesaAmount || grandTotal);
+      pushTotalRow('Paid (M-Pesa):', mpesa);
+    } else if (String(paymentType).toLowerCase() === 'both' || String(paymentType).toLowerCase() === 'hybrid') {
+      const cash = Number(paymentData.cashAmount || 0);
+      const mpesa = Number(paymentData.mpesaAmount || 0);
+      const change = Math.max(0, (cash + mpesa) - grandTotal);
+      pushTotalRow('Paid (Cash):', cash);
+      pushTotalRow('Paid (M-Pesa):', mpesa);
+      if (change > 0) pushTotalRow('Change:', change);
+    } else {
+      // Unknown/default
+      pushTotalRow('Paid:', grandTotal);
+    }
+
+    // Footer messages
+    printData.push(
+      { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginTop: '6px', marginBottom: '6px' } },
+      { type: 'text', value: storeSettingsObj.receiptFooter, style: { textAlign: 'center', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' } },
+      { type: 'text', value: 'Thank you for your business!', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } },
+      // Small metadata
+      { type: 'text', value: `Receipt#: ${orderNumber || `ORD-${String(Date.now()).slice(-8)}`}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '2px' } },
+      { type: 'text', value: `Printed: ${timestamp.toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '2px' } },
+      { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '9px', marginBottom: '2px' } },
+      { type: 'text', value: '\n\n\n', style: { marginBottom: '10px' } } // feed extra paper
+    );
 
     // Print using electron-pos-printer
     const options = {
       preview: false,
       silent: true,
-      margin: '15 0 0 15',
+      margin: '10 0 0 10',
       timeOutPerLine: 500,
-      pageSize: '75mm',
+      pageSize: '80mm',
       copies: 1
     };
 
@@ -843,9 +915,8 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     }
 
     log.info('Calling PosPrinter.print with options:', options);
-    
     await PosPrinter.print(printData, options);
-    
+
     log.info('Receipt printed successfully to:', printerName || 'default printer');
     return { success: true, message: 'Receipt printed successfully' };
     

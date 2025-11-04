@@ -2,16 +2,12 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
-const user = "test cashier";
 
-// Auto-updater import
 const { autoUpdater } = require('electron-updater');
 
-// Configure auto-updater logging
 autoUpdater.logger = log;
 autoUpdater.logger.transports.file.level = 'info';
 
-// Add electron-pos-printer import
 let PosPrinter = null;
 try {
   const electronPosPrinter = require('electron-pos-printer');
@@ -23,7 +19,7 @@ try {
 
 const APP_ID = 'com.arpella.pos';
 if (process.platform === 'win32') {
-  try { app.setAppUserModelId(APP_ID); } catch (e) { console.warn('setAppUserModelId failed', e); }
+  try { app.setAppUserModelId(APP_ID); } catch (e) { log.warn('setAppUserModelId failed', e); }
 }
 
 const electron = require('electron');
@@ -40,24 +36,17 @@ let thermalHandlerInstance = null;
 try {
   ThermalHandlerClass = require(path.join(__dirname, 'main-thermal-handler'));
 } catch (err) {
-  log.warn('Thermal handler module not found or failed to load. Using electron-pos-printer instead.', err);
+  log.warn('Thermal handler module not found, using electron-pos-printer instead.', err);
 }
 
-// Enhanced Auto-updater configuration and event handlers
 function setupAutoUpdater() {
-  // Enhanced auto-updater configuration
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
 
-  // Set update channel if needed
-  // autoUpdater.channel = 'latest';
-
-  // Check for updates
   autoUpdater.checkForUpdatesAndNotify();
-  
-  // Auto-updater events with enhanced error handling
+
   autoUpdater.on('checking-for-update', () => {
     log.info('Checking for update...');
     sendUpdateMessage('Checking for updates...');
@@ -66,8 +55,6 @@ function setupAutoUpdater() {
   autoUpdater.on('update-available', (info) => {
     log.info('Update available:', info);
     sendUpdateMessage(`Update available: v${info.version}`);
-    
-    // Notify user about available update
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-available', {
         version: info.version,
@@ -86,8 +73,6 @@ function setupAutoUpdater() {
   autoUpdater.on('error', (err) => {
     log.error('Error in auto-updater:', err);
     sendUpdateMessage(`Update error: ${err.message}`);
-    
-    // Send detailed error to renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-error', {
         message: err.message,
@@ -96,44 +81,26 @@ function setupAutoUpdater() {
     }
   });
 
- autoUpdater.on('download-progress', (progressObj) => {
-  let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
-  log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
-  log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
-  log.info(log_message);
-  
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    // CRITICAL FIX: Send 'update-download-progress' not 'download-progress'
-    mainWindow.webContents.send('update-download-progress', {
-      percent: progressObj.percent, // Don't round here, let renderer handle it
-      bytesPerSecond: progressObj.bytesPerSecond,
-      transferred: progressObj.transferred,
-      total: progressObj.total
-    });
-  }
-});
+  autoUpdater.on('download-progress', (progressObj) => {
+    let log_message = `Download speed: ${Math.round(progressObj.bytesPerSecond / 1024)}KB/s`;
+    log_message += ` - Downloaded ${Math.round(progressObj.percent)}%`;
+    log_message += ` (${Math.round(progressObj.transferred / 1024 / 1024)}MB/${Math.round(progressObj.total / 1024 / 1024)}MB)`;
+    log.info(log_message);
 
-autoUpdater.on('update-downloaded', (info) => {
-  log.info('Update downloaded:', info);
-  updateDownloaded = true;
-  
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-downloaded', {
-      version: info.version,
-      releaseNotes: info.releaseNotes,
-      releaseName: info.releaseName,
-      releaseDate: info.releaseDate
-    });
-    
-  }
-});
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-download-progress', {
+        percent: progressObj.percent,
+        bytesPerSecond: progressObj.bytesPerSecond,
+        transferred: progressObj.transferred,
+        total: progressObj.total
+      });
+    }
+  });
 
   autoUpdater.on('update-downloaded', async (info) => {
     log.info('Update downloaded:', info);
     updateDownloaded = true;
     sendUpdateMessage(`Update v${info.version} downloaded - ready to install`);
-    
-    // Enhanced update downloaded handling
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update-downloaded', {
         version: info.version,
@@ -142,7 +109,6 @@ autoUpdater.on('update-downloaded', (info) => {
         releaseDate: info.releaseDate
       });
 
-      // Show dialog to user asking if they want to install now
       const choice = await dialog.showMessageBox(mainWindow, {
         type: 'info',
         buttons: ['Install Now', 'Install Later'],
@@ -154,25 +120,12 @@ autoUpdater.on('update-downloaded', (info) => {
       });
 
       if (choice.response === 0) {
-        // User chose to install now
-        log.info('User chose to install update immediately');
         try {
-          // Close all windows gracefully
-          BrowserWindow.getAllWindows().forEach(window => {
-            if (!window.isDestroyed()) {
-              window.close();
-            }
-          });
-          
-          // Install update
-          setImmediate(() => {
-            autoUpdater.quitAndInstall(false, true);
-          });
+          BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.close(); });
+          setImmediate(() => { autoUpdater.quitAndInstall(false, true); });
         } catch (error) {
           log.error('Failed to quit and install:', error);
         }
-      } else {
-        log.info('User chose to install update later');
       }
     }
   });
@@ -185,13 +138,9 @@ function sendUpdateMessage(message) {
   log.info('Update message:', message);
 }
 
-// Enhanced IPC handlers for auto-updater
-// Enhanced IPC handlers for auto-updater
 ipcMain.handle('check-for-updates', async () => {
   try {
     log.info('Manual update check initiated');
-    // Don't return the full result object - it can't be cloned
-    // Just trigger the check and let event handlers notify renderer
     autoUpdater.checkForUpdates();
     return { success: true, message: 'Update check initiated' };
   } catch (error) {
@@ -206,14 +155,8 @@ ipcMain.handle('quit-and-install', async () => {
       log.warn('No update downloaded, cannot install');
       return { success: false, error: 'No update available to install' };
     }
-    
     log.info('Initiating quit and install');
-    
-    // Give some time for the response to be sent
-    setTimeout(() => {
-      autoUpdater.quitAndInstall(false, true);
-    }, 1000);
-    
+    setTimeout(() => { autoUpdater.quitAndInstall(false, true); }, 1000);
     return { success: true };
   } catch (error) {
     log.error('Quit and install failed:', error);
@@ -229,7 +172,6 @@ ipcMain.handle('get-app-version', () => {
   };
 });
 
-// New IPC handler to download update manually
 ipcMain.handle('download-update', async () => {
   try {
     log.info('Manual update download initiated');
@@ -241,7 +183,6 @@ ipcMain.handle('download-update', async () => {
   }
 });
 
-// New IPC handler to get update info
 ipcMain.handle('get-update-info', () => {
   return {
     updateDownloaded,
@@ -267,67 +208,10 @@ function resolveIconPath() {
   return path.join(process.resourcesPath, 'icon.ico');
 }
 
-// Function to resolve logo path for receipts
-function resolveLogoPath() {
-  const candidates = [
-    // Development paths
-    path.join(__dirname, 'assets', 'receipt-logo.png'),
-    path.join(__dirname, 'src', 'assets', 'receipt-logo.png'),
-    path.join(__dirname, 'public', 'assets', 'receipt-logo.png'),
-    path.join(__dirname, 'build', 'assets', 'receipt-logo.png'),
-  ];
-
-  // Production paths
-  if (process.resourcesPath) {
-    candidates.push(
-      path.join(process.resourcesPath, 'app.asar', 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'app.asar', 'src', 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'app.asar', 'build', 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'assets', 'receipt-logo.png'),
-      path.join(process.resourcesPath, 'build', 'assets', 'receipt-logo.png')
-    );
-  }
-
-  for (const logoPath of candidates) {
-    try {
-      if (fs.existsSync(logoPath)) {
-        log.info('Found receipt logo at:', logoPath);
-        return logoPath;
-      }
-    } catch (error) {
-      // Continue searching
-    }
-  }
-
-  log.warn('Receipt logo not found in any of the expected locations:', candidates);
-  return null;
-}
-
-// Function to convert image to base64
-function getLogoBase64() {
-  try {
-    const logoPath = resolveLogoPath();
-    if (!logoPath) {
-      log.warn('No logo found for receipt printing');
-      return null;
-    }
-
-    const imageBuffer = fs.readFileSync(logoPath);
-    const base64Image = imageBuffer.toString('base64');
-    const mimeType = logoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-    
-    log.info('Logo converted to base64, size:', imageBuffer.length, 'bytes');
-    return `data:${mimeType};base64,${base64Image}`;
-  } catch (error) {
-    log.error('Failed to load logo for receipt:', error);
-    return null;
-  }
-}
-
 function findIndexHtmlCandidates() {
   const candidates = [
     path.join(__dirname, 'build', 'index.html'),
-    path.join(__dirname, 'index.html'),
+    path.join(__dirname, 'index.html')
   ];
 
   if (process.resourcesPath) {
@@ -400,30 +284,22 @@ function createMainWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    
-    // Initialize auto-updater after window is ready
     if (!isDev) {
       log.info('Initializing auto-updater...');
-      setTimeout(() => {
-        setupAutoUpdater();
-      }, 3000); // Wait 3 seconds after app is ready
+      setTimeout(() => { setupAutoUpdater(); }, 3000);
     } else {
       log.info('Development mode - skipping auto-updater');
     }
   });
 
-  mainWindow.on('closed', () => { 
-    mainWindow = null; 
-  });
-
-  // Enhanced close handling for updates
+  mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.on('close', (event) => {
     if (updateDownloaded) {
       log.info('App closing with update available, will install on quit');
     }
   });
 }
-// Enhanced printer detection function
+
 async function getAllAvailablePrinters() {
   try {
     let printWindow = window.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -432,24 +308,18 @@ async function getAllAvailablePrinters() {
       return [];
     }
 
-    // Get printers from Electron
     const electronPrinters = await printWindow.webContents.getPrintersAsync();
     log.info('Electron detected printers:', electronPrinters.map(p => ({ name: p.name, status: p.status })));
 
-    // Additional printer detection for thermal printers
     let allPrinters = [...electronPrinters];
 
-    // On Windows, try to get additional printers using system commands
     if (process.platform === 'win32') {
       try {
         const { exec } = require('child_process');
         const { promisify } = require('util');
         const execAsync = promisify(exec);
-        
-        // Use PowerShell to get more detailed printer info
         const { stdout } = await execAsync('powershell "Get-Printer | Select-Object Name, PrinterStatus, Type | ConvertTo-Json"');
         const windowsPrinters = JSON.parse(stdout);
-        
         if (Array.isArray(windowsPrinters)) {
           windowsPrinters.forEach(winPrinter => {
             if (!allPrinters.find(p => p.name === winPrinter.Name)) {
@@ -476,7 +346,6 @@ async function getAllAvailablePrinters() {
   }
 }
 
-// ---- ✅ ENHANCED IPC HANDLER: Get list of printers with better detection
 ipcMain.handle('get-printers', async () => {
   try {
     const printers = await getAllAvailablePrinters();
@@ -488,7 +357,6 @@ ipcMain.handle('get-printers', async () => {
   }
 });
 
-// ---- ✅ ENHANCED THERMAL PRINTER TEST WITH IMPROVED STYLING
 ipcMain.handle('test-thermal-printer', async (event, printerName) => {
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
@@ -499,150 +367,23 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     const options = {
       preview: false,
       silent: true,
-      margin: '10 10 10 10', // Better margins for centering
+      margin: '10 10 10 10',
       timeOutPerLine: 400,
-      pageSize: '80mm', // Proper thermal printer size
+      pageSize: '80mm',
       copies: 1
     };
 
-    if (printerName && printerName !== '') {
-      options.printerName = printerName;
-      log.info('Testing printer:', printerName);
-    } else {
-      log.info('Testing default printer');
-    }
+    if (printerName && printerName !== '') options.printerName = printerName;
 
-    const printData = [];
-
-    // Add logo if available
-    /*const logoBase64 = getLogoBase64();
-    if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '120px',
-        height: '60px',
-        style: {
-          marginBottom: '10px'
-        }
-      });
-    }
-      */
-
-    // Enhanced test print with better styling and centering
-    printData.push(
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'PRINTER TEST',
-        style: {
-          fontWeight: 'bold',
-          textAlign: 'center',
-          fontSize: '18px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '10px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'This is a test receipt to verify',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: 'printer alignment and formatting.',
-        style: {
-          textAlign: 'center',
-          fontSize: '14px',
-          marginBottom: '10px'
-        }
-      },
-      {
-        type: 'text',
-        value: '- Printer Status: ONLINE',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: '- Paper Width: 80mm',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '3px'
-        }
-      },
-      {
-        type: 'text',
-        value: '- Character Set: UTF-8',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '10px'
-        }
-      },
-      {
-        type: 'text',
-        value: `Test Time: ${new Date().toLocaleString('en-KE')}`,
-        style: {
-          textAlign: 'center',
-          fontSize: '11px',
-          marginBottom: '10px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: '✓ TEST COMPLETED SUCCESSFULLY!',
-        style: {
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '14px',
-          marginBottom: '5px'
-        }
-      },
-      {
-        type: 'text',
-        value: '================================',
-        style: {
-          textAlign: 'center',
-          fontSize: '12px',
-          marginBottom: '20px'
-        }
-      }
-    );
+    const printData = [
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '5px' } },
+      { type: 'text', value: 'PRINTER TEST', style: { fontWeight: 'bold', textAlign: 'center', fontSize: '18px', marginBottom: '5px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '10px' } },
+      { type: 'text', value: 'This is a test receipt to verify', style: { textAlign: 'center', fontSize: '14px', marginBottom: '3px' } },
+      { type: 'text', value: 'printer alignment and formatting.', style: { textAlign: 'center', fontSize: '14px', marginBottom: '10px' } },
+      { type: 'text', value: `Test Time: ${new Date().toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '11px', marginBottom: '10px' } },
+      { type: 'text', value: '================================', style: { textAlign: 'center', fontSize: '12px', marginBottom: '20px' } }
+    ];
 
     await PosPrinter.print(printData, options);
     log.info('Test print completed successfully for printer:', printerName || 'default');
@@ -652,9 +393,10 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
     return { success: false, message: `Print failed: ${error.message}` };
   }
 });
+
 ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
-  log.info('=== PRINT RECEIPT HANDLER CALLED ===');
-  
+  log.info('PRINT RECEIPT called');
+
   if (!PosPrinter) {
     log.error('electron-pos-printer not available');
     return { success: false, message: 'Thermal printer library not available' };
@@ -672,21 +414,8 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       cashier: orderCashier = {}
     } = orderData || {};
 
-    log.info('Destructured values:', {
-      cartLength: cart.length,
-      cartTotal,
-      paymentType,
-      orderNumber,
-      customerPhone,
-      hasUser: !!orderUser,
-      hasCashier: !!orderCashier
-    });
-
-    // Use orderUser first, fallback to orderCashier
     const userObj = orderUser && Object.keys(orderUser).length > 0 ? orderUser : orderCashier;
-    log.info('Selected userObj:', userObj);
 
-    // Normalize store settings
     const ss = (typeof storeSettingsArg === 'object' && storeSettingsArg !== null)
       ? storeSettingsArg
       : (orderData && orderData.storeSettings && typeof orderData.storeSettings === 'object')
@@ -701,109 +430,61 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       receiptFooter: String(ss.receiptFooter || 'Thank you for your business!')
     };
 
-    log.info('Store settings:', storeSettingsObj);
-
-    // Helper to format currency
     const formatCurrency = (amount) => `Ksh ${Number(amount || 0).toLocaleString('en-KE')}`;
 
-    // Build cashier/display name safely from incoming user object
     const getCashierName = () => {
-      if (!userObj || Object.keys(userObj).length === 0) {
-        log.warn('No user object available, using default "Staff"');
-        return 'Staff';
-      }
-      
-      log.info('Building cashier name from userObj:', userObj);
-      
-      // Try fullName variations
-      if (userObj.fullName && userObj.fullName.trim()) {
-        log.info('Using fullName:', userObj.fullName);
-        return userObj.fullName.trim();
-      }
-      if (userObj.full_name && userObj.full_name.trim()) {
-        log.info('Using full_name:', userObj.full_name);
-        return userObj.full_name.trim();
-      }
-      if (userObj.name && userObj.name.trim()) {
-        log.info('Using name:', userObj.name);
-        return userObj.name.trim();
-      }
-      
-      // Try first + last name
-      const firstName = (userObj.firstName || userObj.first_name || '').trim();
-      const lastName = (userObj.lastName || userObj.last_name || '').trim();
-      if (firstName || lastName) {
-        const combined = `${firstName} ${lastName}`.trim();
-        log.info('Using firstName + lastName:', combined);
-        return combined;
-      }
-      
-      // Try username variations
-      if (userObj.userName && userObj.userName.trim()) {
-        log.info('Using userName:', userObj.userName);
-        return userObj.userName.trim();
-      }
-      if (userObj.username && userObj.username.trim()) {
-        log.info('Using username:', userObj.username);
-        return userObj.username.trim();
-      }
-      
-      // Try email
-      if (userObj.email && userObj.email.trim()) {
-        log.info('Using email:', userObj.email);
-        return userObj.email.trim();
-      }
-
-      return 'Staff';
+      if (!userObj || Object.keys(userObj).length === 0) return 'Staff';
+      const candidates = [
+        userObj.fullName,
+        userObj.full_name,
+        userObj.name,
+        ((userObj.firstName || userObj.first_name) ? `${userObj.firstName || userObj.first_name} ${userObj.lastName || userObj.last_name || ''}` : null),
+        userObj.userName,
+        userObj.username,
+        userObj.email
+      ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
+      const chosen = candidates.length > 0 ? candidates[0] : 'Staff';
+      return (chosen.split(/\s+/)[0] || chosen).trim();
     };
 
     const cashierName = getCashierName();
 
-    // Validate cart
     if (!Array.isArray(cart) || cart.length === 0) {
       log.error('Invalid or empty cart');
       return { success: false, message: 'Cart is empty or invalid' };
     }
 
-    // ========== NEW: Professional, consistent receipt layout ==========
     const printData = [];
 
-    // Add logo if available (centered)
-    const logoBase64 = getLogoBase64();
-    if (logoBase64) {
-      printData.push({
-        type: 'image',
-        url: logoBase64,
-        position: 'center',
-        width: '120px',
-        height: '60px',
-        style: { marginBottom: '6px' }
-      });
-    }
-
-    // Header: store details (centered)
     printData.push(
       { type: 'text', value: storeSettingsObj.storeName.toUpperCase(), style: { textAlign: 'center', fontWeight: 'bold', fontSize: '16px', marginBottom: '4px' } },
       { type: 'text', value: storeSettingsObj.storeAddress, style: { textAlign: 'center', fontSize: '12px', marginBottom: '2px' } },
       { type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { textAlign: 'center', fontSize: '12px', marginBottom: '6px' } },
       { type: 'text', value: `PIN: ${storeSettingsObj.pin}`, style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } },
-
-      // A clean divider
       { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
-    // Transaction meta data (left aligned)
     const timestamp = new Date();
+    const orderIdFinal = orderNumber || `ORD-${String(Date.now()).slice(-8)}`;
+
+    const maskPhoneForReceipt = (rawPhone) => {
+      if (!rawPhone) return 'Walk-in';
+      const s = String(rawPhone).trim();
+      if (s.length < 6) return s;
+      const idx = s.length - 6;
+      return s.substring(0, idx) + '***' + s.substring(s.length - 3);
+    };
+
+    const maskedCustomerPhone = maskPhoneForReceipt((paymentType === 'mpesa' || paymentType === 'both') ? (paymentData.mpesaPhone || '').trim() || '' : customerPhone || '');
+
     printData.push(
       { type: 'text', value: `Date: ${timestamp.toLocaleString('en-KE')}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
-      { type: 'text', value: `Sale #: ${orderNumber || `ORD-${String(Date.now()).slice(-8)}`}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
+      { type: 'text', value: `Sale #: ${orderIdFinal}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
       { type: 'text', value: `Cashier: ${cashierName}`, style: { fontSize: '11px', marginBottom: '2px', textAlign: 'left' } },
-      { type: 'text', value: `Customer: ${customerPhone || 'Walk-in'}`, style: { fontSize: '11px', marginBottom: '6px', textAlign: 'left' } },
+      { type: 'text', value: `Customer: ${maskedCustomerPhone || 'Walk-in'}`, style: { fontSize: '11px', marginBottom: '6px', textAlign: 'left' } },
       { type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
-    // Column headers using monospace spacing
-    // Layout columns: Item (max 20 chars) | QTY (3) | UNIT (10) | LINE (10)
     const itemCol = 20;
     const qtyCol = 3;
     const unitCol = 10;
@@ -815,7 +496,6 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
-    // Items (monospace aligned)
     let subtotalCalc = 0;
     for (const item of cart) {
       const nameRaw = String(item.name || item.productName || 'Item');
@@ -823,32 +503,23 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       const unit = Number(item.salePrice || item.price || 0);
       const lineTotal = qty * unit;
       subtotalCalc += lineTotal;
-
-      // Truncate item name to fit
       const truncatedName = nameRaw.length > itemCol ? (nameRaw.slice(0, itemCol - 3) + '...') : nameRaw;
-      // Format currency strings without the Ksh prefix first (we'll add label later)
       const unitStr = formatCurrency(unit).replace('Ksh ', '');
       const lineStr = formatCurrency(lineTotal).replace('Ksh ', '');
-
       const line = `${truncatedName.padEnd(itemCol)} ${String(qty).padStart(qtyCol)} ${unitStr.padStart(unitCol)} ${lineStr.padStart(lineCol)}`;
       printData.push({ type: 'text', value: line, style: { fontSize: '11px', fontFamily: 'monospace', marginBottom: '2px' } });
     }
 
-    // Totals block
     printData.push({ type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginTop: '6px', marginBottom: '6px' } });
 
-    // Optional tax calculation - default 0% (adjust as needed)
-    const TAX_RATE = typeof ss.taxRate === 'number' ? ss.taxRate : 0; // expecting 0.0 - 1.0
+    const TAX_RATE = typeof ss.taxRate === 'number' ? ss.taxRate : 0;
     const taxAmount = +(subtotalCalc * (TAX_RATE || 0));
     const totalAfterTax = subtotalCalc + taxAmount;
-
-    // Discounts - if any
     const discountAmount = typeof ss.discountAmount === 'number' ? ss.discountAmount : 0;
     const grandTotal = Math.max(0, totalAfterTax - (discountAmount || 0));
 
-    // Subtotal, tax, discounts, total
     const rightColWidth = 10;
-    const labelColWidth = 28; // for left text
+    const labelColWidth = 28;
 
     const pushTotalRow = (label, value) => {
       const labelText = label.padStart(labelColWidth);
@@ -861,10 +532,8 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     if (discountAmount && discountAmount > 0) pushTotalRow('DISCOUNT:', -Math.abs(discountAmount));
     pushTotalRow('TOTAL:', grandTotal);
 
-    // Payment breakdown
     printData.push({ type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginTop: '6px', marginBottom: '6px' } });
 
-    // Compose payment lines
     if (String(paymentType).toLowerCase() === 'cash') {
       const cash = Number(paymentData.cashAmount || 0);
       const change = Math.max(0, cash - grandTotal);
@@ -881,23 +550,19 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       pushTotalRow('Paid (M-Pesa):', mpesa);
       if (change > 0) pushTotalRow('Change:', change);
     } else {
-      // Unknown/default
       pushTotalRow('Paid:', grandTotal);
     }
 
-    // Footer messages
     printData.push(
-      { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginTop: '6px', marginBottom: '6px' } },
+      { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } },
       { type: 'text', value: storeSettingsObj.receiptFooter, style: { textAlign: 'center', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' } },
       { type: 'text', value: 'Thank you for your business!', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } },
-      // Small metadata
-      { type: 'text', value: `Receipt#: ${orderNumber || `ORD-${String(Date.now()).slice(-8)}`}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '2px' } },
+      { type: 'text', value: `Receipt#: ${orderIdFinal}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '2px' } },
       { type: 'text', value: `Printed: ${timestamp.toLocaleString('en-KE')}`, style: { textAlign: 'center', fontSize: '10px', marginBottom: '2px' } },
       { type: 'text', value: `Powered by Arpella`, style: { textAlign: 'center', fontSize: '9px', marginBottom: '2px' } },
-      { type: 'text', value: '\n\n\n', style: { marginBottom: '10px' } } // feed extra paper
+      { type: 'text', value: '\n\n\n', style: { marginBottom: '10px' } }
     );
 
-    // Print using electron-pos-printer
     const options = {
       preview: false,
       silent: true,
@@ -907,107 +572,52 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       copies: 1
     };
 
-    if (printerName && printerName.trim()) {
-      options.printerName = printerName.trim();
-      log.info('Using specified printer:', printerName);
-    } else {
-      log.info('Using default printer');
-    }
+    if (printerName && printerName.trim()) options.printerName = printerName.trim();
 
-    log.info('Calling PosPrinter.print with options:', options);
     await PosPrinter.print(printData, options);
 
     log.info('Receipt printed successfully to:', printerName || 'default printer');
     return { success: true, message: 'Receipt printed successfully' };
-    
+
   } catch (error) {
     log.error('Print receipt failed - Full error:', error);
-    log.error('Error name:', error?.name);
-    log.error('Error message:', error?.message);
-    log.error('Error stack:', error?.stack);
-    
-    return { 
-      success: false, 
-      message: `Print failed: ${error?.message || error?.toString() || 'Unknown error'}` 
+    return {
+      success: false,
+      message: `Print failed: ${error?.message || error?.toString() || 'Unknown error'}`
     };
   }
 });
 
-
-
-// New IPC handler to check logo availability
-ipcMain.handle('check-receipt-logo', async () => {
-  try {
-    const logoPath = resolveLogoPath();
-    const logoBase64 = getLogoBase64();
-    
-    return {
-      available: !!logoBase64,
-      path: logoPath,
-      size: logoBase64 ? logoBase64.length : 0
-    };
-  } catch (error) {
-    log.error('Failed to check receipt logo:', error);
-    return {
-      available: false,
-      error: error.message
-    };
-  }
-});
-
-// Enhanced printer status check
 ipcMain.handle('check-printer-status', async (event, printerName) => {
   try {
     const printers = await getAllAvailablePrinters();
-    
     if (!printerName) {
-      return { 
-        available: printers.length > 0, 
-        printers,
-        count: printers.length
-      };
+      return { available: printers.length > 0, printers, count: printers.length };
     }
-    
     const found = printers.find(p => p.name === printerName);
-    return { 
-      available: !!found, 
-      printers,
-      printer: found,
-      status: found ? found.status : 'not_found'
-    };
+    return { available: !!found, printers, printer: found, status: found ? found.status : 'not_found' };
   } catch (error) {
     log.error('Failed to check printer status:', error);
-    return { 
-      available: false, 
-      printers: [],
-      error: error.message 
-    };
+    return { available: false, printers: [], error: error.message };
   }
 });
 
-// Additional IPC handler for printer capabilities
 ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
   try {
     const printers = await getAllAvailablePrinters();
     const printer = printers.find(p => p.name === printerName);
-    
-    if (!printer) {
-      return { success: false, message: 'Printer not found' };
-    }
-
-    // Basic capability info
+    if (!printer) return { success: false, message: 'Printer not found' };
     const capabilities = {
       name: printer.name,
       status: printer.status,
       isDefault: printer.isDefault || false,
       canPrint: printer.status === 'idle',
-      supportsThermal: printer.name.toLowerCase().includes('thermal') || 
-                      printer.name.toLowerCase().includes('pos') ||
-                      printer.name.toLowerCase().includes('epson') ||
-                      printer.name.toLowerCase().includes('star'),
+      supportsThermal: printer.name.toLowerCase().includes('thermal') ||
+                       printer.name.toLowerCase().includes('pos') ||
+                       printer.name.toLowerCase().includes('epson') ||
+                       printer.name.toLowerCase().includes('star'),
       ...printer.options
     };
-
     log.info('Printer capabilities for', printerName, ':', capabilities);
     return { success: true, capabilities };
   } catch (error) {
@@ -1016,7 +626,6 @@ ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
   }
 });
 
-/* Single instance handling */
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1051,6 +660,5 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Debugging helpers
 ipcMain.on('log', (ev, msg) => log.info('Renderer log:', msg));
 ipcMain.on('open-devtools', () => mainWindow && mainWindow.webContents.openDevTools());

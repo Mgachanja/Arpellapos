@@ -493,22 +493,22 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginBottom: '8px' } }
     );
 
-    // Items Header - Properly Aligned
-    const itemCol = 16;
-    const qtyCol = 3;
-    const unitCol = 7;
-    const lineCol = 7;
+    // Items Header - Fixed Width Columns for 10cm paper
+    const itemCol = 22;
+    const qtyCol = 4;
+    const unitCol = 8;
+    const lineCol = 8;
 
-    const headerLine = `${'ITEM'.padEnd(itemCol)} ${'QTY'.padStart(qtyCol)} ${'UNIT'.padStart(unitCol)} ${'TOTAL'.padStart(lineCol)}`;
+    const headerLine = `${'ITEM'.padEnd(itemCol)}${'QTY'.padStart(qtyCol)} ${'UNIT'.padStart(unitCol)} ${'TOTAL'.padStart(lineCol)}`;
     
     printData.push(
-      { type: 'text', value: headerLine, style: { fontWeight: 'bold', fontSize: '12px', fontFamily: 'monospace', marginBottom: '4px', textAlign: 'left' } },
-      { type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
+      { type: 'text', value: headerLine, style: { fontWeight: 'bold', fontSize: '11px', fontFamily: 'monospace', marginBottom: '4px', textAlign: 'left' } },
+      { type: 'text', value: '------------------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
     let subtotalCalc = 0;
     
-    // Items Section - Properly Formatted
+    // Items Section - Fixed Alignment
     for (const item of cart) {
       const nameRaw = String(item.name || item.productName || 'Item');
       const qty = Number(item.quantity || item.qty || 1);
@@ -521,7 +521,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       const unitStr = unit.toFixed(2);
       const lineStr = lineTotal.toFixed(2);
       
-      const line = `${truncatedName.padEnd(itemCol)} ${qtyStr.padStart(qtyCol)} ${unitStr.padStart(unitCol)} ${lineStr.padStart(lineCol)}`;
+      const line = `${truncatedName.padEnd(itemCol)}${qtyStr.padStart(qtyCol)} ${unitStr.padStart(unitCol)} ${lineStr.padStart(lineCol)}`;
       printData.push({ 
         type: 'text', 
         value: line, 

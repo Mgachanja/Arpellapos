@@ -493,14 +493,16 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       { type: 'text', value: '========================================', style: { textAlign: 'center', fontSize: '11px', marginBottom: '8px' } }
     );
 
-    // Items Header - Perfectly Aligned
-    const itemCol = 18;
-    const qtyCol = 5;
-    const unitCol = 8;
-    const lineCol = 8;
+    // Items Header - Properly Aligned
+    const itemCol = 16;
+    const qtyCol = 3;
+    const unitCol = 7;
+    const lineCol = 7;
 
+    const headerLine = `${'ITEM'.padEnd(itemCol)} ${'QTY'.padStart(qtyCol)} ${'UNIT'.padStart(unitCol)} ${'TOTAL'.padStart(lineCol)}`;
+    
     printData.push(
-      { type: 'text', value: 'ITEM                QTY     UNIT    TOTAL', style: { fontWeight: 'bold', fontSize: '12px', fontFamily: 'monospace', marginBottom: '4px', textAlign: 'center' } },
+      { type: 'text', value: headerLine, style: { fontWeight: 'bold', fontSize: '12px', fontFamily: 'monospace', marginBottom: '4px', textAlign: 'left' } },
       { type: 'text', value: '----------------------------------------', style: { textAlign: 'center', fontSize: '11px', marginBottom: '6px' } }
     );
 
@@ -519,7 +521,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       const unitStr = unit.toFixed(2);
       const lineStr = lineTotal.toFixed(2);
       
-      const line = `${truncatedName.padEnd(itemCol)}  ${qtyStr.padStart(qtyCol)} ${unitStr.padStart(unitCol)} ${lineStr.padStart(lineCol)}`;
+      const line = `${truncatedName.padEnd(itemCol)} ${qtyStr.padStart(qtyCol)} ${unitStr.padStart(unitCol)} ${lineStr.padStart(lineCol)}`;
       printData.push({ 
         type: 'text', 
         value: line, 

@@ -109,7 +109,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               value={retailInput}
               onChange={(e) => setRetailInput(e.target.value.replace(/[^\d]/g, ''))}
               onKeyDown={(e) => { if (e.key === 'Enter') applyRetail(); }}
-              className="form-control form-control-sm"
+              className="form-control form-control-sm quantity-input"
               aria-label="Retail quantity"
               placeholder="e.g., 20"
             />
@@ -135,7 +135,7 @@ function ProductCard({ product, cartItems, onQuantityChange }) {
               value={wholesaleInput}
               onChange={(e) => setWholesaleInput(e.target.value.replace(/[^\d]/g, ''))}
               onKeyDown={(e) => { if (e.key === 'Enter') applyWholesale(); }}
-              className="form-control form-control-sm"
+              className="form-control form-control-sm quantity-input"
               aria-label="Wholesale quantity"
               placeholder="e.g., 20"
             />
@@ -657,20 +657,25 @@ export default function POS() {
     requestAnimationFrame(() => { try { if (searchInputRef.current) { searchInputRef.current.value = ''; searchInputRef.current.focus({ preventScroll: true }); } else focusSearchInput(); } catch (e) {} });
   }, [cartItemCount, dispatch, focusSearchInput]);
 
-  /* barcode handler: immediate add; clears input and focuses for next scan */
+  /* barcode handler: shows only the scanned product card and clears search input */
   const handleBarcodeScanned = async (barcode) => {
     try {
       const product = await indexedDb.getProductByBarcode(barcode);
-      if (!product) { toast.error(`No product found with barcode: ${barcode}`); return; }
+      if (!product) { 
+        toast.error(`No product found with barcode: ${barcode}`); 
+        return; 
+      }
 
       const priceType = defaultPriceType || 'Retail';
       await handleQuantityChange(product.id || product._id, priceType, 1, product);
 
+      // Display only the scanned product
       barcodeResultsRef.current = [product];
       setFilteredProducts([product]);
       setHasSearched(true);
       setSearchType('barcode');
 
+      // Clear the search input
       if (searchInputRef.current) try { searchInputRef.current.value = ''; } catch (e) {}
       setSearchTerm('');
       requestAnimationFrame(() => focusSearchInput());
@@ -729,7 +734,7 @@ export default function POS() {
         toast.success('Cart updated');
       } else {
         dispatch(addItemToCart({ product: { ...product, id: productId, priceType, price: product.price, priceAfterDiscount: product.priceAfterDiscount }, quantity: newQuantity }));
-        // CLEAR search input after item is added to cart (requested behavior)
+        // CLEAR search input after item is added to cart
         if (searchInputRef.current) {
           try { searchInputRef.current.value = ''; } catch (e) {}
         }
@@ -803,7 +808,6 @@ export default function POS() {
 
     const getCashierName = () => {
       if (!actualUser) return 'Staff';
-      // prefer structured names, fallback to username/email; then return only the first token (first name)
       const candidates = [
         actualUser.fullName,
         actualUser.full_name,
@@ -842,7 +846,6 @@ export default function POS() {
       phone: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', phoneNumber: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', email: actualUser?.email || ''
     };
 
-    // Mask customer phone for receipt output only
     const rawCustomerPhone = (paymentType === 'mpesa' || paymentType === 'both') ? (paymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
     const maskedCustomerPhone = rawCustomerPhone ? maskPhoneForReceipt(rawCustomerPhone) : 'Walk-in';
 
@@ -1067,6 +1070,17 @@ export default function POS() {
         .search-header-fixed .input-group { display:flex; gap:8px; align-items:center; }
         .search-header-fixed .form-control { flex:1 1 auto; min-width:0; }
         .search-header-fixed .btn { padding:6px 8px; height:36px; min-width:36px; font-size:0.9rem; line-height:1; }
+        
+        /* Remove number input arrows */
+        .quantity-input::-webkit-outer-spin-button,
+        .quantity-input::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .quantity-input[type=number] {
+          -moz-appearance: textfield;
+        }
+        
         @media (max-width:1199.98px) { .cart-sidebar { position: relative !important; max-height: none !important; margin-top: 20px; } }
         @media (min-width:1200px) { .col-xl-4 { flex: 0 0 40%; max-width: 40%; } .col-xl-8 { flex:0 0 60%; max-width:60%; } }
       `}</style>

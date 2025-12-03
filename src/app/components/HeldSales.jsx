@@ -1,6 +1,8 @@
 // src/components/HeldSales.jsx
-import React from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Modal, Button, ListGroup, Badge } from 'react-bootstrap';
+import CartItems from './CartItems';
+import PaymentForm from './PaymentForm';
 
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 
@@ -10,7 +12,8 @@ export default function HeldSales({
   heldSales = [],
   onHoldSale = () => {},
   onRetrieveSale = () => {},
-  onDeleteSale = () => {}
+  onDeleteSale = () => {},
+  onCheckoutSale = () => {}
 }) {
   // normalize heldSales: array | object map -> array
   let normalized = [];
@@ -21,13 +24,45 @@ export default function HeldSales({
 
   const safeHeldSales = normalized.filter(s => s && typeof s === 'object');
 
+  // local copy so user can edit (remove items) inside modal without touching storage
+  const [localSalesMap, setLocalSalesMap] = useState({}); // key -> sale object
+  // track payment state per sale (so each sale has independent paymentType/paymentData/currentOrderId)
+  const [paymentState, setPaymentState] = useState({}); // id -> { paymentType, paymentData, currentOrderId, processing }
+
+  // initialize local copies when modal opens or heldSales changes
+  useEffect(() => {
+    if (!show) return;
+    const map = {};
+    safeHeldSales.forEach((s, idx) => {
+      const id = s?.id ?? s?._id ?? s?.saleId ?? String(idx);
+      // deep clone to avoid accidental mutation
+      map[id] = JSON.parse(JSON.stringify({
+        ...s,
+        items: Array.isArray(s.items) ? s.items.slice() : []
+      }));
+    });
+    setLocalSalesMap(map);
+
+    const pmap = {};
+    Object.keys(map).forEach(id => {
+      const sale = map[id];
+      pmap[id] = {
+        paymentType: sale?.paymentType || sale?.payment?.method || 'cash',
+        paymentData: sale?.paymentData || sale?.payment || { cashAmount: '', mpesaPhone: '', mpesaAmount: '' },
+        currentOrderId: sale?.currentOrderId || null,
+        processing: false
+      };
+    });
+    setPaymentState(pmap);
+  }, [show, heldSales]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const getItemsArray = (sale) => {
     if (!sale) return [];
     const i = sale.items;
     return Array.isArray(i) ? i : [];
   };
 
-  const calculateTotal = (items) => {
+  const calculateTotal = useCallback((items) => {
     const arr = Array.isArray(items) ? items : [];
     return arr.reduce((sum, it) => {
       const price = it?.priceType === 'Retail'
@@ -36,21 +71,82 @@ export default function HeldSales({
       const qty = Number(it?.quantity) || 1;
       return sum + price * qty;
     }, 0);
-  };
+  }, []);
 
-  // Dev diagnostics (remove after root cause)
-  if (process.env.NODE_ENV !== 'production') {
-    if (!Array.isArray(heldSales)) {
-      // eslint-disable-next-line no-console
-      console.warn('HeldSales: non-array heldSales received (auto-normalized).', heldSales);
-    }
-    safeHeldSales.forEach((s, i) => {
-      if (s && s.items != null && !Array.isArray(s.items)) {
-        // eslint-disable-next-line no-console
-        console.warn(`HeldSales: sale.items not array at index ${i} (id:${s.id ?? s._id ?? s.saleId})`, s.items);
+  // remove an item from local sale (used by CartItems remove button)
+  const handleRemoveItemFromLocal = useCallback((saleId, cartKey, item) => {
+    setLocalSalesMap(prev => {
+      const copy = { ...prev };
+      const sale = copy[saleId];
+      if (!sale || !Array.isArray(sale.items)) return prev;
+      // find index by matching id and priceType (cartKey is formatted as `${itemId}_${priceType}`)
+      const [maybeId, maybeType] = (cartKey || '').split('_');
+      const idx = sale.items.findIndex(it => {
+        const itId = it.id || it._id || String(it.productId || '');
+        const itType = it.priceType;
+        return String(itId) === String(maybeId) && String(itType) === String(maybeType);
+      });
+      if (idx >= 0) {
+        sale.items.splice(idx, 1);
       }
+      copy[saleId] = { ...sale };
+      return copy;
     });
-  }
+  }, []);
+
+  const setPaymentForSale = useCallback((saleId, updater) => {
+    setPaymentState(prev => {
+      const copy = { ...prev };
+      const cur = copy[saleId] || { paymentType: 'cash', paymentData: { cashAmount: '', mpesaPhone: '', mpesaAmount: '' }, currentOrderId: null, processing: false };
+      const next = typeof updater === 'function' ? updater(cur) : { ...cur, ...updater };
+      copy[saleId] = next;
+      return copy;
+    });
+  }, []);
+
+  const handleCheckout = useCallback(async (saleId) => {
+    const sale = localSalesMap[saleId];
+    if (!sale) { return; }
+
+    const pstate = paymentState[saleId] || {};
+    const paymentType = pstate.paymentType || 'cash';
+    const paymentData = pstate.paymentData || { cashAmount: '', mpesaPhone: '', mpesaAmount: '' };
+
+    // validation mirrors cart logic (basic)
+    const total = calculateTotal(getItemsArray(sale));
+    if (!paymentType) { window.Toast?.error?.('Please select a payment method'); return; } // optional global toast
+    if (paymentType === 'cash') {
+      const cashVal = Number(paymentData.cashAmount);
+      if (!paymentData.cashAmount || Number.isNaN(cashVal) || cashVal < total) {
+        window.Toast?.error?.('Please enter a valid cash amount (>= total)');
+        return;
+      }
+    }
+    if (paymentType === 'mpesa' && (!paymentData.mpesaPhone || !String(paymentData.mpesaPhone).trim())) {
+      window.Toast?.error?.('Please enter M-Pesa phone number');
+      return;
+    }
+
+    // mark processing
+    setPaymentForSale(saleId, (s) => ({ ...s, processing: true }));
+
+    try {
+      // Hand off to parent: parent should restore sale to cart/store, then call existing checkout flows.
+      await onCheckoutSale(saleId, { paymentType, paymentData, sale });
+
+      // optional: close modal on success (parent can also choose)
+      // onHide();
+    } catch (err) {
+      // bubble up error via toast in parent; keep local state
+      // eslint-disable-next-line no-console
+      console.error('Held sale checkout failed', err);
+    } finally {
+      setPaymentForSale(saleId, (s) => ({ ...s, processing: false }));
+    }
+  }, [localSalesMap, paymentState, onCheckoutSale, calculateTotal, setPaymentForSale]);
+
+  // Helper: format id for display
+  const saleDisplayId = (sale, idx) => sale?.name || sale?.id || sale?._id || sale?.saleId || `Sale ${idx + 1}`;
 
   return (
     <Modal show={!!show} onHide={onHide} size="lg" centered>
@@ -71,12 +167,14 @@ export default function HeldSales({
           </div>
         ) : (
           <ListGroup>
-            {safeHeldSales.map((sale, idx) => {
-              const id = sale?.id ?? sale?._id ?? sale?.saleId ?? idx;
+            {safeHeldSales.map((origSale, idx) => {
+              const id = origSale?.id ?? origSale?._id ?? origSale?.saleId ?? String(idx);
+              const sale = localSalesMap[id] || origSale;
               const items = getItemsArray(sale);
               const total = calculateTotal(items);
               const ts = sale?.timestamp ? new Date(sale.timestamp) : null;
-              const displayName = sale?.name || `Sale ${idx + 1}`;
+              const displayName = saleDisplayId(sale, idx);
+              const pstate = paymentState[id] || { paymentType: 'cash', paymentData: { cashAmount: '', mpesaPhone: '', mpesaAmount: '' }, currentOrderId: null, processing: false };
 
               return (
                 <ListGroup.Item key={id} className="mb-2">
@@ -94,30 +192,51 @@ export default function HeldSales({
                     </div>
                   </div>
 
-                  {items.length > 0 && (
-                    <div className="mb-2 small text-muted">
-                      {items.slice(0, 3).map((it, i) => {
-                        const qty = Number(it?.quantity) || 1;
-                        const price = it?.priceType === 'Retail'
-                          ? Number(it?.price) || 0
-                          : Number(it?.priceAfterDiscount) || Number(it?.price) || 0;
-                        return <div key={i}>• {it?.name || it?.productName || 'Item'} x{qty} - {KSH(price * qty)}</div>;
-                      })}
-                      {items.length > 3 && <div className="text-muted fst-italic">... and {items.length - 3} more</div>}
-                    </div>
-                  )}
+                  {/* Items list - reuses CartItems component but hooked to local removal */}
+                  <div className="mb-3">
+                    <CartItems cart={items} onRemoveItem={(cartKey, item) => handleRemoveItemFromLocal(id, cartKey, item)} />
+                  </div>
+
+                  {/* Payment controls (mirrors PaymentForm behaviour) */}
+                  <div className="mb-3">
+                    <PaymentForm
+                      paymentType={pstate.paymentType}
+                      setPaymentType={(pt) => setPaymentForSale(id, (s) => ({ ...s, paymentType: pt }))}
+                      paymentData={pstate.paymentData}
+                      setPaymentData={(pd) => setPaymentForSale(id, (s) => ({ ...s, paymentData: pd }))}
+                      cartTotal={total}
+                      setCurrentOrderId={(oid) => setPaymentForSale(id, (s) => ({ ...s, currentOrderId: oid }))}
+                    />
+                  </div>
 
                   <div className="d-flex gap-2">
                     <Button
-                      variant="primary"
+                      variant="success"
                       size="sm"
                       className="flex-grow-1"
-                      onClick={() => { try { onRetrieveSale(id); } catch (e) {} }}
+                      onClick={() => handleCheckout(id)}
+                      disabled={pstate.processing || items.length === 0}
                     >
-                      <i className="fas fa-shopping-cart me-1" /> Retrieve
+                      {pstate.processing ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <i className="fas fa-check-circle me-1" /> Checkout - {KSH(total)}
+                        </>
+                      )}
                     </Button>
 
-                    {/* clearer, readable delete button */}
+                    <Button
+                      variant="outline-primary"
+                      size="sm"
+                      onClick={() => { try { onRetrieveSale(id); } catch (e) {} }}
+                    >
+                      <i className="fas fa-shopping-cart me-1" /> Restore to Cart
+                    </Button>
+
                     <Button
                       variant="danger"
                       size="sm"
@@ -135,7 +254,6 @@ export default function HeldSales({
 
       <Modal.Footer>
         <Button variant="secondary" onClick={onHide}>Close</Button>
-     
       </Modal.Footer>
     </Modal>
   );

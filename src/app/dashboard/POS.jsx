@@ -253,65 +253,69 @@ export default function POS() {
     }
   }, [cart, paymentType, paymentData, user, calculateCartTotal, maskPhoneForReceipt, dispatch, clearSearchAndProducts]);
 
-  const createOrder = useCallback(async () => {
-    if (!paymentType) { 
-      toast.error('Please select a payment method'); 
-      return; 
+  const createOrder = useCallback(async (overrides = {}) => {
+    const pt = overrides.paymentType ?? paymentType;
+    const pd = overrides.paymentData ?? paymentData;
+  
+    if (!pt) {
+      toast.error('Please select a payment method');
+      return;
     }
+  
     const currentCartTotal = calculateCartTotal();
-
-    if (paymentType === 'both') {
-      const cashVal = Number(paymentData.cashAmount) || 0;
-      const mpesaVal = Number(paymentData.mpesaAmount) || 0;
-      if (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0) { 
-        toast.error('Please enter M-Pesa phone number'); 
-        return; 
+  
+    if (pt === 'both') {
+      const cashVal = Number(pd.cashAmount) || 0;
+      const mpesaVal = Number(pd.mpesaAmount) || 0;
+      if (!pd.mpesaPhone || pd.mpesaPhone.trim().length === 0) {
+        toast.error('Please enter M-Pesa phone number');
+        return;
       }
-      if (mpesaVal <= 0) { 
-        toast.error('Please enter a valid M-Pesa amount'); 
-        return; 
+      if (mpesaVal <= 0) {
+        toast.error('Please enter a valid M-Pesa amount');
+        return;
       }
-      if ((cashVal + mpesaVal) < currentCartTotal) { 
-        toast.error('Total payment amount must be >= cart total'); 
-        return; 
+      if ((cashVal + mpesaVal) < currentCartTotal) {
+        toast.error('Total payment amount must be >= cart total');
+        return;
       }
     }
-
+  
     const payload = {
-      buyerPin: 'N/A', 
-      orderSource: 'POS', 
-      latitude: coords?.lat ?? 0, 
+      buyerPin: 'N/A',
+      orderSource: 'POS',
+      latitude: coords?.lat ?? 0,
       longitude: coords?.lng ?? 0,
-      orderItems: cart.map(ci => ({ 
-        productId: Number(ci.id || ci._id), 
-        quantity: ci.quantity, 
-        priceType: ci.priceType 
+      orderItems: cart.map(ci => ({
+        productId: Number(ci.id || ci._id),
+        quantity: ci.quantity,
+        priceType: ci.priceType
       })),
-      orderPaymentType: paymentType === 'cash' ? 'Cash' : paymentType === 'mpesa' ? 'Mpesa' : 'Hybrid',
-      phoneNumber: paymentType === 'mpesa' || paymentType === 'both' ? (paymentData.mpesaPhone || '').trim() : (user && user.phone) || 'N/A'
+      orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
+      phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A'
     };
-
-    if (paymentType === 'both') { 
-      payload.total = Number(paymentData.mpesaAmount) || 0; 
-      payload.cashAmount = Number(paymentData.cashAmount) || 0; 
-      payload.userId = (user && (user.phone || user.userName)) || ''; 
+  
+    if (pt === 'both') {
+      payload.total = Number(pd.mpesaAmount) || 0;
+      payload.cashAmount = Number(pd.cashAmount) || 0;
+      payload.userId = (user && (user.phone || user.userName)) || '';
     }
-    if (paymentType === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
-    if (paymentType === 'cash') payload.cashAmount = Number(paymentData.cashAmount) || 0;
-
+    if (pt === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
+    if (pt === 'cash') payload.cashAmount = Number(pd.cashAmount) || 0;
+  
     try {
       setProcessingOrder(true);
       toast.info('Creating order...');
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
-      if (orderId) { 
-        setCurrentOrderId(orderId); 
-        toast.success(`Order created. ID: ${orderId}`); 
-        if (paymentType !== 'both') await handleOrderCompletion(res.data); 
-        else toast.info('Hybrid order created. Confirm M-Pesa payment.'); 
-      } else { 
-        toast.success('Order created.'); 
-        if (paymentType !== 'both') await handleOrderCompletion(res.data); 
+      if (orderId) {
+        setCurrentOrderId(orderId);
+        toast.success(`Order created. ID: ${orderId}`);
+        if (pt !== 'both') await handleOrderCompletion(res.data);
+        else toast.info('Hybrid order created. Confirm M-Pesa payment.');
+      } else {
+        toast.success('Order created.');
+        if (pt !== 'both') await handleOrderCompletion(res.data);
       }
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Order failed';
@@ -319,54 +323,59 @@ export default function POS() {
       setProcessingOrder(false);
     }
   }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion]);
-
-  const completeCheckout = useCallback(async () => {
-    if (!paymentType) { 
-      toast.error('Please select a payment method'); 
-      return; 
+  
+  const completeCheckout = useCallback(async (overrides = {}) => {
+    const pt = overrides.paymentType ?? paymentType;
+    const pd = overrides.paymentData ?? paymentData;
+  
+    if (!pt) {
+      toast.error('Please select a payment method');
+      return;
     }
+  
     const currentCartTotal = calculateCartTotal();
-
-    if (paymentType === 'cash') {
-      const cashVal = Number(paymentData.cashAmount);
-      if (!paymentData.cashAmount || Number.isNaN(cashVal) || cashVal < currentCartTotal) { 
-        toast.error('Please enter a valid cash amount (>= total)'); 
-        return; 
+  
+    if (pt === 'cash') {
+      const cashVal = Number(pd.cashAmount);
+      if (!pd.cashAmount || Number.isNaN(cashVal) || cashVal < currentCartTotal) {
+        toast.error('Please enter a valid cash amount (>= total)');
+        return;
       }
     }
-    if (paymentType === 'mpesa' && (!paymentData.mpesaPhone || paymentData.mpesaPhone.trim().length === 0)) { 
-      toast.error('Please enter M-Pesa phone number'); 
-      return; 
+  
+    if (pt === 'mpesa' && (!pd.mpesaPhone || pd.mpesaPhone.trim().length === 0)) {
+      toast.error('Please enter M-Pesa phone number');
+      return;
     }
-
+  
     const payload = {
-      buyerPin: 'N/A', 
-      orderSource: 'POS', 
-      latitude: coords?.lat ?? 0, 
+      buyerPin: 'N/A',
+      orderSource: 'POS',
+      latitude: coords?.lat ?? 0,
       longitude: coords?.lng ?? 0,
-      orderItems: cart.map(ci => ({ 
-        productId: Number(ci.id || ci._id), 
-        quantity: ci.quantity, 
-        priceType: ci.priceType 
+      orderItems: cart.map(ci => ({
+        productId: Number(ci.id || ci._id),
+        quantity: ci.quantity,
+        priceType: ci.priceType
       })),
-      orderPaymentType: paymentType === 'cash' ? 'Cash' : 'Mpesa',
-      phoneNumber: paymentType === 'mpesa' ? paymentData.mpesaPhone.trim() : (user && user.phone) || 'N/A'
+      orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
+      phoneNumber: pt === 'mpesa' ? pd.mpesaPhone.trim() : (user && user.phone) || 'N/A'
     };
-
-    if (paymentType === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
-    if (paymentType === 'cash') payload.cashAmount = Number(paymentData.cashAmount) || 0;
-
+  
+    if (pt === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
+    if (pt === 'cash') payload.cashAmount = Number(pd.cashAmount) || 0;
+  
     try {
       setProcessingOrder(true);
-      toast.info(paymentType === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
+      toast.info(pt === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
-      if (paymentType === 'mpesa') {
-        if (orderId) { 
-          setCurrentOrderId(orderId); 
-          toast.success(`M-Pesa order created. ID: ${orderId}`); 
-        } else { 
-          toast.success('M-Pesa order created.'); 
+      if (pt === 'mpesa') {
+        if (orderId) {
+          setCurrentOrderId(orderId);
+          toast.success(`M-Pesa order created. ID: ${orderId}`);
+        } else {
+          toast.success('M-Pesa order created.');
         }
         setProcessingOrder(false);
       } else {
@@ -378,6 +387,61 @@ export default function POS() {
       setProcessingOrder(false);
     }
   }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion]);
+  
+
+  // place this AFTER your createOrder and completeCheckout declarations
+  const handleCheckoutSale = useCallback(async (saleId, opts = {}) => {
+    const sale = opts.sale || heldSalesService.retrieveHeldSale(saleId);
+    if (!sale) {
+      toast.error('Sale not found');
+      return;
+    }
+  
+    // restore cart (synchronous dispatches)
+    dispatch(clearCart());
+    if (Array.isArray(sale.items)) {
+      sale.items.forEach(it => {
+        dispatch(addItemToCart({
+          product: { ...it, id: it.id ?? it._id ?? it.productId },
+          quantity: Number(it.quantity) || 1
+        }));
+      });
+    }
+  
+    // gather overrides (do not rely on state re-render timing)
+    const overrides = {
+      paymentType: opts.paymentType ?? sale.paymentType ?? 'cash',
+      paymentData: opts.paymentData ?? sale.paymentData ?? { cashAmount: '', mpesaPhone: '', mpesaAmount: '' }
+    };
+  
+    // also set the UI state so cart shows correct values (optional, but keeps UX consistent)
+    setPaymentData(overrides.paymentData);
+    setPaymentType(overrides.paymentType);
+  
+    // ensure orderId cleared before checkout
+    setCurrentOrderId(null);
+  
+    // small delay to let store settle (the checkout functions use cart selector; this is just to be safe)
+    await new Promise(res => setTimeout(res, 0));
+  
+    try {
+      if (overrides.paymentType === 'both') {
+        await createOrder(overrides);
+      } else {
+        await completeCheckout(overrides);
+      }
+  
+      // delete held sale after successful checkout
+      try { heldSalesService.deleteHeldSale(saleId); } catch (e) {}
+      setHeldSales(heldSalesService.getAllHeldSales());
+      setShowHeldSales(false);
+    } catch (err) {
+      toast.error(err?.message || 'Checkout failed');
+    }
+  }, [dispatch, createOrder, completeCheckout]);
+  
+  
+
 
   const checkPaymentStatus = useCallback(async () => {
     if (!currentOrderId) { 
@@ -1135,6 +1199,7 @@ export default function POS() {
         heldSales={safeHeldSales}
         onRetrieveSale={handleRetrieveSale}
         onDeleteSale={handleDeleteSale}
+        onCheckoutSale={handleCheckoutSale} 
       />
 
 

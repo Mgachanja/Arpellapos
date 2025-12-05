@@ -63,11 +63,11 @@ export default function POS() {
   const [showHeldSales, setShowHeldSales] = useState(false);
   const [heldSales, setHeldSales] = useState([]);
 
-  // pinned scanned product (from barcode) — keeps the product card visible until user adds it
+  // pinned scanned product (from barcode) — keeps the product card visible until user adds it or TTL/manual clear
   const [scannedProduct, setScannedProduct] = useState(null);
 
   const dispatch = useDispatch();
-  const cart = useSelector(selectCart);
+  const cart = useSelector(selectCart) || [];
   const cartItemCount = useSelector(selectCartItemCount);
   const loading = useSelector(selectProductsLoading);
   const user = useSelector(selectUser);
@@ -75,6 +75,10 @@ export default function POS() {
   const searchInputRef = useRef(null);
   const scannerRef = useRef({ buffer: '', firstTime: 0, lastTime: 0, timer: null });
   const barcodeResultsRef = useRef(null);
+
+  // timer ref to auto-clear pinned scanned product after X ms
+  const scannedProductTimerRef = useRef(null);
+  const SCANNED_PRODUCT_TTL_MS = 15000; // 15s - adjust if needed
 
   const getInventoryId = useCallback((product) => {
     return product?.inventoryId || product?.inventory?.id || product?.inventory?._id || product?.inventory_id || product?.invId || product?.inventoryIdString || null;
@@ -96,7 +100,7 @@ export default function POS() {
   }, []);
 
   const calculateCartTotal = useCallback(() => {
-    return cart.reduce((total, item) => {
+    return (Array.isArray(cart) ? cart : []).reduce((total, item) => {
       const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
       return total + price * (item.quantity || 1);
     }, 0);
@@ -114,7 +118,7 @@ export default function POS() {
     setHasSearched(false); 
     setSearchType(''); 
     barcodeResultsRef.current = null;
-    setScannedProduct(null);
+    // NOTE: do NOT clear scannedProduct here — we keep the pinned product until explicit clear/add or TTL expiry
     requestAnimationFrame(() => { 
       try { 
         if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
@@ -134,7 +138,7 @@ export default function POS() {
   const handleOrderCompletion = useCallback(async (orderData) => {
     toast.success('Order completed');
 
-    const receiptItems = cart.map(ci => {
+    const receiptItems = (Array.isArray(cart) ? cart : []).map(ci => {
       const sellingPrice = ci.priceType === 'Retail' ? (ci.price || 0) : (ci.priceAfterDiscount || ci.price || 0);
       const quantity = ci.quantity || 1;
       const lineTotal = sellingPrice * quantity;
@@ -286,7 +290,7 @@ export default function POS() {
       orderSource: 'POS',
       latitude: coords?.lat ?? 0,
       longitude: coords?.lng ?? 0,
-      orderItems: cart.map(ci => ({
+      orderItems: (Array.isArray(cart) ? cart : []).map(ci => ({
         productId: Number(ci.id || ci._id),
         quantity: ci.quantity,
         priceType: ci.priceType
@@ -353,7 +357,7 @@ export default function POS() {
       orderSource: 'POS',
       latitude: coords?.lat ?? 0,
       longitude: coords?.lng ?? 0,
-      orderItems: cart.map(ci => ({
+      orderItems: (Array.isArray(cart) ? cart : []).map(ci => ({
         productId: Number(ci.id || ci._id),
         quantity: ci.quantity,
         priceType: ci.priceType
@@ -439,7 +443,7 @@ export default function POS() {
       toast.error(err?.message || 'Checkout failed');
     }
   }, [dispatch, createOrder, completeCheckout]);
-
+  
   const checkPaymentStatus = useCallback(async () => {
     if (!currentOrderId) { 
       toast.error('No order ID to check'); 
@@ -521,46 +525,135 @@ export default function POS() {
   }, [dispatch]);
 
   //
+  // ---------- SCANNED PRODUCT TTL helpers ----------
+  //
+  const clearScannedProductTimer = useCallback(() => {
+    if (scannedProductTimerRef.current) {
+      clearTimeout(scannedProductTimerRef.current);
+      scannedProductTimerRef.current = null;
+    }
+  }, []);
+
+  const startScannedProductTimer = useCallback(() => {
+    clearScannedProductTimer();
+    scannedProductTimerRef.current = setTimeout(() => {
+      barcodeResultsRef.current = null;
+      setScannedProduct(null);
+    }, SCANNED_PRODUCT_TTL_MS);
+  }, [clearScannedProductTimer]);
+
+  //
   // ---------- SCAN HANDLER (keeps scanned product pinned) ----------
   //
   const handleBarcodeScanned = useCallback(async (barcode) => {
     try {
-      const product = await indexedDb.getProductByBarcode(barcode);
-      if (!product) { 
-        toast.error(`No product found with barcode: ${barcode}`); 
-        return; 
+      const raw = await indexedDb.getProductByBarcode(barcode);
+      console.log('[SCAN] raw product from indexedDb:', raw, 'barcode:', barcode);
+
+      if (!raw) {
+        toast.error(`No product found with barcode: ${barcode}`);
+        return;
       }
 
-      // Pin the scanned product — this ensures the product card remains visible
-      setScannedProduct(product);
-      barcodeResultsRef.current = [product];
-      setFilteredProducts([product]);
+      // Very defensive normalization - try many common field names / nesting shapes
+      const normalized = {
+        id: raw.id ?? raw._id ?? raw.productId ?? raw.skuId ?? raw.sku ?? raw.inventoryId ?? raw.product_id ?? null,
+        _id: raw._id ?? raw.id ?? raw.productId ?? null,
+
+        name:
+          raw.name
+          ?? raw.productName
+          ?? raw.title
+          ?? raw.displayName
+          ?? raw.itemName
+          ?? raw.label
+          ?? (raw.product && (raw.product.name || raw.product.title))
+          ?? (raw.details && (raw.details.name || raw.details.title))
+          ?? (raw.data && (raw.data.name || raw.data.title))
+          ?? 'Unnamed product',
+
+        barcode:
+          raw.barcode ?? raw.sku ?? raw.upc ?? raw.ean ?? raw.code ?? raw.externalId ?? '',
+
+        // various price fallbacks
+        price: Number(
+          raw.price
+          ?? raw.retailPrice
+          ?? raw.unitPrice
+          ?? raw.sellingPrice
+          ?? (raw.prices && (raw.prices.retail ?? raw.prices.price ?? raw.prices[0]?.price))
+          ?? raw.price_value
+          ?? 0
+        ) || 0,
+
+        priceAfterDiscount: Number(
+          raw.priceAfterDiscount
+          ?? raw.discountedPrice
+          ?? raw.wholesalePrice
+          ?? raw.price_after_discount
+          ?? raw.discountPrice
+          ?? 0
+        ) || 0,
+
+        // Keep original object for debugging / edge cases
+        rawProduct: raw,
+        // include everything else so UI code can still access nested props if needed
+        ...raw
+      };
+
+      // Ensure id is string-friendly for DOM selectors
+      if (normalized.id === null || normalized.id === undefined) {
+        normalized.id = `scan-${Date.now()}`;
+      }
+
+      // pin the normalized product
+      setScannedProduct(normalized);
+      barcodeResultsRef.current = [normalized];
+      setFilteredProducts([normalized]);
       setHasSearched(true);
       setSearchType('barcode');
 
-      // Clear the search input visually but DO NOT allow debounced search to wipe the pinned product.
+      // Clear any visible text in search input (but keep internal searchTerm empty)
       if (searchInputRef.current) {
         try { searchInputRef.current.value = ''; } catch (e) {}
       }
-      // Keep internal searchTerm empty (but we handle empty-case in performSearch so it does not remove the pinned product)
       setSearchTerm('');
 
-      // Keep focus on search input for next scan
+      // start/refresh TTL timer
+      startScannedProductTimer();
+
+      // scroll the scanned product into view and focus its quantity input
       requestAnimationFrame(() => {
-        try {
-          if (searchInputRef.current) {
-            searchInputRef.current.focus({ preventScroll: true });
+        setTimeout(() => {
+          try {
+            const selector = `[data-product-id="${String(normalized.id)}"]`;
+            const el = document.querySelector(selector);
+            if (el && typeof el.scrollIntoView === 'function') {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              // focus first numeric input inside it
+              const qtyInput = el.querySelector('input.quantity-input');
+              if (qtyInput && typeof qtyInput.focus === 'function') {
+                qtyInput.focus();
+                qtyInput.select && qtyInput.select();
+              }
+            } else {
+              // fallback: scroll container to top
+              const container = document.querySelector('.products-container');
+              if (container) container.scrollTop = 0;
+            }
+          } catch (e) {
+            console.warn('[SCAN] scroll/focus failed', e);
           }
-        } catch (e) {}
+        }, 60);
       });
 
-      // Show quick success toast
-      toast.success(`${product.name} - Ready to add to cart`, { autoClose: 1800 });
+      toast.success(`${normalized.name} - Ready to add to cart`, { autoClose: 1800 });
     } catch (error) {
+      console.error('[SCAN] error', error);
       toast.error(`Failed to process barcode: ${error?.message || 'Unexpected error'}`);
       setLoadingProducts(new Set());
     }
-  }, []);
+  }, [startScannedProductTimer]);
 
   //
   // ---------- GLOBAL SCANNER (unchanged) ----------
@@ -639,7 +732,7 @@ export default function POS() {
   useEffect(() => {
     const handleCheckoutEnter = (e) => {
       if (e.key !== 'Enter') return;
-      if (!paymentType || cart.length === 0 || processingOrder) return;
+      if (!paymentType || (Array.isArray(cart) ? cart.length === 0 : true) || processingOrder) return;
       try { 
         e.preventDefault(); 
         e.stopPropagation(); 
@@ -726,20 +819,20 @@ export default function POS() {
     debouncedSearch(searchTerm); 
   }, [searchTerm, debouncedSearch]);
 
-  // when user types a search term we should remove the pinned scanned product
-  useEffect(() => {
-    if (searchTerm && searchTerm.trim().length > 0) {
-      barcodeResultsRef.current = null;
-      // remove pinned scanned product when user performs a manual search
-      if (scannedProduct) setScannedProduct(null);
-    }
-  }, [searchTerm, scannedProduct]);
+  // NOTE: we intentionally do NOT auto-clear scannedProduct when the user types
+  // so that the scanned product stays pinned until TTL, manual clear, or add-to-cart.
+
+  // wrapper to setSearchTerm (keeps scannedProduct pinned)
+  const handleSetSearchTerm = useCallback((val) => {
+    setSearchTerm(val);
+    // intentionally do NOT clear scannedProduct here
+  }, []);
 
   //
   // ---------- CART / ITEM ADDING (clear scanned product on add) ----------
   //
   const handleClearCart = useCallback(() => {
-    if (cartItemCount === 0) {
+    if ((cartItemCount || 0) === 0) {
       toast.info('Cart is already empty');
       requestAnimationFrame(() => { 
         try { 
@@ -768,13 +861,13 @@ export default function POS() {
 
   const handleQuantityChange = useCallback(async (productId, priceType, newQuantity, productData = null) => {
     try {
-      const product = productData || filteredProducts.find(p => (p.id || p._id) === productId);
+      const product = productData || (filteredProducts || []).find(p => (p.id || p._id) === productId);
       if (!product) { 
         toast.error('Product not found'); 
         return; 
       }
 
-      const existingCartItem = cart.find(item => (item.id || item._id) === productId && item.priceType === priceType);
+      const existingCartItem = (Array.isArray(cart) ? cart : []).find(item => (item.id || item._id) === productId && item.priceType === priceType);
 
       if (newQuantity === 0) {
         if (existingCartItem) {
@@ -858,7 +951,9 @@ export default function POS() {
       setProductLoading(productId, false);
       
       // AFTER adding/updating, clear the pinned scanned product and the search input
+      clearScannedProductTimer();
       setScannedProduct(null);
+      barcodeResultsRef.current = null;
       clearSearchAndProducts();
       
       // Keep focus on search input
@@ -875,7 +970,7 @@ export default function POS() {
       toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
       setProductLoading(productId, false);
     }
-  }, [filteredProducts, cart, getInventoryId, setProductLoading, dispatch, focusSearchInput, clearSearchAndProducts]);
+  }, [filteredProducts, cart, getInventoryId, setProductLoading, dispatch, focusSearchInput, clearSearchAndProducts, clearScannedProductTimer]);
 
   const handleRemoveItem = useCallback((cartKey, item) => {
     if (!cartKey) { 
@@ -1006,18 +1101,26 @@ export default function POS() {
   const currentCartTotal = calculateCartTotal();
   
   // Keep barcode results visible while search is empty OR if we have a pinned scannedProduct
-  const displayedProducts = (scannedProduct && !searchTerm.trim())
+  const displayedProducts = (scannedProduct && !String(searchTerm || '').trim())
     ? [scannedProduct]
-    : (barcodeResultsRef.current && !searchTerm.trim() ? barcodeResultsRef.current : (filteredProducts || []));
+    : (barcodeResultsRef.current && !String(searchTerm || '').trim() ? barcodeResultsRef.current : (filteredProducts || []));
 
   // Ensure heldSales is always an array
   const safeHeldSales = Array.isArray(heldSales) ? heldSales : [];
 
-  // wrapper to setSearchTerm (so we can clear scannedProduct when user types)
-  const handleSetSearchTerm = useCallback((val) => {
-    setSearchTerm(val);
-    if (val && val.trim().length > 0 && scannedProduct) setScannedProduct(null);
-  }, [scannedProduct]);
+  // cleanup scanned product timer on unmount
+  useEffect(() => {
+    return () => {
+      if (scannedProductTimerRef.current) {
+        clearTimeout(scannedProductTimerRef.current);
+        scannedProductTimerRef.current = null;
+      }
+      if (scannerRef.current?.timer) {
+        clearTimeout(scannerRef.current.timer);
+        scannerRef.current.timer = null;
+      }
+    };
+  }, []);
 
   return (
     <div className="container-fluid py-4" style={{ background: '#f8f9fa', minHeight: '100vh', maxWidth: '100%', overflow: 'hidden' }}>
@@ -1037,7 +1140,28 @@ export default function POS() {
             setDefaultPriceType={setDefaultPriceType} 
           />
 
-          <div className="products-container" style={{ height: 'calc(100vh - 280px)', overflowY: 'auto', paddingRight: 10 }}>
+          {/* Show pinned scanned product and allow manual clear */}
+          {scannedProduct && (
+            <div className="mb-2 d-flex align-items-center gap-2">
+              <div className="badge bg-info text-dark" style={{ padding: '8px 10px', fontSize: 14 }}>
+                <i className="fas fa-barcode me-1" /> {scannedProduct.name || 'Scanned item'}
+              </div>
+              <button 
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => {
+                  clearScannedProductTimer();
+                  setScannedProduct(null);
+                  barcodeResultsRef.current = null;
+                  clearSearchAndProducts();
+                  toast.info('Cleared scanned product');
+                }}
+              >
+                Clear scan
+              </button>
+            </div>
+          )}
+
+          <div className="products-container" style={{ height: 'calc(100vh - 320px)', overflowY: 'auto', paddingRight: 10 }}>
             <div className="row">
               <ProductsGrid 
                 hasSearched={hasSearched} 

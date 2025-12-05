@@ -439,9 +439,6 @@ export default function POS() {
       toast.error(err?.message || 'Checkout failed');
     }
   }, [dispatch, createOrder, completeCheckout]);
-  
-  
-
 
   const checkPaymentStatus = useCallback(async () => {
     if (!currentOrderId) { 

@@ -45,6 +45,7 @@ function useDebouncedCallback(fn, wait) {
 }
 
 export default function POS() {
+  const [pendingOrderData, setPendingOrderData] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
@@ -135,10 +136,15 @@ export default function POS() {
     return s.substring(0, idx) + '***' + s.substring(s.length - 3);
   }, []);
 
-  const handleOrderCompletion = useCallback(async (orderData) => {
+  const handleOrderCompletion = useCallback(async (orderData, cartSnapshot = null, paymentTypeSnapshot = null, paymentDataSnapshot = null) => {
     toast.success('Order completed');
-
-    const receiptItems = (Array.isArray(cart) ? cart : []).map(ci => {
+  
+    // Use provided snapshots or current state
+    const itemsToReceipt = cartSnapshot || cart;
+    const usedPaymentType = paymentTypeSnapshot || paymentType;
+    const usedPaymentData = paymentDataSnapshot || paymentData;
+  
+    const receiptItems = (Array.isArray(itemsToReceipt) ? itemsToReceipt : []).map(ci => {
       const sellingPrice = ci.priceType === 'Retail' ? (ci.price || 0) : (ci.priceAfterDiscount || ci.price || 0);
       const quantity = ci.quantity || 1;
       const lineTotal = sellingPrice * quantity;
@@ -156,11 +162,10 @@ export default function POS() {
         barcode: ci.barcode || '' 
       };
     });
-
+  
     const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
-    const currentCartTotal = calculateCartTotal();
     const actualUser = Array.isArray(user) ? user[0] : user;
-
+  
     const getCashierName = () => {
       if (!actualUser) return 'Staff';
       const candidates = [
@@ -172,12 +177,12 @@ export default function POS() {
         actualUser.username,
         actualUser.email
       ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
-
+  
       const chosen = candidates.length > 0 ? candidates[0] : 'Staff';
       const firstToken = (chosen.split(/\s+/)[0] || chosen).trim();
       return firstToken || 'Staff';
     };
-
+  
     const cashierName = getCashierName();
     const storeSettings = { 
       storeName: 'ARPELLA STORE LIMITED', 
@@ -186,25 +191,25 @@ export default function POS() {
       pin: 'P052336649L', 
       receiptFooter: 'Thank you for your business!' 
     };
-
+  
     const calculatePaymentDetails = () => {
       const paymentInfo = { cashAmount: 0, mpesaAmount: 0, change: 0 };
-      if (paymentType === 'cash') { 
-        paymentInfo.cashAmount = Number(paymentData.cashAmount) || 0; 
-        paymentInfo.change = Math.max(0, paymentInfo.cashAmount - currentCartTotal); 
-      } else if (paymentType === 'mpesa') { 
-        paymentInfo.mpesaAmount = Number(paymentData.mpesaAmount) || currentCartTotal; 
-      } else if (paymentType === 'both') { 
-        paymentInfo.cashAmount = Number(paymentData.cashAmount) || 0; 
-        paymentInfo.mpesaAmount = Number(paymentData.mpesaAmount) || 0; 
+      if (usedPaymentType === 'cash') { 
+        paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0; 
+        paymentInfo.change = Math.max(0, paymentInfo.cashAmount - cartTotalFromLines); 
+      } else if (usedPaymentType === 'mpesa') { 
+        paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || cartTotalFromLines; 
+      } else if (usedPaymentType === 'both') { 
+        paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0; 
+        paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || 0; 
         const totalPaid = paymentInfo.cashAmount + paymentInfo.mpesaAmount; 
-        paymentInfo.change = Math.max(0, totalPaid - currentCartTotal); 
+        paymentInfo.change = Math.max(0, totalPaid - cartTotalFromLines); 
       }
       return paymentInfo;
     };
-
+  
     const paymentDetails = calculatePaymentDetails();
-
+  
     const normalizedUser = {
       id: actualUser?.id || actualUser?._id || actualUser?.userId || null,
       fullName: cashierName, 
@@ -220,14 +225,14 @@ export default function POS() {
       phoneNumber: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', 
       email: actualUser?.email || ''
     };
-
-    const rawCustomerPhone = (paymentType === 'mpesa' || paymentType === 'both') ? (paymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
+  
+    const rawCustomerPhone = (usedPaymentType === 'mpesa' || usedPaymentType === 'both') ? (usedPaymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
     const maskedCustomerPhone = rawCustomerPhone ? maskPhoneForReceipt(rawCustomerPhone) : 'Walk-in';
-
+  
     const receiptData = {
       cart: receiptItems,
-      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 ? cartTotalFromLines : currentCartTotal,
-      paymentType: paymentType || 'cash',
+      cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 ? cartTotalFromLines : cartTotalFromLines,
+      paymentType: usedPaymentType || 'cash',
       paymentData: paymentDetails,
       user: normalizedUser, 
       cashier: normalizedUser,
@@ -236,18 +241,23 @@ export default function POS() {
       customerPhone: maskedCustomerPhone,
       storeSettings
     };
-
-    dispatch(clearCart());
-    setPaymentType(''); 
-    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
-    setCurrentOrderId(null); 
-    setProcessingOrder(false);
-    clearSearchAndProducts();
-
+  
+    // Only clear cart if not using snapshot
+    if (!cartSnapshot) {
+      dispatch(clearCart());
+      setPaymentType(''); 
+      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
+      setCurrentOrderId(null); 
+      
+      setProcessingOrder(false);
+      setPendingOrderData(null);
+      clearSearchAndProducts();
+    }
+  
     if (paymentDetails.change > 0) {
       toast.info(`Change: ${KSH(paymentDetails.change)}`, { autoClose: 5000, position: 'top-center' });
     }
-
+  
     try {
       const res = await printOrderReceipt(receiptData, null, storeSettings);
       if (res?.success) toast.success('Receipt printed successfully'); 
@@ -255,7 +265,19 @@ export default function POS() {
     } catch (err) {
       toast.error('Receipt printing failed - check printer');
     }
-  }, [cart, paymentType, paymentData, user, calculateCartTotal, maskPhoneForReceipt, dispatch, clearSearchAndProducts]);
+  
+    // Clean up after receipt printing for M-Pesa orders
+    if (cartSnapshot) {
+      dispatch(clearCart());
+      setPaymentType(''); 
+      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
+      setCurrentOrderId(null); 
+      setPendingOrderData(null);
+      setProcessingOrder(false);
+      setPendingOrderData(null);
+      clearSearchAndProducts();
+    }
+  }, [cart, paymentType, paymentData, user, maskPhoneForReceipt, dispatch, clearSearchAndProducts]);
 
   const createOrder = useCallback(async (overrides = {}) => {
     const pt = overrides.paymentType ?? paymentType;
@@ -310,16 +332,41 @@ export default function POS() {
     try {
       setProcessingOrder(true);
       toast.info('Creating order...');
+      
+      // Take snapshot BEFORE API call
+      const cartSnapshot = JSON.parse(JSON.stringify(cart));
+      const paymentTypeSnapshot = pt;
+      const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
+      
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
+      
       if (orderId) {
         setCurrentOrderId(orderId);
         toast.success(`Order created. ID: ${orderId}`);
-        if (pt !== 'both') await handleOrderCompletion(res.data);
-        else toast.info('Hybrid order created. Confirm M-Pesa payment.');
+        
+        if (pt !== 'both') {
+          await handleOrderCompletion(res.data);
+        } else {
+          setPendingOrderData({
+            orderData: res.data,
+            cartSnapshot,
+            paymentTypeSnapshot,
+            paymentDataSnapshot
+          });
+          toast.info('Hybrid order created. Confirm M-Pesa payment.');
+        }
       } else {
         toast.success('Order created.');
         if (pt !== 'both') await handleOrderCompletion(res.data);
+        else {
+          setPendingOrderData({
+            orderData: res.data,
+            cartSnapshot,
+            paymentTypeSnapshot,
+            paymentDataSnapshot
+          });
+        }
       }
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Order failed';
@@ -372,8 +419,15 @@ export default function POS() {
     try {
       setProcessingOrder(true);
       toast.info(pt === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
+      
+      // Take snapshot BEFORE API call
+      const cartSnapshot = JSON.parse(JSON.stringify(cart));
+      const paymentTypeSnapshot = pt;
+      const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
+      
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
+      
       if (pt === 'mpesa') {
         if (orderId) {
           setCurrentOrderId(orderId);
@@ -381,6 +435,14 @@ export default function POS() {
         } else {
           toast.success('M-Pesa order created.');
         }
+        
+        setPendingOrderData({
+          orderData: res.data,
+          cartSnapshot,
+          paymentTypeSnapshot,
+          paymentDataSnapshot
+        });
+        
         setProcessingOrder(false);
       } else {
         await handleOrderCompletion(res.data);
@@ -449,6 +511,7 @@ export default function POS() {
       toast.error('No order ID to check'); 
       return; 
     }
+    
     try {
       setCheckingPayment(true); 
       toast.info('Checking payment status...');
@@ -457,7 +520,7 @@ export default function POS() {
       try {
         const response = await api.get(`/payments/${currentOrderId}`);
         const remoteData = response?.data || {};
-        if (paymentType === 'mpesa') {
+        if (paymentType === 'mpesa' || paymentType === 'both') {
           const statusVal = remoteData?.status || remoteData?.paymentStatus || remoteData?.state || null;
           if (statusVal && String(statusVal).toLowerCase() === 'completed') paid = true;
         } else {
@@ -469,12 +532,12 @@ export default function POS() {
           }
         }
       } catch (err) { /* ignore */ }
-
+  
       if (!paid) {
         try {
           const orderResp = await api.get(`/order/${currentOrderId}`);
           const od = orderResp?.data || {};
-          if (paymentType === 'mpesa') {
+          if (paymentType === 'mpesa' || paymentType === 'both') {
             const statusVal = od?.status || od?.paymentStatus || (od.payment && od.payment.status) || null;
             if (statusVal && String(statusVal).toLowerCase() === 'completed') paid = true;
           } else {
@@ -489,10 +552,21 @@ export default function POS() {
           }
         } catch (err) { /* ignore */ }
       }
-
+  
       if (paid) { 
-        toast.success('Payment confirmed'); 
-        await handleOrderCompletion({ orderNumber: currentOrderId }); 
+        toast.success('Payment confirmed');
+        
+        // Use pending order data for receipt printing
+        if (pendingOrderData) {
+          await handleOrderCompletion(
+            pendingOrderData.orderData,
+            pendingOrderData.cartSnapshot,
+            pendingOrderData.paymentTypeSnapshot,
+            pendingOrderData.paymentDataSnapshot
+          );
+        } else {
+          await handleOrderCompletion({ orderNumber: currentOrderId });
+        }
       } else {
         toast.warning('Payment not confirmed yet');
       }
@@ -501,7 +575,7 @@ export default function POS() {
     } finally {
       setCheckingPayment(false);
     }
-  }, [currentOrderId, paymentType, handleOrderCompletion]);
+  }, [currentOrderId, paymentType, pendingOrderData, handleOrderCompletion]);
 
   // Load held sales on mount
   useEffect(() => {
@@ -845,6 +919,7 @@ export default function POS() {
     dispatch(clearCart());
     toast.success('Cart cleared');
     setCurrentOrderId(null); 
+    setPendingOrderData(null);
     setPaymentType(''); 
     setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
     requestAnimationFrame(() => { 
@@ -1036,7 +1111,7 @@ export default function POS() {
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
       setCurrentOrderId(null);
-      
+      setPendingOrderData(null);
       toast.success(`${saleName} held successfully`);
       clearSearchAndProducts();
     } catch (error) {

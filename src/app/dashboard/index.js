@@ -1,18 +1,19 @@
 // src/app/dashboard/index.js
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import Offcanvas from 'react-bootstrap/Offcanvas';
-import { MdPointOfSale, MdListAlt, MdBarChart, MdPerson, MdMenu, MdPrint } from 'react-icons/md';
+import {
+  MdPointOfSale,
+  MdListAlt,
+  MdBarChart,
+  MdPerson,
+  MdMenu,
+  MdPrint
+} from 'react-icons/md';
 import logo from '../../assets/logo.jpeg';
-import { useSelector, useDispatch } from 'react-redux';
-import { selectUser, logout as logoutAction } from '../../redux/slices/userSlice';
-
-/**
- * Dashboard layout with optional auto-logout on inactivity.
- *
- * The auto-logout feature is implemented below but **not activated** by default.
- * To re-enable it, uncomment the <AutoLogout ... /> line in the JSX where indicated.
- */
+import { useSelector } from 'react-redux';
+import { selectUser } from '../../redux/slices/userSlice';
+import { subscribe as subscribeToOrderPoller, clearNewFlag } from '../../services/orderPoller';
 
 const COLORS = {
   tea: '#EAE2D4',
@@ -23,13 +24,14 @@ const COLORS = {
 };
 
 export default function DashboardLayout() {
-  const dispatch = useDispatch();
-  const navigate = useNavigate();
   const user = useSelector(selectUser);
+  const location = useLocation();
 
-  const [sidebarOpen, setSidebarOpen] = useState(false); // mobile offcanvas
-  const [collapsed, setCollapsed] = useState(false); // desktop collapsed
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' ? window.innerWidth >= 992 : true);
+  const [hasNewOrders, setHasNewOrders] = useState(false);
+  const [newOrdersCount, setNewOrdersCount] = useState(0);
 
   const SIDEBAR_WIDTH = 260;
   const COLLAPSED_WIDTH = 76;
@@ -44,221 +46,63 @@ export default function DashboardLayout() {
     if (!isDesktop) setCollapsed(false);
   }, [isDesktop]);
 
-  function RenderNavLink({ to, Icon, label }) {
+  // Subscribe to order poller for new order notifications
+  useEffect(() => {
+    const unsubscribe = subscribeToOrderPoller((event) => {
+      if (event.type === 'new') {
+        setHasNewOrders(true);
+        setNewOrdersCount(event.count || 1);
+      } else if (event.type === 'state') {
+        setHasNewOrders(event.hasNew);
+        setNewOrdersCount(event.count || 0);
+      } else if (event.type === 'cleared') {
+        setHasNewOrders(false);
+        setNewOrdersCount(0);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  // Clear new orders flag when navigating to orders page
+  useEffect(() => {
+    if (location.pathname.includes('/orders')) {
+      if (hasNewOrders) {
+        clearNewFlag();
+        setHasNewOrders(false);
+        setNewOrdersCount(0);
+      }
+    }
+  }, [location.pathname, hasNewOrders]);
+
+  function RenderNavLink({ to, Icon, label, badge }) {
     return (
       <NavLink
         to={to}
         className={({ isActive }) =>
-          `d-flex align-items-center gap-3 nav-link-custom ${isActive ? 'active' : ''}`
+          `d-flex align-items-center gap-3 nav-link-custom ${isActive ? 'active' : ''} ${badge ? 'nav-link-with-badge' : ''}`
         }
         title={label}
         style={({ isActive }) => ({
           textDecoration: 'none',
           color: isActive ? '#fff' : '#3d2b1f',
+          position: 'relative'
         })}
       >
         <div className="nav-icon" aria-hidden>
           <Icon size={20} />
+          {badge && badge > 0 && (
+            <span className="nav-badge">{badge > 99 ? '99+' : badge}</span>
+          )}
         </div>
         <div className="nav-label">{label}</div>
       </NavLink>
     );
   }
 
-  /* ----------------- AutoLogout component (embedded but optional) ----------------- */
-  function AutoLogout({ timeoutMs = 30 * 60 * 1000, warningMs = 60 * 1000 }) {
-    const dispatch = useDispatch();
-    const navigate = useNavigate();
-    const [showWarning, setShowWarning] = useState(false);
-    const [secondsLeft, setSecondsLeft] = useState(0);
-    const warningTimerRef = useRef(null);
-    const logoutTimerRef = useRef(null);
-    const countdownTimerRef = useRef(null);
-    const lastActivityKey = 'arpella:lastActivity';
-
-    const now = () => Date.now();
-
-    const setLastActivity = useCallback((ts = now()) => {
-      try {
-        localStorage.setItem(lastActivityKey, String(ts));
-      } catch (e) {
-        // ignore storage errors
-      }
-    }, []);
-
-    const getLastActivity = useCallback(() => {
-      try {
-        const v = localStorage.getItem(lastActivityKey);
-        return v ? Number(v) : null;
-      } catch {
-        return null;
-      }
-    }, []);
-
-    const clearAll = useCallback(() => {
-      if (warningTimerRef.current) { clearTimeout(warningTimerRef.current); warningTimerRef.current = null; }
-      if (logoutTimerRef.current) { clearTimeout(logoutTimerRef.current); logoutTimerRef.current = null; }
-      if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null; }
-      setShowWarning(false);
-      setSecondsLeft(0);
-    }, []);
-
-    const performLogout = useCallback(() => {
-      clearAll();
-      dispatch(logoutAction());
-      navigate('/login', { replace: true });
-    }, [dispatch, navigate, clearAll]);
-
-    const scheduleTimers = useCallback((lastTs) => {
-      clearAll();
-      const elapsed = Math.max(0, now() - (lastTs || now()));
-      const timeLeft = Math.max(0, timeoutMs - elapsed);
-
-      if (timeLeft <= 0) {
-        performLogout();
-        return;
-      }
-
-      const showWarningIn = Math.max(0, timeLeft - warningMs);
-
-      logoutTimerRef.current = setTimeout(() => {
-        clearAll();
-        performLogout();
-      }, timeLeft);
-
-      if (warningMs > 0 && timeLeft <= warningMs) {
-        setShowWarning(true);
-        const actualSecondsLeft = Math.ceil(timeLeft / 1000);
-        setSecondsLeft(actualSecondsLeft);
-
-        countdownTimerRef.current = setInterval(() => {
-          setSecondsLeft((s) => {
-            if (s <= 1) {
-              clearAll();
-              performLogout();
-              return 0;
-            }
-            return s - 1;
-          });
-        }, 1000);
-      } else if (warningMs > 0) {
-        warningTimerRef.current = setTimeout(() => {
-          setShowWarning(true);
-          const actualSecondsLeft = Math.ceil(warningMs / 1000);
-          setSecondsLeft(actualSecondsLeft);
-
-          countdownTimerRef.current = setInterval(() => {
-            setSecondsLeft((s) => {
-              if (s <= 1) {
-                clearAll();
-                performLogout();
-                return 0;
-              }
-              return s - 1;
-            });
-          }, 1000);
-        }, showWarningIn);
-      }
-    }, [clearAll, performLogout, timeoutMs, warningMs]);
-
-    const resetActivity = useCallback((ts = now()) => {
-      setLastActivity(ts);
-      scheduleTimers(ts);
-    }, [setLastActivity, scheduleTimers]);
-
-    const activityHandler = useCallback(() => resetActivity(now()), [resetActivity]);
-
-    const storageHandler = useCallback((ev) => {
-      if (!ev.key) return;
-      if (ev.key === lastActivityKey) {
-        const last = getLastActivity();
-        if (last) scheduleTimers(last);
-      }
-    }, [getLastActivity, scheduleTimers]);
-
-    useEffect(() => {
-      if (!user) {
-        return () => {};
-      }
-
-      resetActivity(now());
-
-      const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll', 'wheel'];
-      events.forEach((name) => window.addEventListener(name, activityHandler, { passive: true }));
-
-      const onVisibility = () => {
-        if (document.visibilityState === 'visible') {
-          const last = getLastActivity();
-          if (last) scheduleTimers(last);
-          else resetActivity(now());
-        }
-      };
-      document.addEventListener('visibilitychange', onVisibility);
-
-      window.addEventListener('storage', storageHandler);
-
-      return () => {
-        events.forEach((name) => window.removeEventListener(name, activityHandler));
-        document.removeEventListener('visibilitychange', onVisibility);
-        window.removeEventListener('storage', storageHandler);
-        clearAll();
-      };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user, activityHandler, storageHandler, resetActivity, scheduleTimers, getLastActivity, clearAll]);
-
-    useEffect(() => {
-      if (!user) {
-        clearAll();
-      }
-    }, [user, clearAll]);
-
-    const staySignedIn = () => {
-      clearAll();
-      resetActivity(now());
-    };
-
-    return (
-      <>
-        {showWarning && user && (
-          <div aria-live="polite" aria-atomic="true">
-            <div className="auto-logout-modal-backdrop" style={{
-              position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(0,0,0,0.35)'
-            }}>
-              <div style={{
-                width: 420,
-                maxWidth: '92%',
-                background: '#fff',
-                borderRadius: 8,
-                padding: 18,
-                boxShadow: '0 8px 30px rgba(0,0,0,0.2)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontWeight: 700 }}>Session expiring</div>
-                  <div style={{ fontSize: 12, color: '#666' }}>{user[0]?.firstName || user?.userName || ''}</div>
-                </div>
-
-                <div style={{ color: '#333', marginBottom: 14 }}>
-                  No activity detected. You will be logged out in <strong>{secondsLeft} second{secondsLeft !== 1 ? 's' : ''}</strong>.
-                </div>
-
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button className="btn btn-outline-secondary" onClick={performLogout}>Log out now</button>
-                  <button className="btn" style={{ background: COLORS.orange, color: '#fff' }} onClick={staySignedIn}>Stay signed in</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </>
-    );
-  } // end AutoLogout
-
-  /* ----------------- render layout ----------------- */
-
   return (
     <div className="position-relative" style={{ minHeight: '100vh', backgroundColor: COLORS.bg }}>
-      {/* Floating hamburger (desktop toggles collapse, mobile opens offcanvas) */}
+      {/* Floating hamburger / collapse button */}
       <button
         aria-label="Toggle sidebar"
         onClick={() => {
@@ -314,11 +158,16 @@ export default function DashboardLayout() {
         {collapsed && <div style={{ height: '60px' }}></div>}
 
         <nav className="d-flex flex-column" style={{ gap: 10, paddingTop: 6 }}>
-          <RenderNavLink to="pos" Icon={MdPointOfSale} label="Point of Sale" />
-          <RenderNavLink to="orders" Icon={MdListAlt} label="Orders" />
-          <RenderNavLink to="reports" Icon={MdBarChart} label="Reports" />
+          <RenderNavLink to="/app/dashboard/pos" Icon={MdPointOfSale} label="Point of Sale" />
+          <RenderNavLink 
+            to="/app/dashboard/orders" 
+            Icon={MdListAlt} 
+            label="Orders" 
+            badge={hasNewOrders ? newOrdersCount : 0}
+          />
+          <RenderNavLink to="/app/dashboard/reports" Icon={MdBarChart} label="Reports" />
 
-          {/* Thermal settings link under Reports - use absolute path so routing resolves correctly */}
+          {/* Thermal settings link uses absolute path */}
           <NavLink
             to="/app/dashboard/thermal-settings"
             className="d-flex align-items-center gap-3 nav-link-custom"
@@ -332,7 +181,6 @@ export default function DashboardLayout() {
           </NavLink>
         </nav>
 
-        {/* Branding image moved to bottom */}
         <div style={{ marginTop: 'auto' }}>
           <div
             style={{
@@ -376,17 +224,39 @@ export default function DashboardLayout() {
         </Offcanvas.Header>
         <Offcanvas.Body style={{ backgroundColor: COLORS.tea }}>
           <div className="d-flex flex-column gap-2">
-            <NavLink to="pos" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light" style={{ color: '#3d2b1f', borderRadius: 8 }}>
+            <NavLink to="/app/dashboard/pos" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light" style={{ color: '#3d2b1f', borderRadius: 8 }}>
               <MdPointOfSale size={18} /> <span>Point of Sale</span>
             </NavLink>
-            <NavLink to="orders" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light" style={{ color: '#3d2b1f', borderRadius: 8 }}>
+
+            <NavLink to="/app/dashboard/orders" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light position-relative" style={{ color: '#3d2b1f', borderRadius: 8 }}>
               <MdListAlt size={18} /> Orders
+              {hasNewOrders && newOrdersCount > 0 && (
+                <span 
+                  style={{
+                    position: 'absolute',
+                    top: -8,
+                    right: -8,
+                    backgroundColor: '#ff4444',
+                    color: 'white',
+                    borderRadius: '50%',
+                    width: 24,
+                    height: 24,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 11,
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {newOrdersCount > 99 ? '99+' : newOrdersCount}
+                </span>
+              )}
             </NavLink>
-            <NavLink to="reports" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light" style={{ color: '#3d2b1f', borderRadius: 8 }}>
+
+            <NavLink to="/app/dashboard/reports" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light" style={{ color: '#3d2b1f', borderRadius: 8 }}>
               <MdBarChart size={18} /> Reports
             </NavLink>
 
-            {/* Thermal settings link in mobile offcanvas - absolute path */}
             <NavLink to="/app/dashboard/thermal-settings" onClick={() => setSidebarOpen(false)} className="d-flex align-items-center gap-2 text-start btn btn-light" style={{ color: '#3d2b1f', borderRadius: 8 }}>
               <MdPrint size={18} /> Thermal Settings
             </NavLink>
@@ -404,11 +274,9 @@ export default function DashboardLayout() {
         </Offcanvas.Body>
       </Offcanvas>
 
-      {/* Main content area - With left margin to account for fixed sidebar */}
+      {/* Main content area */}
       <div className="d-flex flex-column" style={{ minHeight: '100vh', marginLeft: isDesktop ? (collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH) : 0 }}>
-        {/* Top Header */}
         <header className="sticky-top" style={{ borderBottom: '1px solid rgba(0,0,0,0.06)', backgroundColor: COLORS.panel, boxShadow: '0 2px 4px rgba(0,0,0,0.05)', zIndex: 999 }}>
-          {/* Add left padding so floating hamburger doesn't overlap the title */}
           <div className="d-flex align-items-center justify-content-between px-3 py-3" style={{ paddingLeft: 70 }}>
             <div className="d-flex align-items-center gap-3">
               <h4 className="mb-0 fw-bold" style={{ color: '#3d2b1f', fontSize: '1.05rem' }}>Arpella</h4>
@@ -418,25 +286,19 @@ export default function DashboardLayout() {
               <div className="d-flex align-items-center gap-2 px-3 py-2 rounded" style={{ backgroundColor: 'rgba(214, 195, 164, 0.2)', border: '1px solid rgba(214, 195, 164, 0.3)'}}>
                 <MdPerson size={20} style={{ color: '#3d2b1f' }} />
                 <span style={{ fontWeight: 500, color: '#3d2b1f', fontSize: '0.95rem' }}>
-                  {user[0]?.firstName ? `${user[0].firstName} ${user[0].lastName || ''}`.trim() : (user[0]?.userName || 'Arpella POS')}
+                  {Array.isArray(user) ? (user[0]?.firstName ? `${user[0].firstName} ${user[0].lastName || ''}`.trim() : (user[0]?.userName || 'Arpella POS')) : (user?.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : (user?.userName || 'Arpella POS'))}
                 </span>
               </div>
             </div>
           </div>
         </header>
 
-        {/* Main content */}
         <main className="flex-grow-1" style={{ overflow: 'auto', minHeight: 'calc(100vh - 70px)', backgroundColor: COLORS.bg, padding: 18 }}>
-          {/* AutoLogout is implemented but currently disabled.
-              To enable the inactivity auto-logout, uncomment the line below. */}
-          { /* <AutoLogout timeoutMs={30 * 60 * 1000} warningMs={60 * 1000} /> */ }
           <Outlet />
         </main>
       </div>
 
-      {/* Styles for nav appearance; kept inline to avoid touching other files */}
-      <style jsx>{`
-        /* base nav link */
+      <style>{`
         .nav-link-custom {
           transition: all 200ms ease;
           padding: 8px 12px;
@@ -446,7 +308,6 @@ export default function DashboardLayout() {
           margin: 2px 0;
         }
 
-        /* icon container */
         .nav-icon {
           width: 36px;
           height: 36px;
@@ -457,34 +318,67 @@ export default function DashboardLayout() {
           background: transparent;
           flex-shrink: 0;
           transition: all 200ms ease;
+          position: relative;
         }
 
-        /* label text */
+        .nav-badge {
+          position: absolute;
+          top: -6px;
+          right: -6px;
+          background: #ff4444;
+          color: white;
+          border-radius: 10px;
+          min-width: 20px;
+          height: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: bold;
+          padding: 0 5px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+          z-index: 1;
+        }
+
+        .nav-link-with-badge {
+          animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% {
+            box-shadow: 0 0 0 0 rgba(255, 68, 68, 0);
+          }
+          50% {
+            box-shadow: 0 0 0 8px rgba(255, 68, 68, 0.2);
+          }
+        }
+
         .nav-label {
           font-weight: 600;
           transition: opacity 200ms ease, transform 200ms ease;
           font-size: 0.95rem;
         }
 
-        /* CLEAN ACTIVE STATE - Clear blue background with white text */
         .nav-link-custom.active {
           background: ${COLORS.blue} !important;
           color: #ffffff !important;
           box-shadow: 0 4px 12px rgba(70,130,180,0.3);
         }
 
-        /* active icon - white icon on blue background */
         .nav-link-custom.active .nav-icon {
           background: rgba(255,255,255,0.15);
           color: #ffffff;
         }
 
-        /* active label - white text */
         .nav-link-custom.active .nav-label {
           color: #ffffff !important;
         }
 
-        /* COLLAPSED ACTIVE STATE - No background, orange icon only */
+        .nav-link-custom.active .nav-badge {
+          background: #ffffff;
+          color: ${COLORS.blue};
+        }
+
         aside[data-collapsed="true"] .nav-link-custom.active {
           background: transparent !important;
           box-shadow: none !important;
@@ -495,7 +389,6 @@ export default function DashboardLayout() {
           color: ${COLORS.orange} !important;
         }
 
-        /* hover state - subtle gray background */
         .nav-link-custom:hover:not(.active) {
           background: rgba(0,0,0,0.05);
           text-decoration: none;
@@ -505,16 +398,6 @@ export default function DashboardLayout() {
           background: rgba(0,0,0,0.08);
         }
 
-        /* Remove hover effects when collapsed */
-        aside[data-collapsed="true"] .nav-link-custom:hover:not(.active) {
-          background: transparent;
-        }
-
-        aside[data-collapsed="true"] .nav-link-custom:hover:not(.active) .nav-icon {
-          background: transparent;
-        }
-
-        /* collapsed (desktop) - hide labels and center icons */
         aside[data-collapsed="true"] .nav-label {
           opacity: 0;
           transform: translateX(-6px);
@@ -527,14 +410,6 @@ export default function DashboardLayout() {
           padding: 8px 4px;
           margin: 2px 4px;
           width: calc(100% - 8px);
-        }
-        aside[data-collapsed="true"] .nav-icon {
-          margin: 0;
-        }
-
-        /* small responsive tweaks */
-        @media (max-width: 991px) {
-          .nav-label { display: inline-block !important; opacity: 1 !important; transform: none !important; }
         }
       `}</style>
     </div>

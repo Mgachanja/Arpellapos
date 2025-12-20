@@ -2,7 +2,7 @@
   "name": "arpellapos",
   "productName": "Apella POS",
   "description": "Arpella store desktop POS",
-  "version": "1.0.15",
+  "version": "1.1.0",
   "private": true,
   "main": "main.js",
   "homepage": ".",

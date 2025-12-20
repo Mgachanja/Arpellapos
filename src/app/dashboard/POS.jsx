@@ -339,6 +339,38 @@ export default function POS() {
       const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
       
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+      try {
+        const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
+        const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
+        const usedPaymentType = paymentTypeSnapshot || paymentType;
+        const usedPaymentData = paymentDataSnapshot || paymentData;
+        // compute totalPaid and status
+        const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
+          const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
+          return s + price * (it.quantity || 1);
+        }, 0);
+        const cash = Number(usedPaymentData?.cashAmount) || 0;
+        const mpesa = Number(usedPaymentData?.mpesaAmount) || 0;
+        const totalPaid = usedPaymentType === 'cash' ? cash : usedPaymentType === 'mpesa' ? mpesa : cash + mpesa;
+        const status = totalPaid >= cartTotal ? 'paid' : 'pending';
+      
+        const localOrder = {
+          orderId,
+          orderData: res.data || {},
+          cart: cartSnap,
+          cartTotal,
+          paymentType: usedPaymentType,
+          paymentData: usedPaymentData,
+          status,
+          createdAt: Date.now()
+        };
+      
+        await indexedDb.putOrder(localOrder);
+        // optional: toast or UI update
+        toast.info('Order cached locally');
+      } catch (err) {
+        console.warn('Failed to write order to indexedDb', err);
+      }
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
       
       if (orderId) {
@@ -426,6 +458,38 @@ export default function POS() {
       const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
       
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+      try {
+        const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
+        const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
+        const usedPaymentType = paymentTypeSnapshot || paymentType;
+        const usedPaymentData = paymentDataSnapshot || paymentData;
+        // compute totalPaid and status
+        const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
+          const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
+          return s + price * (it.quantity || 1);
+        }, 0);
+        const cash = Number(usedPaymentData?.cashAmount) || 0;
+        const mpesa = Number(usedPaymentData?.mpesaAmount) || 0;
+        const totalPaid = usedPaymentType === 'cash' ? cash : usedPaymentType === 'mpesa' ? mpesa : cash + mpesa;
+        const status = totalPaid >= cartTotal ? 'paid' : 'pending';
+      
+        const localOrder = {
+          orderId,
+          orderData: res.data || {},
+          cart: cartSnap,
+          cartTotal,
+          paymentType: usedPaymentType,
+          paymentData: usedPaymentData,
+          status,
+          createdAt: Date.now()
+        };
+      
+        await indexedDb.putOrder(localOrder);
+        // optional: toast or UI update
+        toast.info('Order cached locally');
+      } catch (err) {
+        console.warn('Failed to write order to indexedDb', err);
+      }
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
       
       if (pt === 'mpesa') {

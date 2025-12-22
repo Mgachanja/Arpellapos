@@ -27,9 +27,14 @@ export default function DashboardLayout() {
   const user = useSelector(selectUser);
   const location = useLocation();
 
+  // determine initial desktop state safely (SSR-safe)
+  const initialIsDesktop = typeof window !== 'undefined' ? window.innerWidth >= 992 : true;
+
+  // default collapsed when on desktop
+  const [isDesktop, setIsDesktop] = useState(initialIsDesktop);
+  const [collapsed, setCollapsed] = useState(initialIsDesktop ? true : false);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' ? window.innerWidth >= 992 : true);
   const [hasNewOrders, setHasNewOrders] = useState(false);
   const [newOrdersCount, setNewOrdersCount] = useState(0);
 
@@ -42,8 +47,10 @@ export default function DashboardLayout() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // If the viewport becomes mobile, force expanded sidebar state off (use offcanvas)
   useEffect(() => {
     if (!isDesktop) setCollapsed(false);
+    // when switching to desktop, we keep the previous collapsed state (default was collapsed)
   }, [isDesktop]);
 
   // Subscribe to order poller for new order notifications
@@ -277,7 +284,7 @@ export default function DashboardLayout() {
       {/* Main content area */}
       <div className="d-flex flex-column" style={{ minHeight: '100vh', marginLeft: isDesktop ? (collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH) : 0 }}>
         <header className="sticky-top" style={{ borderBottom: '1px solid rgba(0,0,0,0.06)', backgroundColor: COLORS.panel, boxShadow: '0 2px 4px rgba(0,0,0,0.05)', zIndex: 999 }}>
-          <div className="d-flex align-items-center justify-content-between px-3 py-3" style={{ paddingLeft: 70 }}>
+          <div className="d-flex align-items-center justify-content-between px-3 py-3" style={{ paddingLeft: isDesktop ? (collapsed ? 14 + COLLAPSED_WIDTH : 14 + SIDEBAR_WIDTH) : 14 }}>
             <div className="d-flex align-items-center gap-3">
               <h4 className="mb-0 fw-bold" style={{ color: '#3d2b1f', fontSize: '1.05rem' }}>Arpella</h4>
             </div>

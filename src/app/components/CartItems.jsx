@@ -19,7 +19,7 @@ export default function CartItems({ cart, onRemoveItem }) {
       <table className="table table-sm table-hover align-middle">
         <thead className="table-light">
           <tr>
-            <th style={{ fontSize: '0.8rem', width: '55%' }}>Product</th>
+            <th style={{ fontSize: '0.8rem', width: '50%' }}>Product</th>
             <th style={{ fontSize: '0.8rem' }} className="text-center">Type</th>
             <th style={{ fontSize: '0.8rem' }} className="text-center">Qty</th>
             <th style={{ fontSize: '0.8rem' }} className="text-end">Total</th>

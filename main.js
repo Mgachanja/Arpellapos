@@ -428,7 +428,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     const storeSettingsObj = {
       storeName: String(ss.storeName || ss.store_name || 'ARPELLA STORE LIMITED').trim(),
       storeAddress: String(ss.storeAddress || ss.store_address || 'Ngong, Matasia').trim(),
-      storePhone: String(ss.storePhone || ss.store_phone || '+254 7xx xxx xxx').trim(),
+      storePhone: String(ss.storePhone || ss.store_phone || '+254 704288802').trim(),
       pin: String(ss.pin || ss.taxPin || ss.tax_pin || 'P052336649L').trim(),
       receiptFooter: String(ss.receiptFooter || ss.receipt_footer || 'Thank you for your business!').trim()
     };

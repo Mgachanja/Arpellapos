@@ -32,6 +32,7 @@ import ProductsGrid from '../components/ProductsGrid';
 import CartItems from '../components/CartItems';
 import PaymentForm from '../components/PaymentForm';
 import HeldSales from '../components/HeldSales';
+import MpesaTillPayment from '../components/MpesaTillPayment';
 
 const CTA = { background: '#FF7F50', color: '#fff' };
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
@@ -64,7 +65,10 @@ export default function POS() {
   const [showHeldSales, setShowHeldSales] = useState(false);
   const [heldSales, setHeldSales] = useState([]);
 
-  // pinned scanned product (from barcode) — keeps the product card visible until user adds it or TTL/manual clear
+  // MPesa Till Payment State
+  const [showMpesaTillModal, setShowMpesaTillModal] = useState(false);
+
+  // pinned scanned product
   const [scannedProduct, setScannedProduct] = useState(null);
 
   const dispatch = useDispatch();
@@ -77,9 +81,8 @@ export default function POS() {
   const scannerRef = useRef({ buffer: '', firstTime: 0, lastTime: 0, timer: null });
   const barcodeResultsRef = useRef(null);
 
-  // timer ref to auto-clear pinned scanned product after X ms
   const scannedProductTimerRef = useRef(null);
-  const SCANNED_PRODUCT_TTL_MS = 15000; // 15s - adjust if needed
+  const SCANNED_PRODUCT_TTL_MS = 15000;
 
   const getInventoryId = useCallback((product) => {
     return product?.inventoryId || product?.inventory?.id || product?.inventory?._id || product?.inventory_id || product?.invId || product?.inventoryIdString || null;
@@ -119,7 +122,6 @@ export default function POS() {
     setHasSearched(false); 
     setSearchType(''); 
     barcodeResultsRef.current = null;
-    // NOTE: do NOT clear scannedProduct here — we keep the pinned product until explicit clear/add or TTL expiry
     requestAnimationFrame(() => { 
       try { 
         if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
@@ -139,7 +141,6 @@ export default function POS() {
   const handleOrderCompletion = useCallback(async (orderData, cartSnapshot = null, paymentTypeSnapshot = null, paymentDataSnapshot = null) => {
     toast.success('Order completed');
   
-    // Use provided snapshots or current state
     const itemsToReceipt = cartSnapshot || cart;
     const usedPaymentType = paymentTypeSnapshot || paymentType;
     const usedPaymentData = paymentDataSnapshot || paymentData;
@@ -197,7 +198,7 @@ export default function POS() {
       if (usedPaymentType === 'cash') { 
         paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0; 
         paymentInfo.change = Math.max(0, paymentInfo.cashAmount - cartTotalFromLines); 
-      } else if (usedPaymentType === 'mpesa') { 
+      } else if (usedPaymentType === 'mpesa' || usedPaymentType === 'mpesaTill') { 
         paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || cartTotalFromLines; 
       } else if (usedPaymentType === 'both') { 
         paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0; 
@@ -226,7 +227,7 @@ export default function POS() {
       email: actualUser?.email || ''
     };
   
-    const rawCustomerPhone = (usedPaymentType === 'mpesa' || usedPaymentType === 'both') ? (usedPaymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
+    const rawCustomerPhone = (usedPaymentType === 'mpesa' || usedPaymentType === 'both' || usedPaymentType === 'mpesaTill') ? (usedPaymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
     const maskedCustomerPhone = rawCustomerPhone ? maskPhoneForReceipt(rawCustomerPhone) : 'Walk-in';
   
     const receiptData = {
@@ -242,7 +243,6 @@ export default function POS() {
       storeSettings
     };
   
-    // Only clear cart if not using snapshot
     if (!cartSnapshot) {
       dispatch(clearCart());
       setPaymentType(''); 
@@ -266,7 +266,6 @@ export default function POS() {
       toast.error('Receipt printing failed - check printer');
     }
   
-    // Clean up after receipt printing for M-Pesa orders
     if (cartSnapshot) {
       dispatch(clearCart());
       setPaymentType(''); 
@@ -308,43 +307,43 @@ export default function POS() {
     }
   
     const payload = {
-      buyerPin: 'N/A',
-      orderSource: 'POS',
-      latitude: coords?.lat ?? 0,
-      longitude: coords?.lng ?? 0,
-      orderItems: (Array.isArray(cart) ? cart : []).map(ci => ({
-        productId: Number(ci.id || ci._id),
-        quantity: ci.quantity,
-        priceType: ci.priceType
-      })),
-      orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
-      phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A'
+      order: {
+        userId: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && (user.phone || user.userName)) || '',
+        phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
+        orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
+        latitude: coords?.lat ?? 0,
+        longitude: coords?.lng ?? 0,
+        buyerPin: 'N/A',
+        orderSource: 'POS',
+        orderitems: (Array.isArray(cart) ? cart : []).map(ci => ({
+          productId: Number(ci.id || ci._id),
+          quantity: ci.quantity,
+          priceType: ci.priceType
+        }))
+      }
     };
   
     if (pt === 'both') {
-      payload.total = Number(pd.mpesaAmount) || 0;
-      payload.cashAmount = Number(pd.cashAmount) || 0;
-      payload.userId = (user && (user.phone || user.userName)) || '';
+      payload.order.total = Number(pd.mpesaAmount) || 0;
+      payload.order.cashAmount = Number(pd.cashAmount) || 0;
     }
-    if (pt === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
-    if (pt === 'cash') payload.cashAmount = Number(pd.cashAmount) || 0;
+    if (pt === 'cash') payload.order.cashAmount = Number(pd.cashAmount) || 0;
   
     try {
       setProcessingOrder(true);
       toast.info('Creating order...');
       
-      // Take snapshot BEFORE API call
       const cartSnapshot = JSON.parse(JSON.stringify(cart));
       const paymentTypeSnapshot = pt;
       const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
       
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+      
       try {
         const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
         const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
         const usedPaymentType = paymentTypeSnapshot || paymentType;
         const usedPaymentData = paymentDataSnapshot || paymentData;
-        // compute totalPaid and status
         const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
           const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
           return s + price * (it.quantity || 1);
@@ -366,11 +365,11 @@ export default function POS() {
         };
       
         await indexedDb.putOrder(localOrder);
-        // optional: toast or UI update
         toast.info('Order cached locally');
       } catch (err) {
         console.warn('Failed to write order to indexedDb', err);
       }
+      
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
       
       if (orderId) {
@@ -432,38 +431,39 @@ export default function POS() {
     }
   
     const payload = {
-      buyerPin: 'N/A',
-      orderSource: 'POS',
-      latitude: coords?.lat ?? 0,
-      longitude: coords?.lng ?? 0,
-      orderItems: (Array.isArray(cart) ? cart : []).map(ci => ({
-        productId: Number(ci.id || ci._id),
-        quantity: ci.quantity,
-        priceType: ci.priceType
-      })),
-      orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
-      phoneNumber: pt === 'mpesa' ? pd.mpesaPhone.trim() : (user && user.phone) || 'N/A'
+      order: {
+        userId: pt === 'mpesa' ? (pd.mpesaPhone || '').trim() : (user && (user.phone || user.userName)) || '',
+        phoneNumber: pt === 'mpesa' ? pd.mpesaPhone.trim() : (user && user.phone) || 'N/A',
+        orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
+        latitude: coords?.lat ?? 0,
+        longitude: coords?.lng ?? 0,
+        buyerPin: 'N/A',
+        orderSource: 'POS',
+        orderitems: (Array.isArray(cart) ? cart : []).map(ci => ({
+          productId: Number(ci.id || ci._id),
+          quantity: ci.quantity,
+          priceType: ci.priceType
+        }))
+      }
     };
   
-    if (pt === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
-    if (pt === 'cash') payload.cashAmount = Number(pd.cashAmount) || 0;
+    if (pt === 'cash') payload.order.cashAmount = Number(pd.cashAmount) || 0;
   
     try {
       setProcessingOrder(true);
       toast.info(pt === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
       
-      // Take snapshot BEFORE API call
       const cartSnapshot = JSON.parse(JSON.stringify(cart));
       const paymentTypeSnapshot = pt;
       const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
       
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+      
       try {
         const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
         const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
         const usedPaymentType = paymentTypeSnapshot || paymentType;
         const usedPaymentData = paymentDataSnapshot || paymentData;
-        // compute totalPaid and status
         const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
           const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
           return s + price * (it.quantity || 1);
@@ -485,11 +485,11 @@ export default function POS() {
         };
       
         await indexedDb.putOrder(localOrder);
-        // optional: toast or UI update
         toast.info('Order cached locally');
       } catch (err) {
         console.warn('Failed to write order to indexedDb', err);
       }
+      
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
       
       if (pt === 'mpesa') {
@@ -518,8 +518,73 @@ export default function POS() {
     }
   }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion]);
   
+  const handleMpesaTillPayment = useCallback(async (transactionId) => {
+    try {
+      setProcessingOrder(true);
+      toast.info('Processing MPesa Till payment...');
+      
+      const cartSnapshot = JSON.parse(JSON.stringify(cart));
+      const paymentTypeSnapshot = 'mpesaTill';
+      const paymentDataSnapshot = { mpesaPhone: user?.phone || 'N/A', transactionId };
+      
+      const payload = {
+        order: {
+          userId: (user && (user.phone || user.userName)) || '',
+          phoneNumber: (user && user.phone) || 'N/A',
+          orderPaymentType: 'c2b',
+          latitude: coords?.lat ?? 0,
+          longitude: coords?.lng ?? 0,
+          buyerPin: 'N/A',
+          orderSource: 'POS',
+          orderitems: (Array.isArray(cart) ? cart : []).map(ci => ({
+            productId: Number(ci.id || ci._id),
+            quantity: ci.quantity,
+            priceType: ci.priceType
+          }))
+        },
+        transactionId: transactionId
+      };
+      
+      const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+      
+      try {
+        const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
+        const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
+        const usedPaymentType = paymentTypeSnapshot;
+        const usedPaymentData = paymentDataSnapshot;
+        
+        const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
+          const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
+          return s + price * (it.quantity || 1);
+        }, 0);
+        
+        const localOrder = {
+          orderId,
+          orderData: res.data || {},
+          cart: cartSnap,
+          cartTotal,
+          paymentType: usedPaymentType,
+          paymentData: usedPaymentData,
+          status: 'paid',
+          createdAt: Date.now()
+        };
+      
+        await indexedDb.putOrder(localOrder);
+        toast.info('Order cached locally');
+      } catch (err) {
+        console.warn('Failed to write order to indexedDb', err);
+      }
+      
+      setShowMpesaTillModal(false);
+      await handleOrderCompletion(res.data, cartSnapshot, paymentTypeSnapshot, paymentDataSnapshot);
+      
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'MPesa Till payment failed';
+      toast.error(msg);
+      setProcessingOrder(false);
+    }
+  }, [cart, coords, user, handleOrderCompletion]);
 
-  // place this AFTER your createOrder and completeCheckout declarations
   const handleCheckoutSale = useCallback(async (saleId, opts = {}) => {
     const sale = opts.sale || heldSalesService.retrieveHeldSale(saleId);
     if (!sale) {
@@ -527,7 +592,6 @@ export default function POS() {
       return;
     }
   
-    // restore cart (synchronous dispatches)
     dispatch(clearCart());
     if (Array.isArray(sale.items)) {
       sale.items.forEach(it => {
@@ -538,20 +602,15 @@ export default function POS() {
       });
     }
   
-    // gather overrides (do not rely on state re-render timing)
     const overrides = {
       paymentType: opts.paymentType ?? sale.paymentType ?? 'cash',
       paymentData: opts.paymentData ?? sale.paymentData ?? { cashAmount: '', mpesaPhone: '', mpesaAmount: '' }
     };
   
-    // also set the UI state so cart shows correct values (optional, but keeps UX consistent)
     setPaymentData(overrides.paymentData);
     setPaymentType(overrides.paymentType);
-  
-    // ensure orderId cleared before checkout
     setCurrentOrderId(null);
   
-    // small delay to let store settle (the checkout functions use cart selector; this is just to be safe)
     await new Promise(res => setTimeout(res, 0));
   
     try {
@@ -561,7 +620,6 @@ export default function POS() {
         await completeCheckout(overrides);
       }
   
-      // delete held sale after successful checkout
       try { heldSalesService.deleteHeldSale(saleId); } catch (e) {}
       setHeldSales(heldSalesService.getAllHeldSales());
       setShowHeldSales(false);
@@ -620,7 +678,6 @@ export default function POS() {
       if (paid) { 
         toast.success('Payment confirmed');
         
-        // Use pending order data for receipt printing
         if (pendingOrderData) {
           await handleOrderCompletion(
             pendingOrderData.orderData,
@@ -641,7 +698,6 @@ export default function POS() {
     }
   }, [currentOrderId, paymentType, pendingOrderData, handleOrderCompletion]);
 
-  // Load held sales on mount
   useEffect(() => {
     try {
       const loadedSales = heldSalesService.getAllHeldSales();
@@ -662,9 +718,6 @@ export default function POS() {
       .catch(() => toast.error('Failed to sync products'));
   }, [dispatch]);
 
-  //
-  // ---------- SCANNED PRODUCT TTL helpers ----------
-  //
   const clearScannedProductTimer = useCallback(() => {
     if (scannedProductTimerRef.current) {
       clearTimeout(scannedProductTimerRef.current);
@@ -680,9 +733,6 @@ export default function POS() {
     }, SCANNED_PRODUCT_TTL_MS);
   }, [clearScannedProductTimer]);
 
-  //
-  // ---------- SCAN HANDLER (keeps scanned product pinned) ----------
-  //
   const handleBarcodeScanned = useCallback(async (barcode) => {
     try {
       const raw = await indexedDb.getProductByBarcode(barcode);
@@ -693,7 +743,6 @@ export default function POS() {
         return;
       }
 
-      // Very defensive normalization - try many common field names / nesting shapes
       const normalized = {
         id: raw.id ?? raw._id ?? raw.productId ?? raw.skuId ?? raw.sku ?? raw.inventoryId ?? raw.product_id ?? null,
         _id: raw._id ?? raw.id ?? raw.productId ?? null,
@@ -713,7 +762,6 @@ export default function POS() {
         barcode:
           raw.barcode ?? raw.sku ?? raw.upc ?? raw.ean ?? raw.code ?? raw.externalId ?? '',
 
-        // various price fallbacks
         price: Number(
           raw.price
           ?? raw.retailPrice
@@ -733,34 +781,27 @@ export default function POS() {
           ?? 0
         ) || 0,
 
-        // Keep original object for debugging / edge cases
         rawProduct: raw,
-        // include everything else so UI code can still access nested props if needed
         ...raw
       };
 
-      // Ensure id is string-friendly for DOM selectors
       if (normalized.id === null || normalized.id === undefined) {
         normalized.id = `scan-${Date.now()}`;
       }
 
-      // pin the normalized product
       setScannedProduct(normalized);
       barcodeResultsRef.current = [normalized];
       setFilteredProducts([normalized]);
       setHasSearched(true);
       setSearchType('barcode');
 
-      // Clear any visible text in search input (but keep internal searchTerm empty)
       if (searchInputRef.current) {
         try { searchInputRef.current.value = ''; } catch (e) {}
       }
       setSearchTerm('');
 
-      // start/refresh TTL timer
       startScannedProductTimer();
 
-      // scroll the scanned product into view and focus its quantity input
       requestAnimationFrame(() => {
         setTimeout(() => {
           try {
@@ -768,14 +809,12 @@ export default function POS() {
             const el = document.querySelector(selector);
             if (el && typeof el.scrollIntoView === 'function') {
               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              // focus first numeric input inside it
               const qtyInput = el.querySelector('input.quantity-input');
               if (qtyInput && typeof qtyInput.focus === 'function') {
                 qtyInput.focus();
                 qtyInput.select && qtyInput.select();
               }
             } else {
-              // fallback: scroll container to top
               const container = document.querySelector('.products-container');
               if (container) container.scrollTop = 0;
             }
@@ -793,9 +832,6 @@ export default function POS() {
     }
   }, [startScannedProductTimer]);
 
-  //
-  // ---------- GLOBAL SCANNER (unchanged) ----------
-  //
   useEffect(() => {
     const THRESHOLD_AVG_MS = 80;
     const CLEAR_TIMEOUT = 800;
@@ -883,21 +919,15 @@ export default function POS() {
     return () => window.removeEventListener('keydown', handleCheckoutEnter);
   }, [paymentType, cart.length, processingOrder, createOrder, completeCheckout]);
 
-  //
-  // ---------- SEARCH / PERFORM SEARCH (debounced) ----------
-  //
   const performSearch = useCallback(async (term) => {
-    // If term is empty AND we have a pinned scannedProduct keep it visible
     if (!term || term.trim().length === 0) {
       if (scannedProduct) {
-        // keep pinned product visible
         barcodeResultsRef.current = [scannedProduct];
         setFilteredProducts([scannedProduct]);
         setHasSearched(true);
         setSearchType('barcode');
         return;
       }
-      // otherwise clear results
       setFilteredProducts([]); 
       setHasSearched(false); 
       setSearchType(''); 
@@ -957,18 +987,10 @@ export default function POS() {
     debouncedSearch(searchTerm); 
   }, [searchTerm, debouncedSearch]);
 
-  // NOTE: we intentionally do NOT auto-clear scannedProduct when the user types
-  // so that the scanned product stays pinned until TTL, manual clear, or add-to-cart.
-
-  // wrapper to setSearchTerm (keeps scannedProduct pinned)
   const handleSetSearchTerm = useCallback((val) => {
     setSearchTerm(val);
-    // intentionally do NOT clear scannedProduct here
   }, []);
 
-  //
-  // ---------- CART / ITEM ADDING (clear scanned product on add) ----------
-  //
   const handleClearCart = useCallback(() => {
     if ((cartItemCount || 0) === 0) {
       toast.info('Cart is already empty');
@@ -1089,13 +1111,11 @@ export default function POS() {
 
       setProductLoading(productId, false);
       
-      // AFTER adding/updating, clear the pinned scanned product and the search input
       clearScannedProductTimer();
       setScannedProduct(null);
       barcodeResultsRef.current = null;
       clearSearchAndProducts();
       
-      // Keep focus on search input
       requestAnimationFrame(() => { 
         try { 
           if (searchInputRef.current) {
@@ -1152,7 +1172,6 @@ export default function POS() {
     }
   }, [dispatch]);
 
-  // Held Sales Functions
   const handleHoldSale = useCallback(() => {
     if (cart.length === 0) {
       toast.error('Cart is empty - nothing to hold');
@@ -1160,7 +1179,6 @@ export default function POS() {
     }
 
     try {
-      // Auto-generate sale name: "Sale 1", "Sale 2", etc.
       const existingSales = heldSalesService.getAllHeldSales();
       const salesArray = Array.isArray(existingSales) ? existingSales : [];
       const saleNumber = salesArray.length + 1;
@@ -1170,7 +1188,6 @@ export default function POS() {
       const updatedSales = heldSalesService.getAllHeldSales();
       setHeldSales(Array.isArray(updatedSales) ? updatedSales : []);
       
-      // Clear current cart
       dispatch(clearCart());
       setPaymentType('');
       setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
@@ -1192,10 +1209,8 @@ export default function POS() {
         return;
       }
 
-      // Clear current cart first
       dispatch(clearCart());
 
-      // Add each item from the held sale to cart
       if (Array.isArray(sale.items)) {
         sale.items.forEach(item => {
           dispatch(addItemToCart({ 
@@ -1205,12 +1220,10 @@ export default function POS() {
         });
       }
 
-      // Restore payment data if exists
       if (sale.paymentData) {
         setPaymentData(sale.paymentData);
       }
 
-      // Delete the held sale
       heldSalesService.deleteHeldSale(saleId);
       const updatedSales = heldSalesService.getAllHeldSales();
       setHeldSales(Array.isArray(updatedSales) ? updatedSales : []);
@@ -1239,15 +1252,12 @@ export default function POS() {
 
   const currentCartTotal = calculateCartTotal();
   
-  // Keep barcode results visible while search is empty OR if we have a pinned scannedProduct
   const displayedProducts = (scannedProduct && !String(searchTerm || '').trim())
     ? [scannedProduct]
     : (barcodeResultsRef.current && !String(searchTerm || '').trim() ? barcodeResultsRef.current : (filteredProducts || []));
 
-  // Ensure heldSales is always an array
   const safeHeldSales = Array.isArray(heldSales) ? heldSales : [];
 
-  // cleanup scanned product timer on unmount
   useEffect(() => {
     return () => {
       if (scannedProductTimerRef.current) {
@@ -1279,7 +1289,6 @@ export default function POS() {
             setDefaultPriceType={setDefaultPriceType} 
           />
 
-          {/* Show pinned scanned product and allow manual clear */}
           {scannedProduct && (
             <div className="mb-2 d-flex align-items-center gap-2">
               <div className="badge bg-info text-dark" style={{ padding: '8px 10px', fontSize: 14 }}>
@@ -1351,6 +1360,15 @@ export default function POS() {
                 {cartItemCount > 0 && (
                   <>
                     <button 
+                      className="btn btn-success btn-sm" 
+                      onClick={() => setShowMpesaTillModal(true)}
+                      title="Pay with M-Pesa Till"
+                      aria-label="M-Pesa Till Payment"
+                    >
+                      <i className="fas fa-mobile-alt me-1" />
+                      M-Pesa
+                    </button>
+                    <button 
                       className="btn btn-warning btn-sm" 
                       onClick={handleHoldSale}
                       title="Hold this sale"
@@ -1373,7 +1391,10 @@ export default function POS() {
             </div>
 
             <div className="cart-items flex-grow-1" style={{ overflowY: 'auto', marginBottom: 20 }}>
-              <CartItems cart={cart} onRemoveItem={handleRemoveItem} />
+              <CartItems 
+                cart={cart} 
+                onRemoveItem={handleRemoveItem}
+              />
             </div>
 
             {cart.length > 0 && (
@@ -1452,7 +1473,6 @@ export default function POS() {
         </div>
       </div>
 
-      {/* Held Sales Modal */}
       <HeldSales 
         show={showHeldSales}
         onHide={() => setShowHeldSales(false)}
@@ -1462,6 +1482,12 @@ export default function POS() {
         onCheckoutSale={handleCheckoutSale} 
       />
 
+      <MpesaTillPayment
+        show={showMpesaTillModal}
+        onHide={() => setShowMpesaTillModal(false)}
+        cartTotal={currentCartTotal}
+        onSubmit={handleMpesaTillPayment}
+      />
 
       <style>{`
         .search-header-fixed { position: sticky; top: 0; background: #f8f9fa; z-index: 100; padding-bottom: 6px; }
@@ -1476,7 +1502,6 @@ export default function POS() {
         .search-header-fixed .form-control { flex:1 1 auto; min-width:0; }
         .search-header-fixed .btn { padding:6px 8px; height:36px; min-width:36px; font-size:0.9rem; line-height:1; }
         
-        /* Remove number input arrows */
         .quantity-input::-webkit-outer-spin-button,
         .quantity-input::-webkit-inner-spin-button {
           -webkit-appearance: none;

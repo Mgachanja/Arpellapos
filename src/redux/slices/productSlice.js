@@ -1,18 +1,60 @@
-// src/redux/slices/productsSlice.js
+// src/redux/slices/productSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
-import indexedDb from '../../services/indexedDB'; // adjust path if needed
-import { 
-  fetchProductsApi,
-  normalizeProductsData,
-  mergeProductsByName,
-  mergeProductsById,
-  addItemToCart as addItemToCartHelper,
-  sleep,
-  baseUrl
-} from './productsSlice-helpers';
+import indexedDb from '../../services/indexedDB'; // <-- match actual filename on disk
+import { baseUrl, addItemToCart as addItemToCartHelper } from './productsSlice-helpers';
 
-// Initial state
+const getKey = (p) => String(p?.id || p?.productId || p?.inventoryId || '').trim();
+
+function mergeProductsById(existing = [], incoming = []) {
+  const map = {};
+  existing.forEach(p => {
+    const k = getKey(p);
+    if (k) map[k] = { ...p, id: k };
+  });
+
+  incoming.forEach(p => {
+    const k = getKey(p);
+    if (!k) return;
+    const prev = map[k] || { id: k, inventoryHistory: [] };
+    const merged = {
+      ...prev,
+      ...p,
+      id: k,
+      name: (p.name || prev.name || p.productName || '') ,
+      name_lower: (p.name || prev.name || p.productName || '').toLowerCase(),
+      stockPrice: p.stockPrice !== undefined ? Number(p.stockPrice) : prev.stockPrice ?? null,
+      stockQuantity: p.stockQuantity !== undefined ? Number(p.stockQuantity) : prev.stockQuantity ?? null,
+      stockThreshold: p.stockThreshold !== undefined ? Number(p.stockThreshold) : prev.stockThreshold ?? null,
+      inventoryHistory: Array.isArray(prev.inventoryHistory) ? prev.inventoryHistory.slice() : []
+    };
+
+    // Append inventory snapshot if inventory fields present on incoming
+    if (p.stockPrice !== undefined || p.stockQuantity !== undefined || p.stockThreshold !== undefined) {
+      const snapshot = {
+        inventoryId: p.inventoryId || null,
+        productId: k,
+        stockPrice: merged.stockPrice,
+        stockQuantity: merged.stockQuantity,
+        stockThreshold: merged.stockThreshold,
+        createdAt: p.createdAt || new Date().toISOString(),
+        updatedAt: p.updatedAt || new Date().toISOString(),
+        raw: p
+      };
+      const last = merged.inventoryHistory[0];
+      const isDup = last && last.inventoryId === snapshot.inventoryId && last.updatedAt === snapshot.updatedAt;
+      if (!isDup) {
+        merged.inventoryHistory.unshift(snapshot);
+        if (merged.inventoryHistory.length > 50) merged.inventoryHistory.length = 50;
+      }
+    }
+
+    map[k] = merged;
+  });
+
+  return Object.values(map);
+}
+
 const initialState = {
   products: [],
   cart: [],
@@ -24,7 +66,7 @@ const initialState = {
   currentProduct: null,
   productLoading: false,
   productError: null,
-  pageStatus: {}, // For tracking individual page fetch status
+  pageStatus: {},
   filters: {
     category: '',
     priceRange: { min: 0, max: Infinity },
@@ -36,253 +78,123 @@ const initialState = {
     totalPages: 1,
     totalItems: 0
   },
-  // Enhanced state for incremental fetching
   incrementalFetch: {
     isActive: false,
     currentPage: 1,
     totalFetched: 0,
     startTime: null,
     lastFetchTime: null,
-    fetchInterval: 3000, // 3 seconds default
+    fetchInterval: 3000,
     hasMore: true,
     isPaused: false,
-    autoFetch: false, // Whether to automatically start fetching on app load
+    autoFetch: false,
     error: null
   }
 };
 
-// Existing thunks
-export const fetchProducts = createAsyncThunk(
-  'products/fetchProducts',
-  async (params = {}, { rejectWithValue }) => {
-    try {
-      const { pageNumber = 1, pageSize = 200 } = params;
-      const response = await fetchProductsApi(pageNumber, pageSize);
-      const products = normalizeProductsData(response.data);
-      
-      return {
-        products,
-        pagination: {
-          currentPage: pageNumber,
-          pageSize,
-          totalItems: response.data.totalItems || products.length,
-          totalPages: Math.ceil((response.data.totalItems || products.length) / pageSize)
-        }
-      };
-    } catch (error) {
-      return rejectWithValue(error?.response?.data || error.message || 'Failed to fetch products');
-    }
-  }
-);
+/* -------------------------
+   Thunks
+------------------------- */
 
-export const fetchProductById = createAsyncThunk(
-  'products/fetchProductById',
-  async (productId, { rejectWithValue }) => {
-    try {
-      const response = await axios.get(`${baseUrl}/products/${productId}`);
-      return response.data;
-    } catch (error) {
-      return rejectWithValue(error?.response?.data || error.message || 'Failed to fetch product');
-    }
-  }
-);
-
-export const searchProducts = createAsyncThunk(
-  'products/searchProducts',
-  async (searchParams, { rejectWithValue }) => {
-    try {
-      const { searchTerm, pageNumber = 1, pageSize = 50 } = searchParams;
-      const response = await axios.get(`${baseUrl}/products/search`, {
-        params: { q: searchTerm, pageNumber, pageSize }
-      });
-      return normalizeProductsData(response.data);
-    } catch (error) {
-      return rejectWithValue(error?.response?.data || error.message || 'Search failed');
-    }
-  }
-);
-
-/**
- * Fetch a single page of products
- */
 export const fetchSinglePage = createAsyncThunk(
   'products/fetchSinglePage',
-  async (params, { dispatch, getState, rejectWithValue }) => {
-    const { pageNumber, pageSize = 200 } = params;
-    
+  async ({ pageNumber, pageSize = 200 }, { dispatch, rejectWithValue }) => {
     try {
-      // Set page as pending
       dispatch(_setPagePending({ pageNumber }));
-      
       const url = `${baseUrl}/pos-paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
-      const { data } = await axios.get(url);
+      const res = await axios.get(url);
+      const data = res.data;
       const items = Array.isArray(data) ? data : (data.items || []);
-      
-      // Store items in IndexedDB
+
+      // write raw page items into products store
       await indexedDb.putProducts(items);
-      
-      // Set page as fulfilled
+
+      // build inventories from page items and persist
+      const inventories = items
+        .map(it => {
+          const productId = it.productId || it.inventoryId || it.id;
+          if (!productId) return null;
+          const hasInventory = it.inventoryId || (it.stockPrice !== undefined) || (it.stockQuantity !== undefined);
+          if (!hasInventory) return null;
+          return {
+            inventoryId: it.inventoryId || null,
+            productId,
+            stockPrice: it.stockPrice !== undefined ? Number(it.stockPrice) : undefined,
+            stockQuantity: it.stockQuantity !== undefined ? Number(it.stockQuantity) : undefined,
+            stockThreshold: it.stockThreshold !== undefined ? Number(it.stockThreshold) : undefined,
+            createdAt: it.createdAt || null,
+            updatedAt: it.updatedAt || null,
+            raw: it
+          };
+        })
+        .filter(Boolean);
+
+      if (inventories.length) {
+        await indexedDb.putInventories(inventories);
+      }
+
       dispatch(_setPageFulfilled({ pageNumber, items }));
-      
-      return { 
-        pageNumber, 
-        items, 
-        hasMore: items.length === pageSize,
-        itemCount: items.length 
+      return {
+        pageNumber,
+        items,
+        itemCount: items.length,
+        hasMore: items.length === pageSize
       };
     } catch (err) {
-      dispatch(_setPageRejected({ pageNumber, error: err?.response?.data || err.message || err }));
-      return rejectWithValue({
-        pageNumber,
-        error: err?.response?.data || err.message || err
-      });
+      const message = err?.response?.data || err.message || String(err);
+      dispatch(_setPageRejected({ pageNumber, error: message }));
+      return rejectWithValue({ pageNumber, error: message });
     }
   }
 );
 
-/**
- * Start incremental fetching of all products
- */
-export const startIncrementalFetch = createAsyncThunk(
-  'products/startIncrementalFetch',
-  async (params = {}, { dispatch, getState, rejectWithValue }) => {
-    const { 
-      pageSize = 200, 
-      interval = 3000, 
-      force = false,
-      startPage = 1 
-    } = params;
-
+export const fetchAndIndexAllProducts = createAsyncThunk(
+  'products/fetchAndIndexAllProducts',
+  async ({ pageSize = 200, startPage = 1, force = false } = {}, { dispatch, getState, rejectWithValue }) => {
     try {
       if (force) {
         await indexedDb.clearAll();
         dispatch(resetIncrementalFetch());
       }
 
-      dispatch(setIncrementalFetchConfig({ 
-        fetchInterval: interval, 
-        currentPage: startPage,
-        isActive: true,
-        hasMore: true,
-        startTime: new Date().toISOString(),
-        error: null
-      }));
-
-      // Start the incremental fetch process
-      dispatch(continueIncrementalFetch({ pageSize }));
-      
-      return { success: true, startPage, interval };
-    } catch (error) {
-      return rejectWithValue(error.message || 'Failed to start incremental fetch');
-    }
-  }
-);
-
-/**
- * Continue incremental fetching (fetches next page and schedules the next one)
- */
-export const continueIncrementalFetch = createAsyncThunk(
-  'products/continueIncrementalFetch',
-  async (params = {}, { dispatch, getState, rejectWithValue }) => {
-    const { pageSize = 200 } = params;
-    const state = getState();
-    const { incrementalFetch } = state.products;
-
-    // Check if we should continue
-    if (!incrementalFetch.isActive || !incrementalFetch.hasMore || incrementalFetch.isPaused) {
-      return { shouldStop: true, reason: 'Fetch stopped or paused' };
-    }
-
-    try {
-      const result = await dispatch(fetchSinglePage({ 
-        pageNumber: incrementalFetch.currentPage, 
-        pageSize 
-      })).unwrap();
-
-      // Update incremental fetch state
-      dispatch(updateIncrementalFetchProgress({
-        currentPage: incrementalFetch.currentPage + 1,
-        totalFetched: incrementalFetch.totalFetched + result.itemCount,
-        hasMore: result.hasMore,
-        lastFetchTime: new Date().toISOString()
-      }));
-
-      // Schedule next fetch if there are more items
-      if (result.hasMore && incrementalFetch.isActive) {
-        setTimeout(() => {
-          const currentState = getState();
-          if (currentState.products.incrementalFetch.isActive && 
-              currentState.products.incrementalFetch.hasMore &&
-              !currentState.products.incrementalFetch.isPaused) {
-            dispatch(continueIncrementalFetch({ pageSize }));
-          }
-        }, incrementalFetch.fetchInterval);
-      } else {
-        // No more pages, mark as complete
-        dispatch(completeIncrementalFetch());
+      let page = startPage;
+      while (true) {
+        const result = await dispatch(fetchSinglePage({ pageNumber: page, pageSize })).unwrap();
+        if (!result || (result.itemCount === 0)) break;
+        if (!result.hasMore) break;
+        page += 1;
       }
 
-      return result;
-    } catch (error) {
-      dispatch(setIncrementalFetchError(error.error || error.message || 'Fetch failed'));
-      return rejectWithValue(error);
+      return { success: true };
+    } catch (err) {
+      return rejectWithValue(err?.message || String(err));
     }
   }
 );
 
-/**
- * Enhanced version: fetchAndIndexAllProducts (kept for backward compatibility)
- * Now uses the incremental system internally
- */
-export const fetchAndIndexAllProducts = createAsyncThunk(
-  'products/fetchAndIndexAllProducts',
-  async (params = {}, { dispatch, rejectWithValue }) => {
-    try {
-      const { pageSize = 200, force = false, interval = 4000 } = params;
-      
-      await dispatch(startIncrementalFetch({ 
-        pageSize, 
-        interval, 
-        force 
-      })).unwrap();
-      
-      return { success: true, method: 'incremental' };
-    } catch (error) {
-      return rejectWithValue(error);
-    }
-  }
-);
+/* -------------------------
+   Slice
+------------------------- */
 
-// Create the products slice
 const productsSlice = createSlice({
   name: 'products',
   initialState,
   reducers: {
-    // Page management reducers
     _setPagePending: (state, action) => {
       const { pageNumber } = action.payload;
-      
-      if (!state.pageStatus) {
-        state.pageStatus = {};
-      }
-      
+      state.pageStatus = state.pageStatus || {};
       state.pageStatus[pageNumber] = {
         status: 'pending',
         timestamp: new Date().toISOString(),
         loading: true,
         error: null
       };
-      
       state.loading = true;
     },
 
     _setPageFulfilled: (state, action) => {
       const { pageNumber, items } = action.payload;
-      
-      if (!state.pageStatus) {
-        state.pageStatus = {};
-      }
-      
+      state.pageStatus = state.pageStatus || {};
       state.pageStatus[pageNumber] = {
         status: 'fulfilled',
         timestamp: new Date().toISOString(),
@@ -290,45 +202,32 @@ const productsSlice = createSlice({
         loading: false,
         error: null
       };
-      
-      // Merge products with existing ones
+
       if (items && items.length > 0) {
         state.products = mergeProductsById(state.products, items);
       }
-      
-      // Check if any pages are still loading
-      const stillLoading = Object.values(state.pageStatus).some(page => page.loading);
+
+      const stillLoading = Object.values(state.pageStatus).some(p => p.loading);
       state.loading = stillLoading;
-      
-      if (!stillLoading) {
-        state.error = null;
-      }
+      if (!stillLoading) state.error = null;
     },
 
     _setPageRejected: (state, action) => {
       const { pageNumber, error } = action.payload;
-      
-      if (!state.pageStatus) {
-        state.pageStatus = {};
-      }
-      
+      state.pageStatus = state.pageStatus || {};
       state.pageStatus[pageNumber] = {
         status: 'rejected',
         timestamp: new Date().toISOString(),
         loading: false,
-        error: typeof error === 'string' ? error : error?.message || 'Unknown error'
+        error: typeof error === 'string' ? error : (error?.message || 'Unknown error')
       };
-      
-      // Check if any pages are still loading
-      const stillLoading = Object.values(state.pageStatus).some(page => page.loading);
+
+      const stillLoading = Object.values(state.pageStatus).some(p => p.loading);
       state.loading = stillLoading;
-      
-      if (!stillLoading) {
-        state.error = error;
-      }
+      if (!stillLoading) state.error = error;
     },
 
-    // Incremental fetch management
+    // incremental fetch controls (kept minimal for compatibility)
     setIncrementalFetchConfig: (state, action) => {
       state.incrementalFetch = {
         ...state.incrementalFetch,
@@ -352,21 +251,15 @@ const productsSlice = createSlice({
     },
 
     stopIncrementalFetch: (state) => {
-      state.incrementalFetch = {
-        ...state.incrementalFetch,
-        isActive: false,
-        isPaused: false,
-        hasMore: false
-      };
+      state.incrementalFetch.isActive = false;
+      state.incrementalFetch.isPaused = false;
+      state.incrementalFetch.hasMore = false;
     },
 
     completeIncrementalFetch: (state) => {
-      state.incrementalFetch = {
-        ...state.incrementalFetch,
-        isActive: false,
-        hasMore: false,
-        isPaused: false
-      };
+      state.incrementalFetch.isActive = false;
+      state.incrementalFetch.hasMore = false;
+      state.incrementalFetch.isPaused = false;
     },
 
     resetIncrementalFetch: (state) => {
@@ -394,40 +287,28 @@ const productsSlice = createSlice({
       state.incrementalFetch.autoFetch = action.payload;
     },
 
-    // Cart management reducers
+    // Cart management
     addItemToCart: (state, action) => {
       const { product, quantity = 1 } = action.payload;
-      
-      if (!product || (!product.id && !product._id)) {
+      if (!product || (!product.id && !product._id && !product.productId)) {
         console.warn('Cannot add item to cart: Invalid product');
         return;
       }
-      
       state.cart = addItemToCartHelper(state.cart, product, quantity);
     },
 
     removeItemFromCart: (state, action) => {
       const productId = action.payload;
-      state.cart = state.cart.filter(item => 
-        (item.id || item._id) !== productId
-      );
+      state.cart = state.cart.filter(item => (getKey(item) !== String(productId)));
     },
 
     updateCartItemQuantity: (state, action) => {
       const { productId, quantity } = action.payload;
-      
       if (quantity <= 0) {
-        state.cart = state.cart.filter(item => 
-          (item.id || item._id) !== productId
-        );
+        state.cart = state.cart.filter(item => getKey(item) !== String(productId));
       } else {
-        const itemIndex = state.cart.findIndex(item => 
-          (item.id || item._id) === productId
-        );
-        
-        if (itemIndex >= 0) {
-          state.cart[itemIndex].quantity = quantity;
-        }
+        const idx = state.cart.findIndex(item => getKey(item) === String(productId));
+        if (idx >= 0) state.cart[idx].quantity = quantity;
       }
     },
 
@@ -435,7 +316,7 @@ const productsSlice = createSlice({
       state.cart = [];
     },
 
-    // Filter and search reducers
+    // Filters and simple helpers
     setFilter: (state, action) => {
       const { filterType, value } = action.payload;
       state.filters[filterType] = value;
@@ -449,7 +330,6 @@ const productsSlice = createSlice({
       };
     },
 
-    // Product management
     clearCurrentProduct: (state) => {
       state.currentProduct = null;
       state.productError = null;
@@ -460,7 +340,6 @@ const productsSlice = createSlice({
       state.searchError = null;
     },
 
-    // General state management
     clearErrors: (state) => {
       state.error = null;
       state.searchError = null;
@@ -468,112 +347,41 @@ const productsSlice = createSlice({
       state.incrementalFetch.error = null;
     }
   },
-  
+
   extraReducers: (builder) => {
-    // fetchProducts cases
     builder
-      .addCase(fetchProducts.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(fetchProducts.fulfilled, (state, action) => {
-        state.loading = false;
-        state.products = action.payload.products;
-        state.pagination = { ...state.pagination, ...action.payload.pagination };
-        state.error = null;
-      })
-      .addCase(fetchProducts.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      })
-
-    // fetchProductById cases
-      .addCase(fetchProductById.pending, (state) => {
-        state.productLoading = true;
-        state.productError = null;
-      })
-      .addCase(fetchProductById.fulfilled, (state, action) => {
-        state.productLoading = false;
-        state.currentProduct = action.payload;
-        state.productError = null;
-      })
-      .addCase(fetchProductById.rejected, (state, action) => {
-        state.productLoading = false;
-        state.productError = action.payload;
-      })
-
-    // searchProducts cases
-      .addCase(searchProducts.pending, (state) => {
-        state.searchLoading = true;
-        state.searchError = null;
-      })
-      .addCase(searchProducts.fulfilled, (state, action) => {
-        state.searchLoading = false;
-        state.searchResults = action.payload;
-        state.searchError = null;
-      })
-      .addCase(searchProducts.rejected, (state, action) => {
-        state.searchLoading = false;
-        state.searchError = action.payload;
-      })
-
-    // fetchSinglePage cases
       .addCase(fetchSinglePage.pending, (state) => {
-        // Individual page loading is handled by _setPagePending
+        // page pending handled by _setPagePending
       })
-      .addCase(fetchSinglePage.fulfilled, (state, action) => {
-        // Individual page fulfillment is handled by _setPageFulfilled
+      .addCase(fetchSinglePage.fulfilled, (state) => {
+        // handled by _setPageFulfilled
       })
-      .addCase(fetchSinglePage.rejected, (state, action) => {
-        // Individual page rejection is handled by _setPageRejected
-      })
-
-    // startIncrementalFetch cases
-      .addCase(startIncrementalFetch.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(startIncrementalFetch.fulfilled, (state, action) => {
-        state.error = null;
-      })
-      .addCase(startIncrementalFetch.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-        state.incrementalFetch.isActive = false;
-        state.incrementalFetch.error = action.payload;
+      .addCase(fetchSinglePage.rejected, (state) => {
+        // handled by _setPageRejected
       })
 
-    // continueIncrementalFetch cases
-      .addCase(continueIncrementalFetch.fulfilled, (state, action) => {
-        if (action.payload.shouldStop) {
-          state.loading = false;
-        }
-      })
-      .addCase(continueIncrementalFetch.rejected, (state, action) => {
-        state.incrementalFetch.isActive = false;
-        state.incrementalFetch.error = action.payload;
-      })
-
-    // fetchAndIndexAllProducts cases (backward compatibility)
       .addCase(fetchAndIndexAllProducts.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchAndIndexAllProducts.fulfilled, (state, action) => {
+      .addCase(fetchAndIndexAllProducts.fulfilled, (state) => {
         state.loading = false;
         state.error = null;
       })
       .addCase(fetchAndIndexAllProducts.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error = action.payload || action.error?.message;
       });
   }
 });
 
-// Export actions
-export const { 
+/* -------------------------
+   Exports
+------------------------- */
+
+export const {
   _setPagePending,
-  _setPageFulfilled, 
+  _setPageFulfilled,
   _setPageRejected,
   setIncrementalFetchConfig,
   updateIncrementalFetchProgress,
@@ -606,74 +414,16 @@ export const selectSearchResults = (state) => state.products.searchResults;
 export const selectSearchLoading = (state) => state.products.searchLoading;
 export const selectSearchError = (state) => state.products.searchError;
 export const selectCart = (state) => state.products.cart;
-export const selectCartItemCount = (state) => 
+export const selectCartItemCount = (state) =>
   state.products.cart.reduce((count, item) => count + (item.quantity || 1), 0);
-export const selectCartTotal = (state) => 
+export const selectCartTotal = (state) =>
   state.products.cart.reduce((total, item) => {
-    // Use priceType to determine which price to use
     const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
     return total + (price * (item.quantity || 1));
   }, 0);
+
 export const selectFilters = (state) => state.products.filters;
 export const selectPagination = (state) => state.products.pagination;
 export const selectPageStatus = (state) => state.products.pageStatus;
-
-// New selectors for incremental fetch
-export const selectIncrementalFetch = (state) => state.products.incrementalFetch;
-export const selectIncrementalFetchIsActive = (state) => state.products.incrementalFetch.isActive;
-export const selectIncrementalFetchProgress = (state) => ({
-  currentPage: state.products.incrementalFetch.currentPage,
-  totalFetched: state.products.incrementalFetch.totalFetched,
-  hasMore: state.products.incrementalFetch.hasMore,
-  isPaused: state.products.incrementalFetch.isPaused,
-  error: state.products.incrementalFetch.error
-});
-
-// Enhanced page status selector with summary
-export const selectPageStatusSummary = (state) => {
-  const pageStatus = state.products.pageStatus || {};
-  const pages = Object.keys(pageStatus);
-  
-  return {
-    totalPages: pages.length,
-    pending: pages.filter(p => pageStatus[p].status === 'pending').length,
-    fulfilled: pages.filter(p => pageStatus[p].status === 'fulfilled').length,
-    rejected: pages.filter(p => pageStatus[p].status === 'rejected').length,
-    totalItems: pages.reduce((sum, p) => sum + (pageStatus[p].itemCount || 0), 0)
-  };
-};
-
-// Filtered products selector
-export const selectFilteredProducts = (state) => {
-  const { products, filters } = state.products;
-  let filtered = [...products];
-
-  // Filter by category
-  if (filters.category && filters.category !== '') {
-    filtered = filtered.filter(product => 
-      (product.category || '').toLowerCase().includes(filters.category.toLowerCase())
-    );
-  }
-
-  // Filter by price range
-  if (filters.priceRange.min > 0 || filters.priceRange.max < Infinity) {
-    filtered = filtered.filter(product => {
-      const price = product.salePrice || product.price || 0;
-      return price >= filters.priceRange.min && price <= filters.priceRange.max;
-    });
-  }
-
-  // Filter by search term
-  if (filters.searchTerm && filters.searchTerm.trim() !== '') {
-    const searchTerm = filters.searchTerm.toLowerCase();
-    filtered = filtered.filter(product => 
-      (product.name || '').toLowerCase().includes(searchTerm) ||
-      (product.description || '').toLowerCase().includes(searchTerm) ||
-      (product.category || '').toLowerCase().includes(searchTerm)
-    );
-  }
-
-  return filtered;
-};
 
 export default productsSlice.reducer;

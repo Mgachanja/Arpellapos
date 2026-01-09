@@ -20,23 +20,19 @@ apiClient.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Handle common errors
     if (error.response?.status === 401) {
-      // Unauthorized - clear token and redirect to login
       localStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
       localStorage.removeItem(STORAGE_KEYS.USER_DATA);
+      // optional: keep user on same page or redirect
       window.location.href = '/login';
     }
-    
     return Promise.reject(error);
   }
 );
@@ -52,16 +48,26 @@ export const apiService = {
 
   // Products
   getProducts: (params = {}) => apiClient.get('/products', { params }),
-  getPagedProducts: (pageNumber = 1, pageSize = 200) => 
+  getPagedProducts: (pageNumber = 1, pageSize = 200) =>
     apiClient.get('/pos-paged-products', { params: { pageNumber, pageSize } }),
   getProductById: (id) => apiClient.get(`/products/${id}`),
   searchProducts: (searchTerm, pageNumber = 1, pageSize = 50) =>
-    apiClient.get('/products/search', { 
-      params: { q: searchTerm, pageNumber, pageSize } 
+    apiClient.get('/products/search', {
+      params: { q: searchTerm, pageNumber, pageSize }
     }),
   createProduct: (productData) => apiClient.post('/products', productData),
   updateProduct: (id, productData) => apiClient.put(`/products/${id}`, productData),
   deleteProduct: (id) => apiClient.delete(`/products/${id}`),
+
+  // Inventories (new)
+  // - endpoint returns paginated inventories similar to products
+  getInventories: (params = {}) => apiClient.get('/inventories', { params }),
+  getPagedInventories: (pageNumber = 1, pageSize = 200) =>
+    apiClient.get('/paged-inventories', { params: { pageNumber, pageSize } }),
+  getInventoryById: (inventoryId) => apiClient.get(`/inventories/${inventoryId}`),
+  createInventory: (payload) => apiClient.post('/inventories', payload),
+  updateInventory: (id, payload) => apiClient.put(`/inventories/${id}`, payload),
+  deleteInventory: (id) => apiClient.delete(`/inventories/${id}`),
 
   // Orders
   getOrders: (params = {}) => apiClient.get('/orders', { params }),
@@ -78,10 +84,10 @@ export const apiService = {
   login: (credentials) => apiClient.post('/auth/login', credentials),
   logout: () => apiClient.post('/auth/logout'),
   refreshToken: () => apiClient.post('/auth/refresh'),
-  
+
   // Categories
   getCategories: () => apiClient.get('/categories'),
-  
+
   // Stats/Analytics
   getDashboardStats: () => apiClient.get('/stats/dashboard'),
   getSalesReport: (params) => apiClient.get('/reports/sales', { params })
@@ -105,41 +111,24 @@ export const apiUtils = {
   },
 
   /**
-   * Create paginated request
-   * @param {Function} apiMethod - API method to call
-   * @param {Object} params - Parameters for the API call
-   * @returns {Promise} - Promise resolving to paginated data
+   * Generic paginated fetch helper used by callers
+   * apiMethod should be a function that accepts (pageNumber, pageSize, otherParams)
    */
-  getPaginated: async (apiMethod, params = {}) => {
-    const { page = 1, limit = 50, ...otherParams } = params;
-    return apiMethod({ page, limit, ...otherParams });
-  },
-
-  /**
-   * Retry API call with exponential backoff
-   * @param {Function} apiCall - Function that returns a promise
-   * @param {number} maxRetries - Maximum number of retries
-   * @param {number} baseDelay - Base delay in milliseconds
-   * @returns {Promise} - Promise resolving to API response
-   */
-  retryApiCall: async (apiCall, maxRetries = 3, baseDelay = 1000) => {
-    let lastError;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await apiCall();
-      } catch (error) {
-        lastError = error;
-        
-        if (attempt === maxRetries) {
-          throw lastError;
-        }
-        
-        // Exponential backoff
-        const delay = baseDelay * Math.pow(2, attempt - 1);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
+  fetchAllPages: async (apiMethod, { pageSize = 200, maxPages = 50, onPage } = {}) => {
+    let page = 1;
+    const all = [];
+    while (page <= maxPages) {
+      const res = await apiMethod(page, pageSize);
+      const data = res?.data ?? res;
+      // normalize to array
+      const items = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : (Array.isArray(data.data) ? data.data : []));
+      if (!items || items.length === 0) break;
+      all.push(...items);
+      if (typeof onPage === 'function') onPage(items, page);
+      if (items.length < pageSize) break;
+      page += 1;
     }
+    return all;
   }
 };
 

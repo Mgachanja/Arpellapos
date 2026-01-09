@@ -1,27 +1,28 @@
-// src/services/orderPoller.js
-// Singleton poller that continuously checks server paged orders for new items.
-// - Runs automatically when imported.
-// - Exposes subscribe(listener) / unsubscribe(handle) / getState() / checkNow() / clearNewFlag()
-
+// Robust order poller with named + default exports
+// No imports that escape src/.
 import axios from 'axios';
 
-// Try to import constants from common locations
 let SERVER_BASE = '/api';
 try {
-  // Adjust this path based on where your constants file is located
-  const constants = require('../constants');
-  SERVER_BASE = constants?.baseUrl || constants?.default?.baseUrl || '/api';
+  // resolve constants relative to src/services
+  // if your constants file is elsewhere adjust the path
+  // use require to avoid bundler issues during SSR
+  // eslint-disable-next-line global-require, import/no-dynamic-require
+  const constants = require('../../app/constants/index');
+  SERVER_BASE = constants?.baseUrl || constants?.default?.baseUrl || SERVER_BASE;
 } catch (e) {
   try {
+    // fallback path
+    // eslint-disable-next-line global-require, import/no-dynamic-require
     const constants = require('../app/constants');
-    SERVER_BASE = constants?.baseUrl || constants?.default?.baseUrl || '/api';
+    SERVER_BASE = constants?.baseUrl || constants?.default?.baseUrl || SERVER_BASE;
   } catch (e2) {
-    console.warn('Could not load constants, using default API path');
+    // keep default
   }
 }
 
-const POLL_INTERVAL_MS = 60_000; // 1 minute
-const PAGE_SIZE = 100; // Fetch 100 items per page
+const POLL_INTERVAL_MS = 60_000;
+const PAGE_SIZE = 100;
 const STORAGE_KEY = 'arpella:lastServerOrderTs';
 const NEW_FLAG_KEY = 'arpella:hasNewServerOrders';
 const NEW_ORDERS_COUNT_KEY = 'arpella:newOrdersCount';
@@ -49,7 +50,6 @@ async function checkOnce() {
     let foundNewOrders = [];
     let newest = lastLatestTs || 0;
 
-    // Iterate through all pages until we get less than PAGE_SIZE items
     while (true) {
       const url = `${SERVER_BASE}/paged-orders?pageNumber=${page}&pageSize=${PAGE_SIZE}`;
       const res = await axios.get(url);
@@ -57,7 +57,6 @@ async function checkOnce() {
 
       if (!items || items.length === 0) break;
 
-      // Check each item for new orders
       for (const it of items) {
         const t = Number(it.createdAt || it.created_at || it.timestamp || it.orderDate || 0);
         if (!lastLatestTs || t > lastLatestTs) {
@@ -66,29 +65,25 @@ async function checkOnce() {
         }
       }
 
-      // If we got less than PAGE_SIZE items, this is the last page
       if (items.length < PAGE_SIZE) break;
-      
-      // If we already found new orders, no need to continue
       if (foundNewOrders.length > 0) break;
-      
       page += 1;
     }
 
     if (foundNewOrders.length > 0) {
       lastLatestTs = newest;
       newOrdersCount = foundNewOrders.length;
-      localStorage.setItem(STORAGE_KEY, String(lastLatestTs));
-      localStorage.setItem(NEW_ORDERS_COUNT_KEY, String(newOrdersCount));
+      try { localStorage.setItem(STORAGE_KEY, String(lastLatestTs)); } catch (e) {}
+      try { localStorage.setItem(NEW_ORDERS_COUNT_KEY, String(newOrdersCount)); } catch (e) {}
       setNewFlag(true);
-      notifyListeners({ 
-        type: 'new', 
-        latest: lastLatestTs, 
+      notifyListeners({
+        type: 'new',
+        latest: lastLatestTs,
         count: newOrdersCount,
-        orders: foundNewOrders 
+        orders: foundNewOrders,
       });
     }
-    
+
     return { foundNew: foundNewOrders.length > 0, latest: lastLatestTs, count: foundNewOrders.length };
   } catch (err) {
     console.error('Order poller error:', err);
@@ -106,65 +101,58 @@ function notifyListeners(payload) {
 function setNewFlag(v) {
   hasNew = !!v;
   if (hasNew) {
-    localStorage.setItem(NEW_FLAG_KEY, '1');
+    try { localStorage.setItem(NEW_FLAG_KEY, '1'); } catch (e) {}
   } else {
-    localStorage.removeItem(NEW_FLAG_KEY);
-    localStorage.removeItem(NEW_ORDERS_COUNT_KEY);
+    try { localStorage.removeItem(NEW_FLAG_KEY); } catch (e) {}
+    try { localStorage.removeItem(NEW_ORDERS_COUNT_KEY); } catch (e) {}
     newOrdersCount = 0;
   }
 }
 
-export function subscribe(listener) {
+// named exports
+const subscribe = (listener) => {
+  if (typeof listener !== 'function') return () => {};
   listeners.add(listener);
-  // immediate notify of current state
-  try { 
-    listener({ type: 'state', hasNew, latest: lastLatestTs, count: newOrdersCount }); 
-  } catch (e) {
-    console.error('Subscribe listener error:', e);
-  }
+  try { listener({ type: 'state', hasNew, latest: lastLatestTs, count: newOrdersCount }); } catch (e) { console.error('Subscribe listener error:', e); }
   return () => { listeners.delete(listener); };
-}
+};
 
-export function getState() {
-  return { hasNew, latest: lastLatestTs, running, count: newOrdersCount };
-}
+const getState = () => ({ hasNew, latest: lastLatestTs, running, count: newOrdersCount });
 
-export async function checkNow() {
-  return checkOnce();
-}
+const checkNow = async () => checkOnce();
 
-export function clearNewFlag() {
-  setNewFlag(false);
-  notifyListeners({ type: 'cleared' });
-}
+const clearNewFlag = () => { setNewFlag(false); notifyListeners({ type: 'cleared' }); };
 
-function start() {
+const start = () => {
   if (running) return;
   running = true;
-  // attempt initial check after 2 seconds (non-blocking)
   setTimeout(() => { checkOnce().catch(() => {}); }, 2000);
-  intervalId = setInterval(() => {
-    checkOnce().catch(() => {});
-  }, POLL_INTERVAL_MS);
-}
+  intervalId = setInterval(() => { checkOnce().catch(() => {}); }, POLL_INTERVAL_MS);
+};
 
-export function stop() {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
+const stop = () => {
+  if (intervalId) { clearInterval(intervalId); intervalId = null; }
   running = false;
-}
+};
 
-// Start automatically on import
+// auto-start
 start();
 
-// Expose for debugging
+// exports
+export {
+  subscribe,
+  getState,
+  checkNow,
+  clearNewFlag,
+  start,
+  stop,
+};
+
 export default {
   subscribe,
   getState,
   checkNow,
   clearNewFlag,
   start,
-  stop
+  stop,
 };

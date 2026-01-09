@@ -1,896 +1,685 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  InputGroup,
-  Row,
-  Col,
-  Badge,
-  Pagination,
-  Nav,
-  Tab,
-  Container,
-  Spinner,
-  Alert
-} from 'react-bootstrap';
-import { toast } from 'react-toastify';
-import indexedDb from '../../services/indexedDB';
-import constants from '../constants';
-import axios from 'axios';
+  TrendingUp,
+  DollarSign,
+  ShoppingCart,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  X,
+  AlertCircle
+} from 'lucide-react';
 
-const formatCurrency = (amount) => {
-  const num = Number(amount || 0);
-  const sign = num < 0 ? '-' : '';
-  return `${sign}Ksh ${Math.abs(num).toLocaleString()}`;
+/* ================= Helpers ================= */
+const toLocalYMD = (ts) => {
+  const d = new Date(Number(ts));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-const getDayKey = (date = new Date()) => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
+const formatTime = (ts) =>
+  new Date(Number(ts)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+const num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 };
 
-const formatTime = (timestamp) => {
-  try {
-    const date = new Date(Number(timestamp) || timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '—';
-  }
+const formatKsh = (v) => {
+  const n = num(v);
+  return `${n < 0 ? '-' : ''}Ksh ${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-const normalizePaymentType = (order) => {
-  const type = String(
-    order.paymentType || 
-    order.orderData?.orderPaymentType || 
-    order.payment || 
-    ''
-  ).toLowerCase();
-  
-  if (type.includes('hybrid') || type.includes('both')) return 'hybrid';
-  if (type.includes('mpesa') || type.includes('m-pesa')) return 'mpesa';
-  return 'cash';
+/* ================= IndexedDB helpers (based on your inspector) ================= */
+const DB_NAME = 'ArpellaProductsDB';
+const PRODUCTS_STORE = 'products';
+const INVENTORIES_STORE = 'inventories';
+const ORDERS_STORE = 'orders';
+
+function openDB(name) {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(name);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+function readAll(db, store) {
+  return new Promise((res, rej) => {
+    try {
+      if (!db.objectStoreNames.contains(store)) return res([]);
+      const tx = db.transaction(store, 'readonly');
+      const st = tx.objectStore(store);
+      const rq = st.getAll();
+      rq.onsuccess = () => res(rq.result || []);
+      rq.onerror = () => rej(rq.error);
+    } catch (e) {
+      res([]);
+    }
+  });
+}
+
+/* ================= Normalizers ================= */
+const normalizeOrder = (o) => {
+  const createdAt = num(o.createdAt ?? o.updatedAt ?? Date.now());
+  const items = Array.isArray(o.cart)
+    ? o.cart
+    : Array.isArray(o.orderitems)
+    ? o.orderitems
+    : Array.isArray(o.orderItems)
+    ? o.orderItems
+    : [];
+
+  const cartTotal =
+    num(o.cartTotal ?? o.total ??
+      items.reduce((s, it) => s + num(it.price ?? it.unitPrice ?? it.salePrice) * num(it.quantity ?? it.qty ?? 1), 0));
+
+  return {
+    raw: o,
+    id: o.orderId ?? o._id ?? o.id ?? String(createdAt),
+    createdAt,
+    date: toLocalYMD(createdAt),
+    time: formatTime(createdAt),
+    items,
+    cartTotal,
+    paymentType: String(o.paymentType ?? o.payment ?? 'cash').toLowerCase(),
+  };
 };
 
-const calculateOrderTotal = (order) => {
-  if (order.cartTotal) return Number(order.cartTotal);
-  if (order.total) return Number(order.total);
-  if (order.orderData?.total) return Number(order.orderData.total);
-  
-  const cart = order.cart || order.orderItems || order.items || [];
-  return cart.reduce((sum, item) => {
-    const price = Number(item.price || item.unitPrice || item.salePrice || 0);
-    const qty = Number(item.quantity || item.qty || 1);
-    return sum + (price * qty);
-  }, 0);
-};
+/* ================= Component ================= */
+export default function SalesDashboard() {
+  const today = toLocalYMD(Date.now());
 
-export default function OrderManagement() {
-  const baseUrl = constants?.baseUrl || '/api';
-  
-  const [selectedDate, setSelectedDate] = useState(() => getDayKey());
+  const [date, setDate] = useState(today);
   const [orders, setOrders] = useState([]);
+  const [inventoryCostMap, setInventoryCostMap] = useState({ costMap: new Map(), productInventoryKey: new Map() });
   const [startingCapital, setStartingCapital] = useState(0);
   const [capitalInput, setCapitalInput] = useState('');
-  
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [paymentFilter, setPaymentFilter] = useState('all');
-  
+  const [rowsLimit, setRowsLimit] = useState('all');
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [showOrderModal, setShowOrderModal] = useState(false);
-  
-  const [serverOrders, setServerOrders] = useState([]);
-  const [serverPage, setServerPage] = useState(1);
-  const [serverPageSize, setServerPageSize] = useState(50);
-  const [serverHasMore, setServerHasMore] = useState(true);
-  const [serverLoading, setServerLoading] = useState(false);
-  const [newOrdersAvailable, setNewOrdersAvailable] = useState(false);
-  
-  const mountedRef = useRef(true);
-  const pollIntervalRef = useRef(null);
-  const lastServerTimestampRef = useRef(null);
+  const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Load orders for selected date
-  const loadOrders = useCallback(async (dateKey) => {
-    try {
-      const allOrders = await indexedDb.getAllOrders({ limit: 5000, reverse: true });
-      if (!mountedRef.current) return;
+  const rowsOptions = ['all', 20, 50, 100, 200];
 
-      const dayStart = new Date(`${dateKey}T00:00:00`).getTime();
-      const dayEnd = new Date(`${dateKey}T23:59:59.999`).getTime();
+  /* ================= LOAD DATA FROM INDEXEDDB ================= */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setLoading(true);
+        const db = await openDB(DB_NAME).catch(() => null);
+        if (!alive) return;
 
-      const filtered = allOrders
-        .filter(order => {
-          const timestamp = Number(
-            order.createdAt || 
-            order.orderData?.createdAt || 
-            order.updatedAt || 
-            0
-          );
-          return timestamp >= dayStart && timestamp <= dayEnd;
-        })
-        .map(order => ({
-          ...order,
-          paymentType: normalizePaymentType(order),
-          timestamp: Number(order.createdAt || order.orderData?.createdAt || order.updatedAt || 0)
-        }))
-        .sort((a, b) => b.timestamp - a.timestamp);
+        let productsRaw = [];
+        let inventoriesRaw = [];
+        let ordersRaw = [];
 
-      setOrders(filtered);
-      setCurrentPage(1);
-    } catch (error) {
-      console.error('Failed to load orders:', error);
-      toast.error('Failed to load sales data');
-    }
-  }, []);
-
-  // Load starting capital for selected date
-  const loadStartingCapital = useCallback((dateKey) => {
-    try {
-      const stored = localStorage.getItem(`capital:${dateKey}`);
-      const amount = Number(stored || 0);
-      setStartingCapital(amount);
-      setCapitalInput(amount > 0 ? String(amount) : '');
-    } catch {
-      setStartingCapital(0);
-      setCapitalInput('');
-    }
-  }, []);
-
-  // Save starting capital
-  const saveStartingCapital = useCallback(() => {
-    try {
-      const amount = Number(capitalInput || 0);
-      localStorage.setItem(`capital:${selectedDate}`, String(amount));
-      setStartingCapital(amount);
-      toast.success('Starting capital saved');
-    } catch {
-      toast.error('Failed to save starting capital');
-    }
-  }, [capitalInput, selectedDate]);
-
-  // Date navigation
-  const navigateDate = useCallback((direction) => {
-    const current = new Date(`${selectedDate}T00:00:00`);
-    current.setDate(current.getDate() + direction);
-    const newDate = getDayKey(current);
-    setSelectedDate(newDate);
-    loadOrders(newDate);
-    loadStartingCapital(newDate);
-  }, [selectedDate, loadOrders, loadStartingCapital]);
-
-  const goToToday = useCallback(() => {
-    const today = getDayKey();
-    setSelectedDate(today);
-    loadOrders(today);
-    loadStartingCapital(today);
-  }, [loadOrders, loadStartingCapital]);
-
-  // Filter and paginate orders
-  const filteredOrders = useMemo(() => {
-    if (paymentFilter === 'all') return orders;
-    return orders.filter(order => order.paymentType === paymentFilter);
-  }, [orders, paymentFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
-  const safePage = Math.min(currentPage, totalPages);
-  const paginatedOrders = useMemo(() => {
-    const start = (safePage - 1) * pageSize;
-    return filteredOrders.slice(start, start + pageSize);
-  }, [filteredOrders, safePage, pageSize]);
-
-  // Calculate totals with working capital deduction
-  const totals = useMemo(() => {
-    const salesTotals = filteredOrders.reduce((acc, order) => {
-      const total = calculateOrderTotal(order);
-      const payment = order.paymentType;
-
-      if (payment === 'hybrid') {
-        const paymentData = order.paymentData || order.orderData?.paymentData || {};
-        acc.cash += Number(paymentData.cashAmount || paymentData.cash || 0);
-        acc.mpesa += Number(paymentData.mpesaAmount || paymentData.mpesa || 0);
-      } else if (payment === 'mpesa') {
-        acc.mpesa += total;
-      } else {
-        acc.cash += total;
-      }
-      
-      acc.grand += total;
-      return acc;
-    }, { cash: 0, mpesa: 0, grand: 0 });
-
-    // Deduct starting capital from cash and grand total
-    return {
-      cashGross: salesTotals.cash,
-      mpesa: salesTotals.mpesa,
-      cashNet: salesTotals.cash - startingCapital,
-      grandNet: salesTotals.grand - startingCapital,
-      capital: startingCapital
-    };
-  }, [filteredOrders, startingCapital]);
-
-  // Server orders - fetch page
-  const fetchServerOrders = useCallback(async (page, size) => {
-    setServerLoading(true);
-    try {
-      const response = await axios.get(`${baseUrl}/paged-orders`, {
-        params: { pageNumber: page, pageSize: size }
-      });
-
-      const data = response.data;
-      let items = [];
-      
-      if (Array.isArray(data)) items = data;
-      else if (Array.isArray(data.items)) items = data.items;
-      else if (Array.isArray(data.data)) items = data.data;
-      else if (Array.isArray(data.orders)) items = data.orders;
-
-      setServerOrders(items);
-      setServerHasMore(items.length >= size);
-      setServerPage(page);
-
-      if (page === 1 && items.length > 0) {
-        const latestTimestamp = Math.max(
-          ...items.map(order => Number(order.createdAt || order.created_at || order.timestamp || 0))
-        );
-        if (!lastServerTimestampRef.current) {
-          lastServerTimestampRef.current = latestTimestamp;
+        if (db) {
+          [productsRaw, inventoriesRaw, ordersRaw] = await Promise.all([
+            readAll(db, PRODUCTS_STORE).catch(() => []),
+            readAll(db, INVENTORIES_STORE).catch(() => []),
+            readAll(db, ORDERS_STORE).catch(() => []),
+          ]);
         }
-      }
-    } catch (error) {
-      console.error('Failed to fetch server orders:', error);
-      toast.error('Failed to load server orders');
-    } finally {
-      setServerLoading(false);
-    }
-  }, [baseUrl]);
 
-  // Poll for new server orders
-  const checkForNewOrders = useCallback(async () => {
-    if (!lastServerTimestampRef.current) return;
-
-    try {
-      let foundNew = false;
-      let highestTimestamp = lastServerTimestampRef.current;
-
-      for (let page = 1; page <= 5; page++) {
-        const response = await axios.get(`${baseUrl}/paged-orders`, {
-          params: { pageNumber: page, pageSize: serverPageSize }
+        // Build product map: inventoryId -> productId
+        const productInventoryKey = new Map();
+        (productsRaw || []).forEach(p => {
+          if (p.inventoryId && p.productId) {
+            productInventoryKey.set(String(p.inventoryId), String(p.productId));
+          }
         });
 
-        const data = response.data;
-        let items = [];
-        
-        if (Array.isArray(data)) items = data;
-        else if (Array.isArray(data.items)) items = data.items;
-        else if (Array.isArray(data.data)) items = data.data;
-        else if (Array.isArray(data.orders)) items = data.orders;
+        // Build a robust cost map: key -> { stockPrice, ts }
+        // We'll index inventories by several candidate keys so lookups are tolerant of schema differences.
+        const costMap = new Map();
+        (inventoriesRaw || []).forEach(inv => {
+          const ts = new Date(inv.updatedAt ?? inv.createdAt ?? 0).getTime();
+          const stockPrice = num(inv.stockPrice ?? inv.unitCost ?? inv.cost);
 
-        if (items.length === 0) break;
+          const keyCandidates = [inv.productId, inv.inventoryId, inv.product_id, inv.inventory_id]
+            .filter(Boolean)
+            .map(String);
 
-        for (const order of items) {
-          const timestamp = Number(order.createdAt || order.created_at || order.timestamp || 0);
-          if (timestamp > lastServerTimestampRef.current) {
-            foundNew = true;
-            highestTimestamp = Math.max(highestTimestamp, timestamp);
-          }
-        }
+          // if no key candidates, try to use productId-like fields
+          if (keyCandidates.length === 0 && inv.productId) keyCandidates.push(String(inv.productId));
 
-        if (foundNew || items.length < serverPageSize) break;
+          keyCandidates.forEach(key => {
+            const cur = costMap.get(key);
+            if (!cur || ts > cur.ts) {
+              costMap.set(key, { stockPrice, ts });
+            }
+          });
+        });
+
+        setInventoryCostMap({ costMap, productInventoryKey });
+
+        const normalized = (ordersRaw || []).map(normalizeOrder).sort((a, b) => b.createdAt - a.createdAt);
+        setOrders(normalized);
+
+        const saved = num(localStorage.getItem(`capital:${today}`));
+        setStartingCapital(saved);
+        setCapitalInput(saved ? String(saved) : '');
+
+        console.debug('[SalesDashboard] Loaded from IndexedDB:', {
+          products: productsRaw.length,
+          inventories: inventoriesRaw.length,
+          orders: ordersRaw.length,
+          productInventoryKeys: productInventoryKey.size,
+          costKeys: costMap.size,
+        });
+      } catch (e) {
+        console.error('Failed to load data from IndexedDB', e);
+      } finally {
+        if (alive) setLoading(false);
       }
+    })();
+    return () => { alive = false; };
+  }, []);
 
-      if (foundNew) {
-        lastServerTimestampRef.current = highestTimestamp;
-        setNewOrdersAvailable(true);
-        toast.info('New orders available from server', { autoClose: 3000 });
-      }
-    } catch (error) {
-      console.error('Polling error:', error);
-    }
-  }, [baseUrl, serverPageSize]);
-
-  // Setup polling
   useEffect(() => {
-    pollIntervalRef.current = setInterval(checkForNewOrders, 60000);
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+    const saved = num(localStorage.getItem(`capital:${date}`));
+    setStartingCapital(saved);
+    setCapitalInput(saved ? String(saved) : '');
+  }, [date]);
+
+  /* ================= PROFIT CALC ================= */
+  const getUnitCost = (item) => {
+    const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? '');
+    // try to resolve productId from productInventoryKey map
+    const productKey = inventoryCostMap.productInventoryKey?.get(invId) || invId;
+    const entry = inventoryCostMap.costMap?.get(productKey) || inventoryCostMap.costMap?.get(invId);
+    return num(entry?.stockPrice);
+  };
+
+  const calculateOrderProfit = (order) =>
+    order.items.reduce((sum, it) => {
+      const sell = num(it.price ?? it.unitPrice ?? it.salePrice);
+      const cost = getUnitCost(it);
+      const qty = num(it.quantity ?? it.qty ?? 1);
+      return sum + (sell - cost) * qty;
+    }, 0);
+
+  const dayOrders = useMemo(() => orders.filter(o => o.date === date), [orders, date]);
+
+  const displayedOrders = useMemo(() => {
+    if (rowsLimit === 'all') return dayOrders;
+    return dayOrders.slice(0, Number(rowsLimit));
+  }, [dayOrders, rowsLimit]);
+
+  const totals = useMemo(() => {
+    let revenue = 0, cogs = 0, cash = 0, mpesa = 0;
+
+    dayOrders.forEach(o => {
+      revenue += num(o.cartTotal);
+      o.items.forEach(it => {
+        cogs += getUnitCost(it) * num(it.quantity ?? it.qty ?? 1);
+      });
+
+      const pt = String(o.paymentType || 'cash').toLowerCase();
+      if (pt.includes('mpesa')) mpesa += num(o.cartTotal);
+      else if (pt.includes('hybrid')) {
+        const pd = o.raw?.paymentData ?? o.raw?.orderData?.paymentData ?? {};
+        cash += num(pd.cashAmount ?? pd.cash ?? 0);
+        mpesa += num(pd.mpesaAmount ?? pd.mpesa ?? 0);
+      } else cash += num(o.cartTotal);
+    });
+
+    const profit = revenue - cogs;
+    const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+    return {
+      revenue,
+      cogs,
+      profit,
+      margin,
+      netAfterCapital: profit - startingCapital,
+      cash,
+      mpesa,
+      capital: startingCapital
     };
-  }, [checkForNewOrders]);
+  }, [dayOrders, inventoryCostMap, startingCapital]);
 
-  // Initial load
-  useEffect(() => {
-    mountedRef.current = true;
-    loadOrders(selectedDate);
-    loadStartingCapital(selectedDate);
-    fetchServerOrders(1, serverPageSize);
+  const saveCapital = () => {
+    const n = num(capitalInput);
+    localStorage.setItem(`capital:${date}`, String(n));
+    setStartingCapital(n);
+  };
 
-    // Listen for storage changes (cross-tab sync)
-    const handleStorageChange = (event) => {
-      if (event.key?.startsWith('arpella-orders-msg-')) {
-        try {
-          const message = JSON.parse(event.newValue);
-          if (['order-put', 'order-updated', 'order-deleted', 'orders-cleared'].includes(message.type)) {
-            loadOrders(selectedDate);
-          }
-        } catch {}
-      }
-    };
+  const prevDate = () => {
+    const d = new Date(`${date}T00:00:00`);
+    d.setDate(d.getDate() - 1);
+    setDate(toLocalYMD(d));
+  };
 
-    window.addEventListener('storage', handleStorageChange);
+  const nextDate = () => {
+    const d = new Date(`${date}T00:00:00`);
+    d.setDate(d.getDate() + 1);
+    setDate(toLocalYMD(d));
+  };
 
-    return () => {
-      mountedRef.current = false;
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [selectedDate, loadOrders, loadStartingCapital, fetchServerOrders, serverPageSize]);
+  const goToday = () => setDate(toLocalYMD(Date.now()));
 
-  // Order modal handlers
-  const openOrderDetails = useCallback((order) => {
+  const loadMore = () => {
+    if (rowsLimit === 'all') return;
+    const n = Number(rowsLimit) || 0;
+    const next = n + Math.max(20, n || 20);
+    if (next >= dayOrders.length) setRowsLimit('all');
+    else setRowsLimit(next);
+  };
+
+  const openOrderModal = (order) => {
     setSelectedOrder(order);
-    setShowOrderModal(true);
-  }, []);
+    setShowModal(true);
+  };
 
-  const closeOrderDetails = useCallback(() => {
+  const closeModal = () => {
     setSelectedOrder(null);
-    setShowOrderModal(false);
-  }, []);
+    setShowModal(false);
+  };
 
-  // Export functions
-  const exportDaySales = useCallback(() => {
-    try {
-      const data = JSON.stringify(orders, null, 2);
-      const blob = new Blob([data], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `sales-${selectedDate}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      toast.success('Export complete');
-    } catch {
-      toast.error('Export failed');
-    }
-  }, [orders, selectedDate]);
-
-  const exportServerPage = useCallback(() => {
-    try {
-      const data = JSON.stringify(serverOrders, null, 2);
-      const blob = new Blob([data], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `server-orders-page${serverPage}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      toast.success('Export complete');
-    } catch {
-      toast.error('Export failed');
-    }
-  }, [serverOrders, serverPage]);
-
-  // Clear day sales
-  const clearDaySales = useCallback(async () => {
-    if (!window.confirm(`Clear all sales for ${selectedDate}? This cannot be undone.`)) return;
-
-    try {
-      const orderIds = orders.map(o => o.orderId).filter(Boolean);
-      await Promise.all(orderIds.map(id => indexedDb.deleteOrder(id).catch(() => {})));
-      toast.success(`Cleared sales for ${selectedDate}`);
-      loadOrders(selectedDate);
-    } catch {
-      toast.error('Failed to clear sales');
-    }
-  }, [orders, selectedDate, loadOrders]);
-
+  /* ================= RENDER ================= */
   return (
-    <Container fluid className="py-4">
-      <Row className="mb-3 align-items-center">
-        <Col>
-          <h3>Sales Management</h3>
-          <p className="text-muted mb-0">View and manage daily sales transactions</p>
-        </Col>
-        <Col xs="auto">
-          <Button 
-            variant="primary" 
-            onClick={() => window.location.hash = '#/app/dashboard/pos'}
-          >
-            Open POS
-          </Button>
-        </Col>
-      </Row>
-
-      <Tab.Container defaultActiveKey="daily">
-        <Nav variant="tabs" className="mb-4">
-          <Nav.Item>
-            <Nav.Link eventKey="daily">Daily Sales</Nav.Link>
-          </Nav.Item>
-          <Nav.Item>
-            <Nav.Link eventKey="server">
-              Server Records
-              {newOrdersAvailable && (
-                <Badge bg="danger" className="ms-2">New</Badge>
-              )}
-            </Nav.Link>
-          </Nav.Item>
-        </Nav>
-
-        <Tab.Content>
-          <Tab.Pane eventKey="daily">
-            {/* Date Navigation */}
-            <Row className="mb-3 align-items-center">
-              <Col md={6}>
-                <div className="d-flex gap-2 align-items-center">
-                  <Button 
-                    variant="outline-secondary" 
-                    size="sm" 
-                    onClick={() => navigateDate(-1)}
-                  >
-                    ← Previous
-                  </Button>
-                  <Button 
-                    variant="outline-primary" 
-                    size="sm" 
-                    onClick={goToToday}
-                  >
-                    Today
-                  </Button>
-                  <Button 
-                    variant="outline-secondary" 
-                    size="sm" 
-                    onClick={() => navigateDate(1)}
-                  >
-                    Next →
-                  </Button>
-                  <Form.Control
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => {
-                      setSelectedDate(e.target.value);
-                      loadOrders(e.target.value);
-                      loadStartingCapital(e.target.value);
-                    }}
-                    style={{ maxWidth: 180 }}
-                  />
-                </div>
-              </Col>
-              <Col md={6} className="text-md-end mt-2 mt-md-0">
-                <Button 
-                  variant="outline-secondary" 
-                  size="sm" 
-                  onClick={exportDaySales}
-                  className="me-2"
-                >
-                  Export
-                </Button>
-                <Button 
-                  variant="outline-danger" 
-                  size="sm" 
-                  onClick={clearDaySales}
-                >
-                  Clear Day
-                </Button>
-              </Col>
-            </Row>
-
-            {/* Controls */}
-            <Row className="mb-3">
-              <Col md={6}>
-                <InputGroup style={{ maxWidth: 300 }}>
-                  <InputGroup.Text>Filter</InputGroup.Text>
-                  <Form.Select 
-                    value={paymentFilter} 
-                    onChange={(e) => {
-                      setPaymentFilter(e.target.value);
-                      setCurrentPage(1);
-                    }}
-                  >
-                    <option value="all">All Payments</option>
-                    <option value="cash">Cash Only</option>
-                    <option value="mpesa">M-Pesa Only</option>
-                    <option value="hybrid">Hybrid Only</option>
-                  </Form.Select>
-                </InputGroup>
-              </Col>
-              <Col md={6}>
-                <InputGroup style={{ maxWidth: 380, marginLeft: 'auto' }}>
-                  <InputGroup.Text>Starting Capital</InputGroup.Text>
-                  <Form.Control
-                    type="number"
-                    value={capitalInput}
-                    onChange={(e) => setCapitalInput(e.target.value)}
-                    placeholder="0"
-                  />
-                  <Button 
-                    variant="outline-primary" 
-                    onClick={saveStartingCapital}
-                  >
-                    Save
-                  </Button>
-                </InputGroup>
-              </Col>
-            </Row>
-
-            {/* Sales Table */}
-            <Table hover responsive bordered>
-              <thead className="table-light">
-                <tr>
-                  <th style={{ width: 100 }}>Time</th>
-                  <th>Order ID</th>
-                  <th style={{ width: 150 }}>Payment</th>
-                  <th className="text-end" style={{ width: 130 }}>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedOrders.map((order) => {
-                  const amount = calculateOrderTotal(order);
-                  const payment = order.paymentType;
-
-                  return (
-                    <tr 
-                      key={order.orderId || order.timestamp} 
-                      onClick={() => openOrderDetails(order)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <td>{formatTime(order.timestamp)}</td>
-                      <td className="font-monospace small">
-                        {String(order.orderId || '').slice(0, 24)}
-                      </td>
-                      <td>
-                        {payment === 'cash' && <Badge bg="success">Cash</Badge>}
-                        {payment === 'mpesa' && <Badge bg="primary">M-Pesa</Badge>}
-                        {payment === 'hybrid' && <Badge bg="warning" text="dark">Hybrid</Badge>}
-                      </td>
-                      <td className="text-end fw-semibold">{formatCurrency(amount)}</td>
-                    </tr>
-                  );
-                })}
-                {paginatedOrders.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="text-center text-muted py-4">
-                      No sales recorded for this date
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-              <tfoot className="table-light">
-                <tr>
-                  <td colSpan={2} className="fw-bold">SALES TOTALS</td>
-                  <td>
-                    <div className="small">
-                      <div>Cash Sales: <span className="fw-semibold">{formatCurrency(totals.cashGross)}</span></div>
-                      <div>M-Pesa: <span className="fw-semibold">{formatCurrency(totals.mpesa)}</span></div>
-                    </div>
-                  </td>
-                  <td className="text-end fw-bold">{formatCurrency(totals.cashGross + totals.mpesa)}</td>
-                </tr>
-                {totals.capital > 0 && (
-                  <tr>
-                    <td colSpan={2} className="fw-bold text-danger">LESS: Working Capital</td>
-                    <td>
-                      <div className="small text-danger">
-                        <div>Starting Capital</div>
-                      </div>
-                    </td>
-                    <td className="text-end fw-bold text-danger">-{formatCurrency(totals.capital)}</td>
-                  </tr>
-                )}
-                <tr className="table-info">
-                  <td colSpan={2} className="fw-bold fs-6">NET SALe</td>
-                  <td>
-                    <div className="small">
-                      <div>Cash Net: <span className={`fw-semibold ${totals.cashNet < 0 ? 'text-danger' : ''}`}>
-                        {formatCurrency(totals.cashNet)}
-                      </span></div>
-                      <div>M-Pesa: <span className="fw-semibold">{formatCurrency(totals.mpesa)}</span></div>
-                    </div>
-                  </td>
-                  <td className={`text-end fw-bold fs-5 ${totals.grandNet < 0 ? 'text-danger' : 'text-success'}`}>
-                    {formatCurrency(totals.grandNet)}
-                  </td>
-                </tr>
-              </tfoot>
-            </Table>
-
-            {/* Pagination */}
-            <Row className="align-items-center">
-              <Col>
-                <small className="text-muted">
-                  Showing {paginatedOrders.length} of {filteredOrders.length} transactions
-                </small>
-              </Col>
-              <Col xs="auto">
-                <div className="d-flex gap-2 align-items-center">
-                  <Form.Select 
-                    size="sm" 
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
-                    }}
-                    style={{ width: 80 }}
-                  >
-                    {[10, 20, 50, 100].map(size => (
-                      <option key={size} value={size}>{size}</option>
-                    ))}
-                  </Form.Select>
-                  <Pagination size="sm" className="mb-0">
-                    <Pagination.First 
-                      onClick={() => setCurrentPage(1)}
-                      disabled={safePage === 1}
-                    />
-                    <Pagination.Prev 
-                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                      disabled={safePage === 1}
-                    />
-                    <Pagination.Item active>{safePage}</Pagination.Item>
-                    <Pagination.Next 
-                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                      disabled={safePage === totalPages}
-                    />
-                    <Pagination.Last 
-                      onClick={() => setCurrentPage(totalPages)}
-                      disabled={safePage === totalPages}
-                    />
-                  </Pagination>
-                </div>
-              </Col>
-            </Row>
-          </Tab.Pane>
-
-          <Tab.Pane eventKey="server">
-            {/* Server Controls */}
-            <Row className="mb-3 align-items-center">
-              <Col md={6}>
-                <InputGroup style={{ maxWidth: 250 }}>
-                  <InputGroup.Text>Page Size</InputGroup.Text>
-                  <Form.Select 
-                    value={serverPageSize}
-                    onChange={(e) => {
-                      const newSize = Number(e.target.value);
-                      setServerPageSize(newSize);
-                      setServerPage(1);
-                      fetchServerOrders(1, newSize);
-                    }}
-                  >
-                    {[10, 20, 50, 100, 200].map(size => (
-                      <option key={size} value={size}>{size}</option>
-                    ))}
-                  </Form.Select>
-                </InputGroup>
-              </Col>
-              <Col md={6} className="text-md-end">
-                <Button 
-                  variant="outline-primary" 
-                  size="sm"
-                  onClick={() => {
-                    setNewOrdersAvailable(false);
-                    fetchServerOrders(1, serverPageSize);
-                  }}
-                  className="me-2"
-                >
-                  Refresh
-                </Button>
-                <Button 
-                  variant="outline-secondary" 
-                  size="sm"
-                  onClick={exportServerPage}
-                >
-                  Export Page
-                </Button>
-              </Col>
-            </Row>
-
-            {newOrdersAvailable && (
-              <Alert variant="info" dismissible onClose={() => setNewOrdersAvailable(false)}>
-                New orders are available. Click Refresh to load them.
-              </Alert>
-            )}
-
-            {/* Server Orders Table */}
-            <Table hover responsive bordered>
-              <thead className="table-light">
-                <tr>
-                  <th style={{ width: 100 }}>Time</th>
-                  <th>Order ID</th>
-                  <th>Customer</th>
-                  <th style={{ width: 150 }}>Payment</th>
-                  <th className="text-end" style={{ width: 130 }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {serverOrders.map((order, index) => {
-                  const amount = calculateOrderTotal(order);
-                  const payment = normalizePaymentType(order);
-                  const timestamp = Number(
-                    order.createdAt || 
-                    order.created_at || 
-                    order.timestamp || 
-                    Date.now()
-                  );
-
-                  return (
-                    <tr 
-                      key={index}
-                      onClick={() => openOrderDetails(order)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <td>{formatTime(timestamp)}</td>
-                      <td className="font-monospace small">
-                        {String(order._id || order.id || order.orderId || '').slice(0, 24)}
-                      </td>
-                      <td>{order.customerName || order.customer || order.user || 'Walk-in'}</td>
-                      <td>
-                        {payment === 'cash' && <Badge bg="success">Cash</Badge>}
-                        {payment === 'mpesa' && <Badge bg="primary">M-Pesa</Badge>}
-                        {payment === 'hybrid' && <Badge bg="warning" text="dark">Hybrid</Badge>}
-                      </td>
-                      <td className="text-end fw-semibold">{formatCurrency(amount)}</td>
-                    </tr>
-                  );
-                })}
-                {serverOrders.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="text-center text-muted py-4">
-                      {serverLoading ? (
-                        <><Spinner size="sm" className="me-2" />Loading...</>
-                      ) : (
-                        'No server orders found'
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </Table>
-
-            {/* Server Pagination */}
-            <Row className="align-items-center">
-              <Col>
-                <small className="text-muted">
-                  Page {serverPage} {!serverHasMore && '(last page)'}
-                </small>
-              </Col>
-              <Col xs="auto">
-                <div className="d-flex gap-2">
-                  <Button 
-                    variant="outline-secondary" 
-                    size="sm"
-                    onClick={() => {
-                      const prev = Math.max(1, serverPage - 1);
-                      setServerPage(prev);
-                      fetchServerOrders(prev, serverPageSize);
-                    }}
-                    disabled={serverPage === 1 || serverLoading}
-                  >
-                    Previous
-                  </Button>
-                  <Button 
-                    variant="outline-secondary" 
-                    size="sm"
-                    onClick={() => {
-                      const next = serverPage + 1;
-                      setServerPage(next);
-                      fetchServerOrders(next, serverPageSize);
-                    }}
-                    disabled={!serverHasMore || serverLoading}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </Col>
-            </Row>
-          </Tab.Pane>
-        </Tab.Content>
-      </Tab.Container>
-
-      {/* Order Details Modal */}
-      <Modal show={showOrderModal} onHide={closeOrderDetails} size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title>Order Details</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          {selectedOrder && (
-            <>
-              <Row className="mb-3">
-                <Col md={4}>
-                  <small className="text-muted d-block">Date & Time</small>
-                  <strong>
-                    {new Date(
-                      selectedOrder.createdAt || 
-                      selectedOrder.created_at || 
-                      selectedOrder.timestamp || 
-                      Date.now()
-                    ).toLocaleString()}
-                  </strong>
-                </Col>
-                <Col md={4}>
-                  <small className="text-muted d-block">Payment Method</small>
-                  <div className="mt-1">
-                    {selectedOrder.paymentType === 'cash' && <Badge bg="success">Cash</Badge>}
-                    {selectedOrder.paymentType === 'mpesa' && <Badge bg="primary">M-Pesa</Badge>}
-                    {selectedOrder.paymentType === 'hybrid' && <Badge bg="warning" text="dark">Hybrid</Badge>}
-                  </div>
-                </Col>
-                <Col md={4} className="text-end">
-                  <small className="text-muted d-block">Total Amount</small>
-                  <strong className="fs-5">{formatCurrency(calculateOrderTotal(selectedOrder))}</strong>
-                </Col>
-              </Row>
-
-              {(selectedOrder.paymentType === 'mpesa' || selectedOrder.paymentType === 'hybrid') && (
-<Alert variant="info">
-<strong>M-Pesa Phone:</strong>{' '}
-{selectedOrder.paymentData?.mpesaPhone ||
-selectedOrder.customerPhone ||
-selectedOrder.orderData?.phoneNumber ||
-'Not provided'}
-</Alert>
-)}
-<hr />
-
-          <h6 className="mb-3">Items Purchased</h6>
-          <Table bordered size="sm">
-            <thead className="table-light">
-              <tr>
-                <th>Item</th>
-                <th className="text-center" style={{ width: 80 }}>Qty</th>
-                <th className="text-end" style={{ width: 120 }}>Unit Price</th>
-                <th className="text-end" style={{ width: 120 }}>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(selectedOrder.cart || selectedOrder.orderItems || selectedOrder.items || []).map((item, index) => {
-                const name = item.name || 
-                            item.productName || 
-                            item.product?.name || 
-                            item.product?.title || 
-                            `Item ${index + 1}`;
-                const quantity = Number(item.quantity || item.qty || 1);
-                const unitPrice = Number(
-                  item.price || 
-                  item.unitPrice || 
-                  item.salePrice || 
-                  item.product?.price || 
-                  0
-                );
-                const lineTotal = unitPrice * quantity;
-
-                return (
-                  <tr key={index}>
-                    <td>{name}</td>
-                    <td className="text-center">{quantity}</td>
-                    <td className="text-end">{formatCurrency(unitPrice)}</td>
-                    <td className="text-end fw-semibold">{formatCurrency(lineTotal)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot className="table-light">
-              <tr>
-                <td colSpan={3} className="text-end fw-bold">TOTAL</td>
-                <td className="text-end fw-bold fs-6">
-                  {formatCurrency(calculateOrderTotal(selectedOrder))}
-                </td>
-              </tr>
-            </tfoot>
-          </Table>
-
-          <div className="mt-3 text-muted small">
-            <strong>Order ID:</strong>{' '}
-            <span className="font-monospace">{selectedOrder.orderId || selectedOrder._id || selectedOrder.id || 'N/A'}</span>
+    <div className="sales-dashboard-root" aria-live="polite">
+      <div className="container">
+        {/* Header */}
+        <header className="header">
+          <div className="title-block">
+            <div className="icon-wrap">
+              <TrendingUp className="icon" />
+            </div>
+            <div>
+              <h1 className="title">Sales Management</h1>
+              <p className="subtitle">Real-time profit tracking and transaction analytics</p>
+            </div>
           </div>
-        </>
+        </header>
+
+        {/* Controls */}
+        <section className="controls">
+          <div className="controls-left">
+            <button className="nav-btn" onClick={prevDate} aria-label="Previous day">
+              <ChevronLeft className="nav-icon" />
+            </button>
+
+            <div className="date-input">
+              <Calendar className="calendar-icon" />
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="date-field"
+                aria-label="Select date"
+              />
+            </div>
+
+            <button className="nav-btn" onClick={nextDate} aria-label="Next day">
+              <ChevronRight className="nav-icon" />
+            </button>
+
+            <button className="btn primary" onClick={goToday} aria-label="Go to today">Today</button>
+          </div>
+
+          <div className="controls-right">
+            <div className="capital-box">
+              <DollarSign className="capital-icon" />
+              <input
+                value={capitalInput}
+                onChange={(e) => setCapitalInput(e.target.value)}
+                placeholder="Starting capital"
+                className="capital-input"
+                aria-label="Starting capital"
+              />
+              <button className="btn success" onClick={saveCapital} aria-label="Save capital">Save</button>
+            </div>
+          </div>
+        </section>
+
+        {/* Metrics */}
+        <section className="metrics-grid" role="region" aria-label="Key metrics">
+          <article className="metric-card">
+            <div className="metric-head">
+              <div className="metric-icon bg-blue"><ShoppingCart /></div>
+              <span className="metric-label">Revenue</span>
+            </div>
+            <div className="metric-value">{formatKsh(totals.revenue)}</div>
+            <div className="metric-note">Total sales for {date}</div>
+          </article>
+
+          <article className="metric-card">
+            <div className="metric-head">
+              <div className="metric-icon bg-red"><DollarSign /></div>
+              <span className="metric-label">COGS</span>
+            </div>
+            <div className="metric-value">{formatKsh(totals.cogs)}</div>
+            <div className="metric-note">Cost of goods sold</div>
+          </article>
+
+          <article className="metric-card">
+            <div className="metric-head">
+              <div className="metric-icon bg-green"><TrendingUp /></div>
+              <span className="metric-label">Profit</span>
+            </div>
+            <div className="metric-value">{formatKsh(totals.profit)}</div>
+            <div className="metric-note">Margin: {totals.margin.toFixed(1)}%</div>
+          </article>
+
+          <article className="metric-card">
+            <div className="metric-head">
+              <div className="metric-icon bg-indigo"><DollarSign /></div>
+              <span className="metric-label">Net Profit</span>
+            </div>
+            <div className="metric-value">{formatKsh(totals.netAfterCapital)}</div>
+            <div className="metric-note">After capital ({formatKsh(totals.capital)})</div>
+          </article>
+        </section>
+
+        {/* Payment breakdown */}
+        <section className="payment-breakdown">
+          <div className="payment-card cash">
+            <div className="payment-title">Cash Payments</div>
+            <div className="payment-amount">{formatKsh(totals.cash)}</div>
+          </div>
+          <div className="payment-card mpesa">
+            <div className="payment-title">M-Pesa Payments</div>
+            <div className="payment-amount">{formatKsh(totals.mpesa)}</div>
+          </div>
+        </section>
+
+        {/* Transactions table */}
+        <section className="transactions">
+          <div className="transactions-header">
+            <div>
+              <h2 className="transactions-title">Transactions</h2>
+              <p className="transactions-sub">Showing {displayedOrders.length} of {dayOrders.length} transactions</p>
+            </div>
+
+            <div className="transactions-controls">
+              <select
+                value={rowsLimit}
+                onChange={(e) => setRowsLimit(e.target.value)}
+                className="rows-select"
+                aria-label="Rows to display"
+              >
+                {rowsOptions.map((o) => (
+                  <option key={String(o)} value={o}>
+                    {o === 'all' ? 'All rows' : `${o} rows`}
+                  </option>
+                ))}
+              </select>
+
+              {rowsLimit !== 'all' && displayedOrders.length < dayOrders.length && (
+                <button className="btn primary" onClick={loadMore}>Load More</button>
+              )}
+            </div>
+          </div>
+
+          <div className="transactions-body">
+            {loading ? (
+              <div className="empty-state">
+                <div className="spinner" role="status" aria-hidden="true" />
+                <p>Loading transactions...</p>
+              </div>
+            ) : displayedOrders.length === 0 ? (
+              <div className="empty-state">
+                <AlertCircle className="empty-icon" />
+                <p>No transactions found for this date</p>
+              </div>
+            ) : (
+              <div className="table-wrap" role="table" aria-label="Transactions table">
+                <table className="transactions-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Order ID</th>
+                      <th>Payment</th>
+                      <th className="text-right">Amount</th>
+                      <th className="text-right">Profit</th>
+                      <th className="text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayedOrders.map((o) => {
+                      const orderProfit = calculateOrderProfit(o);
+                      const paymentType = String(o.paymentType).toLowerCase();
+
+                      return (
+                        <tr key={o.id} onClick={() => openOrderModal(o)} className="table-row">
+                          <td className="mono">{o.time}</td>
+                          <td className="mono id-cell">{String(o.id).slice(0, 12)}</td>
+                          <td>
+                            {paymentType.includes('mpesa') ? (
+                              <span className="badge mpesa">M-Pesa</span>
+                            ) : paymentType.includes('hybrid') ? (
+                              <span className="badge hybrid">Hybrid</span>
+                            ) : (
+                              <span className="badge cash">Cash</span>
+                            )}
+                          </td>
+                          <td className="text-right bold">{formatKsh(o.cartTotal)}</td>
+                          <td className="text-right bold profit">{formatKsh(orderProfit)}</td>
+                          <td className="text-center">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openOrderModal(o);
+                              }}
+                              className="icon-btn"
+                              aria-label={`View order ${o.id}`}
+                            >
+                              <Eye />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* Order Modal */}
+      {showModal && selectedOrder && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeModal}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>Order Details</h3>
+                <p className="meta">Order #{selectedOrder.id} • {selectedOrder.date} {selectedOrder.time}</p>
+              </div>
+              <button className="icon-btn close" onClick={closeModal} aria-label="Close">
+                <X />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-table-wrap">
+                <table className="details-table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th className="text-right">Price</th>
+                      <th className="text-center">Qty</th>
+                      <th className="text-right">Cost</th>
+                      <th className="text-right">Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedOrder.items.map((it, idx) => {
+                      const sell = num(it.price ?? it.unitPrice ?? it.salePrice);
+                      const qty = num(it.quantity ?? it.qty ?? 1);
+                      const cost = getUnitCost(it);
+                      const profit = (sell - cost) * qty;
+                      return (
+                        <tr key={idx}>
+                          <td className="item-name">{it.name ?? it.title ?? 'Item'}</td>
+                          <td className="text-right">{formatKsh(sell)}</td>
+                          <td className="text-center">{qty}</td>
+                          <td className="text-right">{formatKsh(cost)}</td>
+                          <td className={`text-right ${profit >= 0 ? 'profit-positive' : 'profit-negative'}`}>{formatKsh(profit)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan="4" className="text-bold">Total Order Profit</td>
+                      <td className="text-right text-bold profit-total">{formatKsh(calculateOrderProfit(selectedOrder))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              <div className="order-summary">
+                <div className="summary-card">
+                  <div className="summary-label">Order Total</div>
+                  <div className="summary-value">{formatKsh(selectedOrder.cartTotal)}</div>
+                </div>
+                <div className="summary-card">
+                  <div className="summary-label">Payment Type</div>
+                  <div className="summary-value capitalize">{selectedOrder.paymentType}</div>
+                </div>
+                <div className="summary-card">
+                  <div className="summary-label">Items Count</div>
+                  <div className="summary-value">{selectedOrder.items.length}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
-    </Modal.Body>
-    <Modal.Footer>
-      <Button variant="secondary" onClick={closeOrderDetails}>
-        Close
-      </Button>
-    </Modal.Footer>
-  </Modal>
-</Container>);
+
+      {/* Styles */}
+      <style>{`
+        :root{
+          --card-bg: #ffffff;
+          --muted: #64748b;
+          --radius: 14px;
+          --shadow: 0 6px 24px rgba(15,23,42,0.06);
+        }
+        .sales-dashboard-root { background: linear-gradient(180deg,#f8fafc 0%, #eef2ff 100%); min-height:100vh; padding:28px 16px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color: #0f172a; }
+        .container { max-width: 1200px; margin: 0 auto; }
+
+        /* Header */
+        .header { margin-bottom: 18px; }
+        .title-block { display:flex; align-items:center; gap:16px; }
+        .icon-wrap { background: linear-gradient(135deg,#2563eb,#7c3aed); padding:10px; border-radius:12px; display:flex; align-items:center; justify-content:center; box-shadow: var(--shadow); }
+        .icon { width:20px; height:20px; color:white; }
+        .title { font-size:1.7rem; margin:0; letter-spacing:-0.02em; }
+        .subtitle { margin:4px 0 0; color:var(--muted); font-size:0.95rem; }
+
+        /* Controls */
+        .controls { display:flex; justify-content:space-between; gap:12px; margin-bottom:18px; align-items:center; }
+        .controls-left { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .nav-btn { background:transparent; border:1px solid #e6eef8; padding:8px; border-radius:10px; cursor:pointer; transition:all .12s; }
+        .nav-btn:hover { transform:translateY(-1px); box-shadow: 0 4px 12px rgba(2,6,23,0.06); }
+        .nav-icon { width:18px; height:18px; color:#1f2937; }
+        .date-input { display:flex; align-items:center; gap:8px; background:#fff; padding:8px 12px; border-radius:12px; border:1px solid #e6eef8; }
+        .calendar-icon { width:16px; height:16px; color:var(--muted); }
+        .date-field { border:none; background:transparent; outline:none; font-weight:600; color:#0f172a; }
+
+        .btn { padding:8px 12px; border-radius:10px; border:none; cursor:pointer; font-weight:600; transition:background .12s; }
+        .btn.primary { background:#0ea5e9; color:white; }
+        .btn.primary:hover { background:#0284c7; }
+        .btn.success { background:#10b981; color:white; }
+        .btn.success:hover { background:#059669; }
+
+        .controls-right { display:flex; align-items:center; gap:12px; }
+        .capital-box { display:flex; align-items:center; gap:10px; background:#fff; border-radius:12px; padding:8px 12px; border:1px solid #e6eef8; }
+        .capital-icon { width:16px; height:16px; color:var(--muted); }
+        .capital-input { border:none; outline:none; background:transparent; width:140px; font-weight:700; color:#0f172a; }
+
+        /* Metrics */
+        .metrics-grid { display:grid; grid-template-columns:repeat(1,1fr); gap:16px; margin-bottom:20px; }
+        @media(min-width:720px){ .metrics-grid { grid-template-columns:repeat(2,1fr); } }
+        @media(min-width:1024px){ .metrics-grid { grid-template-columns:repeat(4,1fr); } }
+
+        .metric-card { background:var(--card-bg); border-radius:var(--radius); padding:18px; box-shadow:var(--shadow); border:1px solid #eef2ff; transition:transform .12s, box-shadow .12s; }
+        .metric-card:hover { transform:translateY(-6px); box-shadow: 0 12px 36px rgba(15,23,42,0.09); }
+        .metric-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+        .metric-icon { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; color:white; }
+        .metric-icon.bg-blue { background:rgba(99,102,241,0.12); color:#2563eb; padding:8px; }
+        .metric-icon.bg-red { background:rgba(254,226,226,0.12); color:#dc2626; padding:8px; }
+        .metric-icon.bg-green { background:rgba(220,252,231,0.12); color:#16a34a; padding:8px; }
+        .metric-icon.bg-indigo { background:rgba(224,231,255,0.12); color:#4f46e5; padding:8px; }
+        .metric-label { font-size:0.75rem; color:var(--muted); font-weight:700; letter-spacing:0.06em; text-transform:uppercase; }
+        .metric-value { font-size:1.6rem; font-weight:800; color:#0f172a; margin-bottom:6px; }
+        .metric-note { color:var(--muted); font-size:0.9rem; }
+
+        /* Payment cards */
+        .payment-breakdown { display:grid; grid-template-columns:repeat(1,1fr); gap:12px; margin-bottom:20px; }
+        @media(min-width:720px){ .payment-breakdown { grid-template-columns:repeat(2,1fr); } }
+        .payment-card { border-radius:12px; padding:14px; color:white; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:6px; }
+        .payment-card.cash { background: linear-gradient(90deg,#10b981,#059669); }
+        .payment-card.mpesa { background: linear-gradient(90deg,#2563eb,#7c3aed); }
+        .payment-title { font-weight:700; font-size:0.85rem; opacity:0.95; }
+        .payment-amount { font-size:1.6rem; font-weight:800; }
+
+        /* Transactions */
+        .transactions { margin-top:10px; border-radius:12px; overflow:hidden; box-shadow:var(--shadow); background:var(--card-bg); border:1px solid #eef2ff; }
+        .transactions-header { display:flex; justify-content:space-between; align-items:center; padding:18px; border-bottom:1px solid #f1f5f9; gap:12px; }
+        .transactions-title { margin:0; font-size:1.1rem; }
+        .transactions-sub { margin:4px 0 0; color:var(--muted); font-size:0.9rem; }
+        .transactions-controls { display:flex; gap:8px; align-items:center; }
+        .rows-select { padding:8px 12px; border-radius:10px; border:1px solid #e6eef8; background:#fff; font-weight:600; }
+        .transactions-body { padding:0; }
+
+        .table-wrap { overflow:auto; max-height:420px; }
+        .transactions-table { width:100%; border-collapse:collapse; min-width:820px; }
+        .transactions-table thead th { text-align:left; padding:12px 16px; font-size:0.75rem; color:var(--muted); font-weight:700; letter-spacing:0.06em; text-transform:uppercase; border-bottom:1px solid #f1f5f9; }
+        .transactions-table tbody td { padding:12px 16px; vertical-align:middle; }
+        .table-row { cursor:pointer; transition:background .12s; }
+        .table-row:hover { background:#fbfdff; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; font-size:0.95rem; color:#0f172a; }
+        .id-cell { color:#475569; }
+        .badge { display:inline-block; padding:6px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
+        .badge.cash { background:#ecfdf5; color:#065f46; }
+        .badge.mpesa { background:#e6f0ff; color:#1e40af; }
+        .badge.hybrid { background:#fff7ed; color:#92400e; }
+        .text-right { text-align:right; }
+        .text-center { text-align:center; }
+        .bold { font-weight:700; }
+        .profit { color:#059669; }
+        .icon-btn { background:transparent; border:1px solid transparent; padding:6px; border-radius:8px; cursor:pointer; transition:background .12s; }
+        .icon-btn:hover { background:#f8fafc; }
+
+        /* Empty states */
+        .empty-state { padding:36px; text-align:center; color:var(--muted); }
+        .empty-icon { width:48px; height:48px; color:#cbd5e1; margin-bottom:8px; display:block; margin-left:auto; margin-right:auto; }
+        .spinner { display:inline-block; width:40px; height:40px; border-radius:999px; border:4px solid rgba(2,6,23,0.08); border-top-color:#0ea5e9; animation:spin 1s linear infinite; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+
+        /* Modal */
+        .modal-backdrop { position:fixed; inset:0; background:rgba(2,6,23,0.5); display:flex; align-items:center; justify-content:center; padding:20px; z-index:50; }
+        .modal-panel { width:100%; max-width:980px; border-radius:14px; background:#fff; box-shadow:0 20px 60px rgba(2,6,23,0.4); max-height:90vh; overflow:hidden; display:flex; flex-direction:column; }
+        .modal-header { display:flex; align-items:center; justify-content:space-between; padding:18px; border-bottom:1px solid #f1f5f9; background:linear-gradient(90deg,#fbfdff,#f1f8ff); }
+        .modal-header h3 { margin:0; }
+        .meta { margin:4px 0 0; color:var(--muted); font-size:0.9rem; }
+        .modal-body { padding:18px; overflow:auto; }
+        .modal-table-wrap { width:100%; overflow:auto; margin-bottom:18px; }
+        .details-table { width:100%; border-collapse:collapse; }
+        .details-table thead th { text-align:left; padding:10px 12px; font-size:0.8rem; color:var(--muted); border-bottom:1px solid #f1f5f9; }
+        .details-table tbody td { padding:10px 12px; vertical-align:middle; }
+        .details-table tfoot td { padding:12px; border-top:2px solid #eef2ff; font-weight:800; }
+        .item-name { font-weight:600; color:#0f172a; }
+
+        .order-summary { display:grid; grid-template-columns:repeat(1,1fr); gap:12px; margin-top:10px; }
+        @media(min-width:720px){ .order-summary { grid-template-columns:repeat(3,1fr); } }
+        .summary-card { background:#fbfdff; padding:14px; border-radius:10px; border:1px solid #f1f5f9; }
+        .summary-label { font-size:0.75rem; color:var(--muted); margin-bottom:6px; font-weight:700; text-transform:uppercase; }
+        .summary-value { font-size:1.1rem; font-weight:800; color:#0f172a; }
+
+        /* small helpers */
+        .text-bold { font-weight:800; }
+        .capitalize { text-transform:capitalize; }
+        .profit-positive { color:#059669; }
+        .profit-negative { color:#dc2626; }
+        .profit-total { color:#059669; font-weight:900; }
+      `}</style>
+    </div>
+  );
 }

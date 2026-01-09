@@ -1,5 +1,5 @@
-// src/screens/Index.js
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+// src/app/dashboard/POS.jsx
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Button } from 'react-bootstrap';
 import { toast } from 'react-toastify';
@@ -52,7 +52,7 @@ export default function POS() {
   const [hasSearched, setHasSearched] = useState(false);
   const [searchType, setSearchType] = useState('');
   const [paymentType, setPaymentType] = useState('');
-  const [paymentData, setPaymentData] = useState({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+  const [paymentData, setPaymentData] = useState({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' });
   const [loadingProducts, setLoadingProducts] = useState(new Set());
   const [processingOrder, setProcessingOrder] = useState(false);
   const [currentOrderId, setCurrentOrderId] = useState(null);
@@ -72,6 +72,19 @@ export default function POS() {
   const cartItemCount = useSelector(selectCartItemCount);
   const loading = useSelector(selectProductsLoading);
   const user = useSelector(selectUser);
+
+  // compute cart total (declared immediately so linter sees it)
+  const calculateCartTotal = useCallback(() => {
+    return (Array.isArray(cart) ? cart : []).reduce((total, item) => {
+      const price = item && item.priceType === 'Retail'
+        ? (Number(item.price) || 0)
+        : (Number(item.priceAfterDiscount) || Number(item.price) || 0);
+      const qty = Number(item?.quantity) || 1;
+      return total + price * qty;
+    }, 0);
+  }, [cart]);
+
+  const currentCartTotal = useMemo(() => calculateCartTotal(), [cart, calculateCartTotal]);
 
   const searchInputRef = useRef(null);
   const scannerRef = useRef({ buffer: '', firstTime: 0, lastTime: 0, timer: null });
@@ -99,13 +112,6 @@ export default function POS() {
       return next;
     });
   }, []);
-
-  const calculateCartTotal = useCallback(() => {
-    return (Array.isArray(cart) ? cart : []).reduce((total, item) => {
-      const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
-      return total + price * (item.quantity || 1);
-    }, 0);
-  }, [cart]);
 
   const focusSearchInput = useCallback(() => {
     const el = searchInputRef.current;
@@ -279,17 +285,71 @@ export default function POS() {
     }
   }, [cart, paymentType, paymentData, user, maskPhoneForReceipt, dispatch, clearSearchAndProducts]);
 
+  // Helper: resolve numeric product ID from cart item by checking known fields then falling back to indexedDb search
+  const resolveNumericProductId = useCallback(async (ci) => {
+    try {
+      const candidates = [
+        ci.productId, ci.id, ci._id, ci.productId, ci.rawProduct && (ci.rawProduct.id || ci.rawProduct._id),
+        ci.inventoryId, ci.inventory && (ci.inventory.id || ci.inventory._id),
+        ci.invId, ci.inventoryIdString, ci.sku, ci.barcode
+      ];
+
+      for (const v of candidates) {
+        if (v === undefined || v === null) continue;
+        const n = Number(v);
+        if (!Number.isNaN(n) && Number.isFinite(n) && n !== 0) return n;
+      }
+
+      // fallback: try to find in local indexed DB using inventoryId/barcode/name
+      const all = (products && products.length > 0) ? products : (await indexedDb.getAllProducts());
+      if (Array.isArray(all)) {
+        const match = all.find(p => {
+          if (!p) return false;
+          if (ci.inventoryId && (p.inventoryId === ci.inventoryId || (p.inventory && (p.inventory.id === ci.inventoryId || p.inventory._id === ci.inventoryId)))) return true;
+          if (ci.barcode && (String(p.barcode || p.barcodes || '')).includes(String(ci.barcode))) return true;
+          if (ci.name && String((p.name || '')).toLowerCase() === String(ci.name || '').toLowerCase()) return true;
+          // some datasets keep barcodes array
+          if (Array.isArray(p.barcodes) && ci.barcode && p.barcodes.includes(ci.barcode)) return true;
+          return false;
+        });
+        if (match) {
+          const mid = Number(match.id || match._id || match.productId);
+          if (!Number.isNaN(mid) && Number.isFinite(mid) && mid !== 0) return mid;
+        }
+      }
+    } catch (e) {
+      // ignore and return null
+    }
+    return null;
+  }, [products]);
+
+  // Build payload helper (resolves numeric IDs)
+  const buildOrderItemsResolved = useCallback(async (cartArr = []) => {
+    const items = await Promise.all((Array.isArray(cartArr) ? cartArr : []).map(async (ci) => {
+      const pid = (await resolveNumericProductId(ci)) ?? Number(ci.productId ?? ci.id ?? ci._id) ?? null;
+      return {
+        productId: pid,
+        quantity: Number(ci.quantity) || 1,
+        priceType: ci.priceType === 'Wholesale' ? 'Wholesale' : 'Retail'
+      };
+    }));
+
+    // filter out any items without valid numeric productId
+    return items.filter(it => it.productId !== null && !Number.isNaN(it.productId));
+  }, [resolveNumericProductId]);
+
+  // CREATE ORDER (for 'both' hybrid scenario in your previous logic)
   const createOrder = useCallback(async (overrides = {}) => {
     const pt = overrides.paymentType ?? paymentType;
     const pd = overrides.paymentData ?? paymentData;
-  
+
     if (!pt) {
       toast.error('Please select a payment method');
       return;
     }
-  
-    const currentCartTotal = calculateCartTotal();
-  
+
+    const currentCartTotalLocal = calculateCartTotal();
+
     if (pt === 'both') {
       const cashVal = Number(pd.cashAmount) || 0;
       const mpesaVal = Number(pd.mpesaAmount) || 0;
@@ -301,50 +361,57 @@ export default function POS() {
         toast.error('Please enter a valid M-Pesa amount');
         return;
       }
-      if ((cashVal + mpesaVal) < currentCartTotal) {
+      if ((cashVal + mpesaVal) < currentCartTotalLocal) {
         toast.error('Total payment amount must be >= cart total');
         return;
       }
     }
-  
-    const payload = {
-      buyerPin: 'N/A',
-      orderSource: 'POS',
-      latitude: coords?.lat ?? 0,
-      longitude: coords?.lng ?? 0,
-      orderItems: (Array.isArray(cart) ? cart : []).map(ci => ({
-        productId: Number(ci.id || ci._id),
-        quantity: ci.quantity,
-        priceType: ci.priceType
-      })),
-      orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
-      phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A'
-    };
-  
-    if (pt === 'both') {
-      payload.total = Number(pd.mpesaAmount) || 0;
-      payload.cashAmount = Number(pd.cashAmount) || 0;
-      payload.userId = (user && (user.phone || user.userName)) || '';
-    }
-    if (pt === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
-    if (pt === 'cash') payload.cashAmount = Number(pd.cashAmount) || 0;
-  
+
     try {
       setProcessingOrder(true);
       toast.info('Creating order...');
-      
+
+      // resolve items (ensures numeric productIds)
+      const resolvedOrderItems = await buildOrderItemsResolved(cart);
+      if (!Array.isArray(resolvedOrderItems) || resolvedOrderItems.length === 0) {
+        toast.error('No valid order items to submit');
+        setProcessingOrder(false);
+        return;
+      }
+
+      // Build payload in requested structure
+      const payload = {
+        order: {
+          userId: (user && (user.phone || user.userName)) || (pd.mpesaPhone || 'N/A'),
+          phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
+          orderPaymentType: pt === 'cash' ? 'Cash' : (pt === 'mpesa' ? 'Mpesa' : 'Hybrid'),
+          latitude: coords?.lat ?? 0,
+          longitude: coords?.lng ?? 0,
+          buyerPin: 'N/A',
+          orderSource: 'Ecommerce',
+          orderitems: resolvedOrderItems
+        }
+      };
+
+      // include transactionId only for Mpesa payments (or if provided)
+      const tx = pd?.mpesaCode || pd?.transactionId || overrides.transactionId;
+      if ((pt === 'mpesa' || pt === 'both') && tx) {
+        payload.transactionId = String(tx);
+      }
+
       // Take snapshot BEFORE API call
       const cartSnapshot = JSON.parse(JSON.stringify(cart));
       const paymentTypeSnapshot = pt;
       const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
-      
+
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+
       try {
         const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
         const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
         const usedPaymentType = paymentTypeSnapshot || paymentType;
         const usedPaymentData = paymentDataSnapshot || paymentData;
-        // compute totalPaid and status
+
         const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
           const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
           return s + price * (it.quantity || 1);
@@ -353,7 +420,7 @@ export default function POS() {
         const mpesa = Number(usedPaymentData?.mpesaAmount) || 0;
         const totalPaid = usedPaymentType === 'cash' ? cash : usedPaymentType === 'mpesa' ? mpesa : cash + mpesa;
         const status = totalPaid >= cartTotal ? 'paid' : 'pending';
-      
+
         const localOrder = {
           orderId,
           orderData: res.data || {},
@@ -364,19 +431,18 @@ export default function POS() {
           status,
           createdAt: Date.now()
         };
-      
+
         await indexedDb.putOrder(localOrder);
-        // optional: toast or UI update
         toast.info('Order cached locally');
       } catch (err) {
         console.warn('Failed to write order to indexedDb', err);
       }
+
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
-      
+
       if (orderId) {
         setCurrentOrderId(orderId);
         toast.success(`Order created. ID: ${orderId}`);
-        
         if (pt !== 'both') {
           await handleOrderCompletion(res.data);
         } else {
@@ -405,65 +471,78 @@ export default function POS() {
       toast.error(msg);
       setProcessingOrder(false);
     }
-  }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion]);
-  
+  }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion, buildOrderItemsResolved]);
+
+  // COMPLETE CHECKOUT (single-method: cash or mpesa)
   const completeCheckout = useCallback(async (overrides = {}) => {
     const pt = overrides.paymentType ?? paymentType;
     const pd = overrides.paymentData ?? paymentData;
-  
+
     if (!pt) {
       toast.error('Please select a payment method');
       return;
     }
-  
-    const currentCartTotal = calculateCartTotal();
-  
+
+    const currentCartTotalLocal = calculateCartTotal();
+
     if (pt === 'cash') {
       const cashVal = Number(pd.cashAmount);
-      if (!pd.cashAmount || Number.isNaN(cashVal) || cashVal < currentCartTotal) {
+      if (!pd.cashAmount || Number.isNaN(cashVal) || cashVal < currentCartTotalLocal) {
         toast.error('Please enter a valid cash amount (>= total)');
         return;
       }
     }
-  
+
     if (pt === 'mpesa' && (!pd.mpesaPhone || pd.mpesaPhone.trim().length === 0)) {
       toast.error('Please enter M-Pesa phone number');
       return;
     }
-  
-    const payload = {
-      buyerPin: 'N/A',
-      orderSource: 'POS',
-      latitude: coords?.lat ?? 0,
-      longitude: coords?.lng ?? 0,
-      orderItems: (Array.isArray(cart) ? cart : []).map(ci => ({
-        productId: Number(ci.id || ci._id),
-        quantity: ci.quantity,
-        priceType: ci.priceType
-      })),
-      orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
-      phoneNumber: pt === 'mpesa' ? pd.mpesaPhone.trim() : (user && user.phone) || 'N/A'
-    };
-  
-    if (pt === 'mpesa') payload.userId = (user && (user.phone || user.userName)) || '';
-    if (pt === 'cash') payload.cashAmount = Number(pd.cashAmount) || 0;
-  
+
     try {
       setProcessingOrder(true);
       toast.info(pt === 'mpesa' ? 'Creating M-Pesa order...' : 'Processing payment...');
-      
+
+      // resolve items (ensures numeric productIds)
+      const resolvedOrderItems = await buildOrderItemsResolved(cart);
+      if (!Array.isArray(resolvedOrderItems) || resolvedOrderItems.length === 0) {
+        toast.error('No valid order items to submit');
+        setProcessingOrder(false);
+        return;
+      }
+
+      // Build payload in requested structure
+      const payload = {
+        order: {
+          userId: (user && (user.phone || user.userName)) || (pd.mpesaPhone || 'N/A'),
+          phoneNumber: pt === 'mpesa' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
+          orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
+          latitude: coords?.lat ?? 0,
+          longitude: coords?.lng ?? 0,
+          buyerPin: 'N/A',
+          orderSource: 'Ecommerce',
+          orderitems: resolvedOrderItems
+        }
+      };
+
+      // include transactionId only for Mpesa payments (or if provided in overrides)
+      const tx = pd?.mpesaCode || pd?.transactionId || overrides.transactionId;
+      if (pt === 'mpesa' && tx) {
+        payload.transactionId = String(tx);
+      }
+
       // Take snapshot BEFORE API call
       const cartSnapshot = JSON.parse(JSON.stringify(cart));
       const paymentTypeSnapshot = pt;
       const paymentDataSnapshot = JSON.parse(JSON.stringify(pd));
-      
+
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+
       try {
         const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
         const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
         const usedPaymentType = paymentTypeSnapshot || paymentType;
         const usedPaymentData = paymentDataSnapshot || paymentData;
-        // compute totalPaid and status
+
         const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
           const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
           return s + price * (it.quantity || 1);
@@ -472,7 +551,7 @@ export default function POS() {
         const mpesa = Number(usedPaymentData?.mpesaAmount) || 0;
         const totalPaid = usedPaymentType === 'cash' ? cash : usedPaymentType === 'mpesa' ? mpesa : cash + mpesa;
         const status = totalPaid >= cartTotal ? 'paid' : 'pending';
-      
+
         const localOrder = {
           orderId,
           orderData: res.data || {},
@@ -483,15 +562,15 @@ export default function POS() {
           status,
           createdAt: Date.now()
         };
-      
+
         await indexedDb.putOrder(localOrder);
-        // optional: toast or UI update
         toast.info('Order cached locally');
       } catch (err) {
         console.warn('Failed to write order to indexedDb', err);
       }
+
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
-      
+
       if (pt === 'mpesa') {
         if (orderId) {
           setCurrentOrderId(orderId);
@@ -499,14 +578,14 @@ export default function POS() {
         } else {
           toast.success('M-Pesa order created.');
         }
-        
+
         setPendingOrderData({
           orderData: res.data,
           cartSnapshot,
           paymentTypeSnapshot,
           paymentDataSnapshot
         });
-        
+
         setProcessingOrder(false);
       } else {
         await handleOrderCompletion(res.data);
@@ -516,8 +595,7 @@ export default function POS() {
       toast.error(msg);
       setProcessingOrder(false);
     }
-  }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion]);
-  
+  }, [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion, buildOrderItemsResolved]);
 
   // place this AFTER your createOrder and completeCheckout declarations
   const handleCheckoutSale = useCallback(async (saleId, opts = {}) => {
@@ -569,7 +647,7 @@ export default function POS() {
       toast.error(err?.message || 'Checkout failed');
     }
   }, [dispatch, createOrder, completeCheckout]);
-  
+
   const checkPaymentStatus = useCallback(async () => {
     if (!currentOrderId) { 
       toast.error('No order ID to check'); 
@@ -957,9 +1035,6 @@ export default function POS() {
     debouncedSearch(searchTerm); 
   }, [searchTerm, debouncedSearch]);
 
-  // NOTE: we intentionally do NOT auto-clear scannedProduct when the user types
-  // so that the scanned product stays pinned until TTL, manual clear, or add-to-cart.
-
   // wrapper to setSearchTerm (keeps scannedProduct pinned)
   const handleSetSearchTerm = useCallback((val) => {
     setSearchTerm(val);
@@ -985,7 +1060,7 @@ export default function POS() {
     setCurrentOrderId(null); 
     setPendingOrderData(null);
     setPaymentType(''); 
-    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+    setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' });
     requestAnimationFrame(() => { 
       try { 
         if (searchInputRef.current) { 
@@ -1152,93 +1227,6 @@ export default function POS() {
     }
   }, [dispatch]);
 
-  // Held Sales Functions
-  const handleHoldSale = useCallback(() => {
-    if (cart.length === 0) {
-      toast.error('Cart is empty - nothing to hold');
-      return;
-    }
-
-    try {
-      // Auto-generate sale name: "Sale 1", "Sale 2", etc.
-      const existingSales = heldSalesService.getAllHeldSales();
-      const salesArray = Array.isArray(existingSales) ? existingSales : [];
-      const saleNumber = salesArray.length + 1;
-      const saleName = `Sale ${saleNumber}`;
-      
-      heldSalesService.holdSale(saleName, cart, paymentData);
-      const updatedSales = heldSalesService.getAllHeldSales();
-      setHeldSales(Array.isArray(updatedSales) ? updatedSales : []);
-      
-      // Clear current cart
-      dispatch(clearCart());
-      setPaymentType('');
-      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
-      setCurrentOrderId(null);
-      setPendingOrderData(null);
-      toast.success(`${saleName} held successfully`);
-      clearSearchAndProducts();
-    } catch (error) {
-      console.error('Failed to hold sale:', error);
-      toast.error('Failed to hold sale');
-    }
-  }, [cart, paymentData, dispatch, clearSearchAndProducts]);
-
-  const handleRetrieveSale = useCallback((saleId) => {
-    try {
-      const sale = heldSalesService.retrieveHeldSale(saleId);
-      if (!sale) {
-        toast.error('Sale not found');
-        return;
-      }
-
-      // Clear current cart first
-      dispatch(clearCart());
-
-      // Add each item from the held sale to cart
-      if (Array.isArray(sale.items)) {
-        sale.items.forEach(item => {
-          dispatch(addItemToCart({ 
-            product: item, 
-            quantity: item.quantity 
-          }));
-        });
-      }
-
-      // Restore payment data if exists
-      if (sale.paymentData) {
-        setPaymentData(sale.paymentData);
-      }
-
-      // Delete the held sale
-      heldSalesService.deleteHeldSale(saleId);
-      const updatedSales = heldSalesService.getAllHeldSales();
-      setHeldSales(Array.isArray(updatedSales) ? updatedSales : []);
-      
-      toast.success(`${sale.name} retrieved`);
-      setShowHeldSales(false);
-      clearSearchAndProducts();
-    } catch (error) {
-      console.error('Failed to retrieve sale:', error);
-      toast.error('Failed to retrieve sale');
-    }
-  }, [dispatch, clearSearchAndProducts]);
-
-  const handleDeleteSale = useCallback((saleId) => {
-    try {
-      const sale = heldSalesService.retrieveHeldSale(saleId);
-      heldSalesService.deleteHeldSale(saleId);
-      const updatedSales = heldSalesService.getAllHeldSales();
-      setHeldSales(Array.isArray(updatedSales) ? updatedSales : []);
-      toast.success(`${sale?.name || 'Sale'} deleted`);
-    } catch (error) {
-      console.error('Failed to delete sale:', error);
-      toast.error('Failed to delete sale');
-    }
-  }, []);
-
-  const currentCartTotal = calculateCartTotal();
-  
   // Keep barcode results visible while search is empty OR if we have a pinned scannedProduct
   const displayedProducts = (scannedProduct && !String(searchTerm || '').trim())
     ? [scannedProduct]
@@ -1352,7 +1340,25 @@ export default function POS() {
                   <>
                     <button 
                       className="btn btn-warning btn-sm" 
-                      onClick={handleHoldSale}
+                      onClick={() => {
+                        if (cart.length === 0) { toast.error('Cart is empty - nothing to hold'); return; }
+                        try {
+                          const existingSales = heldSalesService.getAllHeldSales();
+                          const salesArray = Array.isArray(existingSales) ? existingSales : [];
+                          const saleNumber = salesArray.length + 1;
+                          const saleName = `Sale ${saleNumber}`;
+                          heldSalesService.holdSale(saleName, cart, paymentData);
+                          const updatedSales = heldSalesService.getAllHeldSales();
+                          setHeldSales(Array.isArray(updatedSales) ? updatedSales : []);
+                          dispatch(clearCart());
+                          setPaymentType('');
+                          setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' });
+                          setCurrentOrderId(null);
+                          setPendingOrderData(null);
+                          toast.success(`${saleName} held successfully`);
+                          clearSearchAndProducts();
+                        } catch (error) { console.error(error); toast.error('Failed to hold sale'); }
+                      }}
                       title="Hold this sale"
                       aria-label="Hold this sale"
                     >
@@ -1361,7 +1367,7 @@ export default function POS() {
                     </button>
                     <button 
                       className="btn btn-outline-danger btn-sm" 
-                      onClick={handleClearCart} 
+                      onClick={() => { dispatch(clearCart()); toast.success('Cart cleared'); setCurrentOrderId(null); setPendingOrderData(null); setPaymentType(''); setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' }); clearSearchAndProducts(); }} 
                       title="Clear all items" 
                       aria-label="Clear cart"
                     >
@@ -1430,7 +1436,7 @@ export default function POS() {
 
                 <Button 
                   style={{ ...CTA, width: '100%', padding: '14px', fontSize: '1.1rem', fontWeight: 600 }} 
-                  onClick={paymentType === 'both' ? createOrder : completeCheckout} 
+                  onClick={paymentType === 'both' ? () => createOrder() : () => completeCheckout()} 
                   disabled={!paymentType || processingOrder} 
                   size="lg"
                 >
@@ -1457,11 +1463,26 @@ export default function POS() {
         show={showHeldSales}
         onHide={() => setShowHeldSales(false)}
         heldSales={safeHeldSales}
-        onRetrieveSale={handleRetrieveSale}
-        onDeleteSale={handleDeleteSale}
-        onCheckoutSale={handleCheckoutSale} 
+        onRetrieveSale={(saleId) => {
+          try {
+            const sale = heldSalesService.retrieveHeldSale(saleId);
+            if (!sale) { toast.error('Sale not found'); return; }
+            dispatch(clearCart());
+            if (Array.isArray(sale.items)) sale.items.forEach(item => dispatch(addItemToCart({ product: item, quantity: item.quantity })));
+            if (sale.paymentData) setPaymentData(sale.paymentData);
+            heldSalesService.deleteHeldSale(saleId);
+            setHeldSales(heldSalesService.getAllHeldSales());
+            toast.success(`${sale.name} retrieved`);
+            setShowHeldSales(false);
+            clearSearchAndProducts();
+          } catch (error) { console.error(error); toast.error('Failed to retrieve sale'); }
+        }}
+        onDeleteSale={(saleId) => {
+          try { const sale = heldSalesService.retrieveHeldSale(saleId); heldSalesService.deleteHeldSale(saleId); setHeldSales(heldSalesService.getAllHeldSales()); toast.success(`${sale?.name || 'Sale'} deleted`); } catch (error) { console.error(error); toast.error('Failed to delete sale'); }
+        }
+        }
+        onCheckoutSale={(saleId, opts) => handleCheckoutSale(saleId, opts)} 
       />
-
 
       <style>{`
         .search-header-fixed { position: sticky; top: 0; background: #f8f9fa; z-index: 100; padding-bottom: 6px; }

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+// src/app/dashboard/SalesDashboard.jsx
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   TrendingUp,
   DollarSign,
@@ -10,6 +11,8 @@ import {
   X,
   AlertCircle
 } from 'lucide-react';
+import api from '../../services/api';         // same pattern you use in POS.jsx
+import indexedDb from '../../services/indexedDB'; // same helper used in POS
 
 /* ================= Helpers ================= */
 const toLocalYMD = (ts) => {
@@ -102,15 +105,46 @@ export default function SalesDashboard() {
 
   const rowsOptions = ['all', 20, 50, 100, 200];
 
-  /* ================= LOAD DATA FROM INDEXEDDB ================= */
+  // auto refresh interval (ms)
+  const AUTO_REFRESH_MS = 30000; // 30s
+  const refreshTimerRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  /* ================= UTIL: build cost map ================= */
+  const buildCostMapFromInventories = (inventories = []) => {
+    const costMap = new Map();
+    (inventories || []).forEach(inv => {
+      if (!inv) return;
+      // robust timestamp parse
+      const ts = new Date(inv.updatedAt ?? inv.createdAt ?? inv.created_at ?? 0).getTime() || 0;
+      const stockPrice = num(inv.stockPrice ?? inv.unitCost ?? inv.cost ?? inv.purchasePrice ?? 0);
+
+      const keyCandidates = [inv.productId, inv.inventoryId, inv.product_id, inv.inventory_id, inv.id]
+        .filter(Boolean)
+        .map(String);
+
+      if (keyCandidates.length === 0 && inv.productId) keyCandidates.push(String(inv.productId));
+
+      keyCandidates.forEach(key => {
+        const cur = costMap.get(key);
+        if (!cur || ts > cur.ts) {
+          costMap.set(key, { stockPrice, ts });
+        }
+      });
+    });
+    return costMap;
+  };
+
+  /* ================= LOAD LOCAL + REMOTE INVENTORIES & ORDERS ================= */
   useEffect(() => {
-    let alive = true;
-    (async () => {
+    isMountedRef.current = true;
+
+    const fetchAndMerge = async () => {
       try {
         setLoading(true);
-        const db = await openDB(DB_NAME).catch(() => null);
-        if (!alive) return;
 
+        // open local DB and read stores
+        const db = await openDB(DB_NAME).catch(() => null);
         let productsRaw = [];
         let inventoriesRaw = [];
         let ordersRaw = [];
@@ -121,9 +155,19 @@ export default function SalesDashboard() {
             readAll(db, INVENTORIES_STORE).catch(() => []),
             readAll(db, ORDERS_STORE).catch(() => []),
           ]);
+        } else {
+          // fallback to any indexedDb helpers (like service)
+          try {
+            productsRaw = (indexedDb.getAllProducts && (await indexedDb.getAllProducts())) || [];
+            // attempt to read inventories via indexedDb if provided
+            inventoriesRaw = (indexedDb.getAllInventories && (await indexedDb.getAllInventories())) || inventoriesRaw;
+            ordersRaw = (indexedDb.getAllOrders && (await indexedDb.getAllOrders())) || ordersRaw;
+          } catch (e) {
+            // ignore
+          }
         }
 
-        // Build product map: inventoryId -> productId
+        // Build productInventoryKey: inventoryId -> productId (as in your original)
         const productInventoryKey = new Map();
         (productsRaw || []).forEach(p => {
           if (p.inventoryId && p.productId) {
@@ -131,30 +175,44 @@ export default function SalesDashboard() {
           }
         });
 
-        // Build a robust cost map: key -> { stockPrice, ts }
-        // We'll index inventories by several candidate keys so lookups are tolerant of schema differences.
-        const costMap = new Map();
-        (inventoriesRaw || []).forEach(inv => {
-          const ts = new Date(inv.updatedAt ?? inv.createdAt ?? 0).getTime();
-          const stockPrice = num(inv.stockPrice ?? inv.unitCost ?? inv.cost);
+        // fetch remote paged inventories using your api service (same pattern as POS)
+        let remoteInventories = [];
+        try {
+          // api.getPagedInventories(pageNumber, pageSize) expected by services/api
+          const resp = await api.getPagedInventories(1, 2000);
+          // axios response shape
+          const payload = resp?.data ?? resp;
+          remoteInventories = Array.isArray(payload) ? payload : (Array.isArray(payload.data) ? payload.data : []);
+        } catch (e) {
+          // network/CORS/endpoint errors -> continue with local only
+          remoteInventories = [];
+        }
 
-          const keyCandidates = [inv.productId, inv.inventoryId, inv.product_id, inv.inventory_id]
-            .filter(Boolean)
-            .map(String);
+        // Merge: remote first (so remote entries will be used when newer)
+        const mergedInventories = (remoteInventories || []).concat(inventoriesRaw || []);
 
-          // if no key candidates, try to use productId-like fields
-          if (keyCandidates.length === 0 && inv.productId) keyCandidates.push(String(inv.productId));
+        // Build costMap using merged inventories (remote wins due to timestamp handling)
+        const costMap = buildCostMapFromInventories(mergedInventories);
 
-          keyCandidates.forEach(key => {
-            const cur = costMap.get(key);
-            if (!cur || ts > cur.ts) {
-              costMap.set(key, { stockPrice, ts });
+        // If indexedDb service supports writing inventories back, persist remote items (optional)
+        try {
+          if (typeof indexedDb.putInventories === 'function' && remoteInventories && remoteInventories.length) {
+            // attempt to persist in bulk if service exposes it
+            await indexedDb.putInventories(remoteInventories);
+          } else if (typeof indexedDb.putInventory === 'function' && remoteInventories && remoteInventories.length) {
+            // fallback: put individually
+            for (const inv of remoteInventories) {
+              try { await indexedDb.putInventory(inv); } catch (e) { /* ignore per-item failure */ }
             }
-          });
-        });
+          }
+        } catch (e) {
+          // ignore persistence errors (non-fatal)
+        }
 
+        if (!isMountedRef.current) return;
         setInventoryCostMap({ costMap, productInventoryKey });
 
+        // normalize orders to expected shape
         const normalized = (ordersRaw || []).map(normalizeOrder).sort((a, b) => b.createdAt - a.createdAt);
         setOrders(normalized);
 
@@ -162,21 +220,82 @@ export default function SalesDashboard() {
         setStartingCapital(saved);
         setCapitalInput(saved ? String(saved) : '');
 
-        console.debug('[SalesDashboard] Loaded from IndexedDB:', {
+        console.debug('[SalesDashboard] Loaded (local + remote):', {
           products: productsRaw.length,
-          inventories: inventoriesRaw.length,
-          orders: ordersRaw.length,
+          localInventories: (inventoriesRaw || []).length,
+          remoteInventories: (remoteInventories || []).length,
+          orders: (ordersRaw || []).length,
           productInventoryKeys: productInventoryKey.size,
           costKeys: costMap.size,
         });
       } catch (e) {
-        console.error('Failed to load data from IndexedDB', e);
+        console.error('[SalesDashboard] load failed', e);
       } finally {
-        if (alive) setLoading(false);
+        if (isMountedRef.current) setLoading(false);
       }
-    })();
-    return () => { alive = false; };
-  }, []);
+    };
+
+    // initial fetch
+    fetchAndMerge();
+
+    // set up auto-refresh interval that refetches remote inventories and rebuilds cost map
+    refreshTimerRef.current = setInterval(async () => {
+      try {
+        // only fetch remote page (we keep local indexes intact)
+        const resp = await api.getPagedInventories(1, 2000).catch(() => null);
+        const payload = resp?.data ?? resp ?? null;
+        const remote = Array.isArray(payload) ? payload : (Array.isArray(payload?.data) ? payload.data : []);
+        if (!remote || remote.length === 0) return;
+
+        // merge remote with current indexed cost map keys (we don't re-read orders/products here)
+        // For correct merging we should read local inventories once; but to avoid blocking we combine remote + what's in current costMap
+        setInventoryCostMap(prev => {
+          // Reconstruct an inventory-like array from prev.costMap entries is not straightforward;
+          // instead we'll combine remote with local inventories previously loaded into indexedDb (quick read)
+          (async () => {
+            try {
+              const db = await openDB(DB_NAME).catch(() => null);
+              let localInventories = [];
+              if (db) localInventories = await readAll(db, INVENTORIES_STORE).catch(() => []);
+              else localInventories = (indexedDb.getAllInventories && (await indexedDb.getAllInventories())) || [];
+
+              const merged = (remote || []).concat(localInventories || []);
+              const newCostMap = buildCostMapFromInventories(merged);
+              // persist remote if possible
+              try {
+                if (typeof indexedDb.putInventories === 'function' && remote && remote.length) {
+                  await indexedDb.putInventories(remote);
+                } else if (typeof indexedDb.putInventory === 'function' && remote && remote.length) {
+                  for (const inv of remote) {
+                    try { await indexedDb.putInventory(inv); } catch (e) {}
+                  }
+                }
+              } catch (e) {}
+              // productInventoryKey preserved from prev
+              if (isMountedRef.current) setInventoryCostMap({ costMap: newCostMap, productInventoryKey: prev.productInventoryKey || new Map() });
+            } catch (e) {
+              // swallow
+            }
+          })();
+          // return prev for now (the async inner will update state)
+          return prev;
+        });
+
+      } catch (e) {
+        // ignore auto-refresh errors
+        console.debug('[SalesDashboard] auto-refresh error', e?.message || e);
+      }
+    }, AUTO_REFRESH_MS);
+
+    return () => {
+      isMountedRef.current = false;
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount
 
   useEffect(() => {
     const saved = num(localStorage.getItem(`capital:${date}`));
@@ -186,15 +305,14 @@ export default function SalesDashboard() {
 
   /* ================= PROFIT CALC ================= */
   const getUnitCost = (item) => {
-    const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? '');
-    // try to resolve productId from productInventoryKey map
+    const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? item.product_id ?? '');
     const productKey = inventoryCostMap.productInventoryKey?.get(invId) || invId;
     const entry = inventoryCostMap.costMap?.get(productKey) || inventoryCostMap.costMap?.get(invId);
     return num(entry?.stockPrice);
   };
 
   const calculateOrderProfit = (order) =>
-    order.items.reduce((sum, it) => {
+    (order.items || []).reduce((sum, it) => {
       const sell = num(it.price ?? it.unitPrice ?? it.salePrice);
       const cost = getUnitCost(it);
       const qty = num(it.quantity ?? it.qty ?? 1);
@@ -213,7 +331,7 @@ export default function SalesDashboard() {
 
     dayOrders.forEach(o => {
       revenue += num(o.cartTotal);
-      o.items.forEach(it => {
+      (o.items || []).forEach(it => {
         cogs += getUnitCost(it) * num(it.quantity ?? it.qty ?? 1);
       });
 

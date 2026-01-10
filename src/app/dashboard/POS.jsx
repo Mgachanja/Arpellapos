@@ -388,7 +388,7 @@ export default function POS() {
           latitude: coords?.lat ?? 0,
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
-          orderSource: 'Ecommerce',
+          orderSource: 'POS',
           orderitems: resolvedOrderItems
         }
       };
@@ -519,7 +519,7 @@ export default function POS() {
           latitude: coords?.lat ?? 0,
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
-          orderSource: 'Ecommerce',
+          orderSource: 'POS',
           orderitems: resolvedOrderItems
         }
       };

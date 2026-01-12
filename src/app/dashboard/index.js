@@ -8,7 +8,8 @@ import {
   MdBarChart,
   MdPerson,
   MdMenu,
-  MdPrint
+  MdPrint,
+  MdInventory
 } from 'react-icons/md';
 import logo from '../../assets/logo.jpeg';
 import { useSelector } from 'react-redux';
@@ -87,6 +88,7 @@ export default function DashboardLayout() {
           <NavItem to="/app/dashboard/pos" icon={MdPointOfSale} label="POS" collapsed={collapsed} />
           <NavItem to="/app/dashboard/orders" icon={MdListAlt} label="Orders" collapsed={collapsed} />
           <NavItem to="/app/dashboard/reports" icon={MdBarChart} label="Reports" collapsed={collapsed} />
+          <NavItem to="/app/dashboard/stockManagement" icon={MdInventory} label="Stock Management" collapsed={collapsed} />
           <NavItem to="/app/dashboard/thermal-settings" icon={MdPrint} label="Thermal" collapsed={collapsed} />
         </nav>
 

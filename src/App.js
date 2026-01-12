@@ -1,27 +1,26 @@
 // src/App.js
-import React, { useState, useEffect } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, Suspense, lazy, startTransition } from 'react';
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { ErrorBoundary } from 'react-error-boundary';
 import { toast } from 'react-toastify';
-
-// Pages & Layouts
-import Dashboard from './app/dashboard/index';
-import POS from './app/dashboard/POS';
-import Orders from './app/dashboard/orderManagement';
-import Reports from './app/dashboard/orders.jsx'
-import LoginPage from './app/login';
-import ThermalPrinterSettings from './app/thermalPrinter/index.jsx';
-
-// Redux
 import { selectUser } from './redux/slices/userSlice';
 
-// Electron
+// Lazy pages
+const Dashboard = lazy(() => import('./app/dashboard/index'));
+const POS = lazy(() => import('./app/dashboard/POS'));
+const Orders = lazy(() => import('./app/dashboard/orderManagement'));
+const Reports = lazy(() => import('./app/dashboard/orders.jsx'));
+const LoginPage = lazy(() => import('./app/login'));
+const StockManagement = lazy(() => import('./app/dashboard/stockManagement'));
+const ThermalPrinterSettings = lazy(() => import('./app/thermalPrinter/index.jsx'));
+
+// Electron detection
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
 
 /* =========================
-   Error Boundary
+   Error Boundary Fallback
 ========================= */
 function ErrorFallback({ error, resetErrorBoundary }) {
   return (
@@ -54,26 +53,40 @@ function AutoUpdateStatus() {
   useEffect(() => {
     if (!ipcRenderer) return;
 
-    ipcRenderer.on('update-available', (_, info) => {
+    const onUpdateAvailable = (_, info) => {
       setUpdateAvailable(true);
       setUpdateStatus(`Update ${info.version} available`);
       setShowUpdatePanel(true);
-    });
+    };
 
-    ipcRenderer.on('download-progress', (_, p) => {
+    const onDownloadProgress = (_, p) => {
       setDownloadProgress(Math.round(p.percent || 0));
-    });
+    };
 
-    ipcRenderer.on('update-downloaded', () => {
+    const onUpdateDownloaded = () => {
       setUpdateStatus('Update ready to install');
       setDownloadProgress(100);
-    });
+    };
 
-    ipcRenderer.on('update-error', (_, e) => {
+    const onUpdateError = (_, e) => {
       toast.error(e?.message || 'Update failed');
-    });
+    };
 
-    return () => ipcRenderer.removeAllListeners();
+    ipcRenderer.on('update-available', onUpdateAvailable);
+    ipcRenderer.on('download-progress', onDownloadProgress);
+    ipcRenderer.on('update-downloaded', onUpdateDownloaded);
+    ipcRenderer.on('update-error', onUpdateError);
+
+    return () => {
+      try {
+        ipcRenderer.removeListener('update-available', onUpdateAvailable);
+        ipcRenderer.removeListener('download-progress', onDownloadProgress);
+        ipcRenderer.removeListener('update-downloaded', onUpdateDownloaded);
+        ipcRenderer.removeListener('update-error', onUpdateError);
+      } catch (err) {
+        // best-effort cleanup
+      }
+    };
   }, []);
 
   if (!isElectron) return null;
@@ -116,14 +129,31 @@ function AutoUpdateStatus() {
 }
 
 /* =========================
-   Auth Guard
+   Auth Helper
 ========================= */
 function isAuthorized(user) {
   return user && String(user.role || '').toLowerCase() !== 'customer';
 }
 
 /* =========================
-   Routes
+   Redirect helper that uses startTransition
+   (prevents synchronous navigation causing Suspense to replace UI)
+========================= */
+function RedirectWithTransition({ to, replace = true, when = true, state = undefined }) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!when) return;
+    // mark navigation as a transition so suspending lazy routes don't block UI input
+    startTransition(() => {
+      navigate(to, { replace, state });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [when, to, replace]);
+  return null;
+}
+
+/* =========================
+   Inner Routes (wrapped in Suspense)
 ========================= */
 function InnerRoutes({ authed }) {
   const location = useLocation();
@@ -132,61 +162,78 @@ function InnerRoutes({ authed }) {
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <AutoUpdateStatus />
 
-      <Routes>
-        {/* Root */}
-        <Route
-          index
-          element={<Navigate to={authed ? '/app/dashboard/pos' : '/login'} replace />}
-        />
+      <Suspense
+        fallback={
+          <div className="min-vh-100 d-flex align-items-center justify-content-center">
+            <div className="spinner-border" role="status" aria-hidden="true" />
+            <span className="visually-hidden">Loading...</span>
+          </div>
+        }
+      >
+        <Routes>
+          {/* Root index: redirect via startTransition to avoid synchronous suspension */}
+          <Route
+            index
+            element={<RedirectWithTransition to={authed ? '/app/dashboard/pos' : '/login'} replace />}
+          />
 
-        {/* Login */}
-        <Route
-          path="/login"
-          element={authed ? <Navigate to="/app/dashboard/pos" replace /> : <LoginPage />}
-        />
+          {/* Login */}
+          <Route
+            path="/login"
+            element={authed ? <RedirectWithTransition to="/app/dashboard/pos" replace /> : <LoginPage />}
+          />
 
-        {/* Dashboard */}
-        <Route
-          path="/app/dashboard"
-          element={
-            authed ? (
-              <Dashboard />
-            ) : (
-              <Navigate to="/login" replace state={{ from: location }} />
-            )
-          }
-        >
-          <Route index element={<POS />} />
-          <Route path="pos" element={<POS />} />
+          {/* Dashboard area */}
+          <Route
+            path="/app/dashboard/*"
+            element={
+              authed ? (
+                <Dashboard />
+              ) : (
+                // redirect to login using transition; pass original location for post-login return
+                <RedirectWithTransition to="/login" replace state={{ from: location }} />
+              )
+            }
+          >
+            <Route index element={<POS />} />
+            <Route path="pos" element={<POS />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="reports" element={<Reports />} />
+            <Route path="stockManagement" element={<StockManagement />} />
+            <Route path="thermal-settings" element={<ThermalPrinterSettings />} />
+            <Route path="*" element={<RedirectWithTransition to="pos" replace />} />
+          </Route>
 
-          {/* FIXED */}
-          <Route path="orders" element={<Orders />} />
-          <Route path="reports" element={<Reports/>} />
-
-          <Route path="thermal-settings" element={<ThermalPrinterSettings />} />
-          <Route path="*" element={<Navigate to="pos" replace />} />
-        </Route>
-
-        {/* Fallback */}
-        <Route
-          path="*"
-          element={<Navigate to={authed ? '/app/dashboard/pos' : '/login'} replace />}
-        />
-      </Routes>
+          {/* Fallback: any other path */}
+          <Route
+            path="*"
+            element={<RedirectWithTransition to={authed ? '/app/dashboard/pos' : '/login'} replace />}
+          />
+        </Routes>
+      </Suspense>
     </ErrorBoundary>
   );
 }
 
 /* =========================
-   App Entry
+   App Entry (use startTransition for auth state changes)
 ========================= */
 export default function App() {
   const user = useSelector(selectUser);
-  const authed = isAuthorized(user);
+
+  // maintain a local derived 'authed' flag and update it inside startTransition
+  const [authedState, setAuthedState] = useState(() => isAuthorized(user));
+
+  useEffect(() => {
+    // mark this update as non-urgent so any lazy route reads don't block UI input
+    startTransition(() => {
+      setAuthedState(isAuthorized(user));
+    });
+  }, [user]);
 
   return (
     <HashRouter>
-      <InnerRoutes authed={authed} />
+      <InnerRoutes authed={authedState} />
     </HashRouter>
   );
 }

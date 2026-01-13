@@ -6,6 +6,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
+const { autoUpdater } = require('electron-updater');
 
 let PosPrinter = null;
 let usingPlick = false;
@@ -47,7 +48,78 @@ function sendUpdateMessage(message) {
 }
 
 // --- Keep auto updater handlers (omitted in this file for brevity) ---
-// You can insert the setupAutoUpdater() implementation from your earlier file here.
+function setupAutoUpdater() {
+  log.info('Setting up auto-updater...');
+
+  // Configure logging
+  autoUpdater.logger = log;
+  autoUpdater.logger.transports.file.level = 'info';
+
+  // Enable auto-downloading
+  autoUpdater.autoDownload = true;
+
+  // Event handlers
+  autoUpdater.on('checking-for-update', () => {
+    log.info('Checking for update...');
+    sendUpdateMessage({ type: 'checking', message: 'Checking for updates...' });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    log.info('Update available:', info);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-available', info);
+    }
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    log.info('Update not available:', info);
+    // sendUpdateMessage({ type: 'not-available', message: 'No update available.', info });
+  });
+
+  autoUpdater.on('error', (err) => {
+    log.error('Error in auto-updater:', err);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-error', { message: err.message });
+    }
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    let logMessage = 'Download speed: ' + progressObj.bytesPerSecond;
+    logMessage = logMessage + ' - Downloaded ' + progressObj.percent + '%';
+    logMessage = logMessage + ' (' + progressObj.transferred + '/' + progressObj.total + ')';
+    log.info(logMessage);
+
+    // Send detailed progress object to renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download-progress', progressObj);
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('Update downloaded:', info);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', info);
+    }
+  });
+
+  // Handle quit and install IPC from renderer
+  ipcMain.handle('quit-and-install', () => {
+    autoUpdater.quitAndInstall();
+  });
+
+  // Check immediately
+  autoUpdater.checkForUpdatesAndNotify().catch(err => {
+    log.error('Failed initial check:', err);
+  });
+
+  // Check every hour (3600000 ms)
+  setInterval(() => {
+    log.info('Performing hourly update check...');
+    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+      log.error('Failed hourly check:', err);
+    });
+  }, 3600000);
+}
 
 function resolveIconPath() {
   if (!app.isPackaged) {
@@ -142,9 +214,11 @@ function createMainWindow() {
     mainWindow.show();
     if (!isDev) {
       log.info('Initializing auto-updater...');
-      // setTimeout(() => { setupAutoUpdater(); }, 3000);
+      setTimeout(() => { setupAutoUpdater(); }, 3000);
     } else {
       log.info('Development mode - skipping auto-updater');
+      // Uncomment to test in dev (requires valid dev-app-update.yml)
+      // setTimeout(() => { setupAutoUpdater(); }, 3000);
     }
   });
 
@@ -380,11 +454,11 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     const grandTotal = Math.max(0, totalAfterTax - (discountAmount || 0));
 
     const tableFooter = [
-      [ { type: 'text', value: 'Subtotal' }, { type: 'text', value: formatCurrency(subtotalCalc) } ],
+      [{ type: 'text', value: 'Subtotal' }, { type: 'text', value: formatCurrency(subtotalCalc) }],
     ];
-    if (TAX_RATE && taxAmount > 0) tableFooter.push([ { type: 'text', value: `VAT (${(TAX_RATE * 100).toFixed(0)}%)` }, { type: 'text', value: formatCurrency(taxAmount) } ]);
-    if (discountAmount && discountAmount > 0) tableFooter.push([ { type: 'text', value: 'Discount' }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}` } ]);
-    tableFooter.push([ { type: 'text', value: 'TOTAL' }, { type: 'text', value: formatCurrency(grandTotal) } ]);
+    if (TAX_RATE && taxAmount > 0) tableFooter.push([{ type: 'text', value: `VAT (${(TAX_RATE * 100).toFixed(0)}%)` }, { type: 'text', value: formatCurrency(taxAmount) }]);
+    if (discountAmount && discountAmount > 0) tableFooter.push([{ type: 'text', value: 'Discount' }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}` }]);
+    tableFooter.push([{ type: 'text', value: 'TOTAL' }, { type: 'text', value: formatCurrency(grandTotal) }]);
 
     data.push({ type: 'table', tableHeader, tableBody, tableFooter, tableHeaderStyle: { backgroundColor: '#000', color: '#fff' }, tableBodyStyle: { border: '0.5px solid #ddd' }, tableFooterStyle: { fontWeight: '700' } });
 

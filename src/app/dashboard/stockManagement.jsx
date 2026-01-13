@@ -1,7 +1,5 @@
-// StockManagement.jsx - Fixed Version
+// StockManagement.jsx
 import React, { useState, useEffect, useRef } from "react";
-// Re-trigger HMR
-
 import {
   Navbar,
   Nav,
@@ -52,7 +50,7 @@ const API = {
   inventories: {
     list: () => axios.get(`${BASE_URL}/inventories`).then(res => res.data),
     paged: (page, size) => axios.get(`${BASE_URL}/inventories?pageNumber=${page}&pageSize=${size}`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/inventories`, data).then(res => res.data),
+    create: (data) => axios.post(`${BASE_URL}/inventory`, data).then(res => res.data),
     update: (id, data) => axios.put(`${BASE_URL}/inventory/${id}`, data).then(res => res.data),
     remove: (id) => axios.delete(`${BASE_URL}/inventories/${id}`).then(res => res.data),
     uploadExcel: (formData) => axios.post(`${BASE_URL}/inventories/upload-excel`, formData, {
@@ -63,8 +61,8 @@ const API = {
     list: () => axios.get(`${BASE_URL}/products`).then(res => res.data),
     paged: (page, size) => axios.get(`${BASE_URL}/pos-paged-products?pageNumber=${page}&pageSize=${size}`).then(res => res.data),
     get: (id) => axios.get(`${BASE_URL}/products/${id}`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/products`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/products/${id}`, data).then(res => res.data),
+    create: (data) => axios.post(`${BASE_URL}/product`, data).then(res => res.data),
+    update: (id, data) => axios.put(`${BASE_URL}/product/${id}`, data).then(res => res.data),
     remove: (id) => axios.delete(`${BASE_URL}/products/${id}`).then(res => res.data),
     uploadImage: (formData) => axios.post(`${BASE_URL}/products/upload-image`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
@@ -938,81 +936,65 @@ const StockManagement = () => {
   // Add OR Update complete product
   const handleAddCompleteProduct = async () => {
     setIsSubmitting(true);
-    setFormErrors({});
 
+    // Validate form
     const errors = validateCompleteProductForm();
     if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      showToastMessage("Please fix validation errors before submitting", "danger");
-      setIsSubmitting(false);
-      return;
+      // Filter errors if in edit mode (ignore hidden fields)
+      if (isEditingCompleteProduct) {
+        delete errors.initialQuantity;
+        delete errors.initialPrice;
+        delete errors.threshold;
+        delete errors.supplierId;
+        delete errors.invoiceNumber;
+        delete errors.taxRate;
+        delete errors.ItemCode;
+        delete errors.ItemDescription;
+        delete errors.unitMeasure;
+
+        if (Object.keys(errors).length > 0) {
+          setFormErrors(errors);
+          showToastMessage("Please fix validation errors", "danger");
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        setFormErrors(errors);
+        showToastMessage("Please fix validation errors", "danger");
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     setIsLoading(true);
 
-    // Distinguish Add vs Update
+    // EDIT MODE
     if (isEditingCompleteProduct) {
       try {
         const f = completeProductForm;
-        const productId = f.inventoryId; // Primary Key usually
+        const productPayload = {
+          inventoryId: f.inventoryId,
+          name: f.name,
+          price: Number(f.price),
+          priceAfterDiscount: Number(f.priceAfterDiscount || f.price),
+          category: f.categoryId ? Number(f.categoryId) : null,
+          subcategory: f.subCategoryId ? Number(f.subCategoryId) : null,
+          purchaseCap: Number(f.purchaseCap || 1),
+          discountQuantity: Number(f.discountQuantity || 0),
+          barcodes: f.barcodes,
+          showOnline: !!f.showOnline
+        };
 
-        // 1. Update Inventory
-        if (typeof API.inventories.update === 'function') {
-          await API.inventories.update(productId, {
-            productId: productId,
-            stockQuantity: Number(f.initialQuantity),
-            stockPrice: Number(f.initialPrice),
-            stockThreshold: Number(f.threshold),
-            supplierId: f.supplierId,
-            invoiceNumber: f.invoiceNumber
-          });
-        }
-
-        // 2. Update Product
-        if (typeof API.products.update === 'function') {
-          await API.products.update(productId, {
-            name: f.name,
-            price: Number(f.price),
-            barcodes: f.barcodes,
-            category: f.categoryId,
-            subcategory: f.subCategoryId,
-            purchaseCap: Number(f.purchaseCap),
-            showOnline: !!f.showOnline,
-            discountQuantity: f.discountQuantity,
-            priceAfterDiscount: Number(f.priceAfterDiscount),
-            SupplierId: f.supplierId,
-            InvoiceNumber: f.invoiceNumber
-          });
-        }
-
-        // 3. Update Tax (if exists)
-        // We need to know the tax ID or use productId if the backend supports upsert by productId
-        // Assuming goodsInfo update uses productId as the link.
-        if (f.ItemCode) {
-          if (typeof API.goodsInfo.update === 'function') {
-            try {
-              await API.goodsInfo.update(productId, {
-                taxRate: Number(f.taxRate),
-                ItemDescription: f.ItemDescription,
-                unitMeasure: f.unitMeasure,
-                ItemCode: f.ItemCode
-              });
-            } catch (e) {
-              console.warn("Tax update failed (might not exist or API expects different ID):", e);
-              // Optional: Try create if update fails?
-            }
-          }
-        }
-
+        await API.products.update(editProductData.Id || f.inventoryId, productPayload);
         showToastMessage("Product updated successfully", "success");
+
         setShowAddCompleteProductModal(false);
         resetForms();
         fetchProducts(currentProductPage, true);
         fetchStocks(currentInventoryPage, true);
-
       } catch (error) {
         console.error("Update failed", error);
-        showToastMessage("Failed to update product: " + (error?.message || "Error"), "danger");
+        showToastMessage("Failed to update product: " + (error?.response?.data?.message || error?.message || "Error"), "danger");
       } finally {
         setIsSubmitting(false);
         setIsLoading(false);
@@ -1020,7 +1002,7 @@ const StockManagement = () => {
       return;
     }
 
-    // Logic for ADD (Create)
+    // ADD MODE - Complete workflow: Inventory -> Product -> Tax
     let inventoryCreated = false;
     let inventoryIdentifier = null;
     let productCreated = false;
@@ -1029,6 +1011,7 @@ const StockManagement = () => {
     try {
       const f = completeProductForm;
 
+      // 1. Create Inventory
       const invPayload = {
         productId: f.inventoryId,
         stockQuantity: Number(f.initialQuantity || 0),
@@ -1043,6 +1026,7 @@ const StockManagement = () => {
       inventoryIdentifier = invResp?.id || invResp?.productId || f.inventoryId;
       showToastMessage("Inventory created successfully", "success");
 
+      // 2. Create Product
       const prodPayload = {
         SupplierId: f.supplierId,
         InvoiceNumber: f.invoiceNumber,
@@ -1063,14 +1047,13 @@ const StockManagement = () => {
       productId = prodResp?.id || prodResp?.productId;
       showToastMessage("Product created successfully", "success");
 
-      if (f.ItemCode && f.taxRate && f.ItemDescription && f.unitMeasure) {
+      // 3. Create Tax (if filled)
+      if (f.ItemCode && f.ItemDescription && f.unitMeasure && f.taxRate) {
         const taxPayload = {
-          // prefer created productId, fallback to inventoryIdentifier or provided SKU
-          productId: productId || inventoryIdentifier || f.inventoryId,
-          taxRate: Number(f.taxRate),
-          ItemDescription: f.ItemDescription,
+          itemCode: f.ItemCode,
+          itemDescription: f.ItemDescription,
           unitMeasure: f.unitMeasure,
-          ItemCode: f.ItemCode,
+          taxRate: Number(f.taxRate),
         };
 
         if (API.goodsInfo?.create) {
@@ -1082,7 +1065,6 @@ const StockManagement = () => {
       showToastMessage("Complete product added successfully!", "success");
       setShowAddCompleteProductModal(false);
       resetForms();
-
       fetchProducts(lastProductPage || currentProductPage, true);
       fetchStocks(lastInventoryPage || currentInventoryPage, true);
 
@@ -1456,7 +1438,7 @@ const StockManagement = () => {
             <Modal.Title>{isEditingCompleteProduct ? "Edit Complete Product" : "Add Complete Product"} (Inventory + Product + Tax)</Modal.Title>
           </Modal.Header>
           <Modal.Body style={{ maxHeight: "75vh", overflowY: "auto" }}>
-            {Object.keys(formErrors).length > 0 && (
+            {isSubmitting && Object.keys(formErrors).length > 0 && (
               <Alert variant="danger">
                 <strong>Please fix the following errors:</strong>
                 <ul className="mb-0 mt-2">
@@ -1466,6 +1448,7 @@ const StockManagement = () => {
                 </ul>
               </Alert>
             )}
+
 
             {/* Inventory Details */}
             <div className="mb-4 p-3 border rounded bg-light">
@@ -1824,7 +1807,7 @@ const StockManagement = () => {
               </Row>
             </div>
 
-            {/* Tax Information */}
+            {/* Tax Information (Optional) */}
             <div className="mb-4 p-3 border rounded bg-light">
               <h5 className="mb-3">Tax Information (Optional)</h5>
 

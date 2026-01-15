@@ -198,6 +198,7 @@ const StockManagement = () => {
     ItemDescription: "",
     unitMeasure: "",
     ItemCode: "",
+    id: null,
   });
 
   const [formErrors, setFormErrors] = useState({});
@@ -899,6 +900,9 @@ const StockManagement = () => {
     // Find related supplier
     const supplierId = inv?.supplierId || product.SupplierId;
 
+    // Set the product ID for the update API
+    setEditProductData({ ...editProductData, Id: product.id });
+
     // Find related Tax (if available in a list, otherwise default or partial)
     // Note: We might not have a full taxList loaded. If we do, find by productId.
     // If not, we might need to fetch it or just leave fields blank/optional.
@@ -906,6 +910,7 @@ const StockManagement = () => {
     // Assuming 'taxData' view fetches something, but better to rely on what we have.
 
     setCompleteProductForm({
+      id: product.id,
       inventoryId: product.inventoryId || product.id,
       initialQuantity: inv ? inv.stockQuantity : 0,
       initialPrice: inv ? inv.stockPrice : 0,
@@ -942,15 +947,16 @@ const StockManagement = () => {
     if (Object.keys(errors).length > 0) {
       // Filter errors if in edit mode (ignore hidden fields)
       if (isEditingCompleteProduct) {
-        delete errors.initialQuantity;
-        delete errors.initialPrice;
-        delete errors.threshold;
-        delete errors.supplierId;
-        delete errors.invoiceNumber;
-        delete errors.taxRate;
-        delete errors.ItemCode;
-        delete errors.ItemDescription;
-        delete errors.unitMeasure;
+        // We want to validate these if we are updating them independently
+        // delete errors.initialQuantity;
+        // delete errors.initialPrice;
+        // delete errors.threshold;
+        // delete errors.supplierId;
+        // delete errors.invoiceNumber;
+        // delete errors.taxRate;
+        // delete errors.ItemCode;
+        // delete errors.ItemDescription;
+        // delete errors.unitMeasure;
 
         if (Object.keys(errors).length > 0) {
           setFormErrors(errors);
@@ -972,8 +978,11 @@ const StockManagement = () => {
     if (isEditingCompleteProduct) {
       try {
         const f = completeProductForm;
+        const productId = editProductData.Id || f.id; // Using the primary ID for the product endpoint
+
+        // 1. Update Product Details
         const productPayload = {
-          inventoryId: f.inventoryId,
+          inventoryId: f.inventoryId, // SKU
           name: f.name,
           price: Number(f.price),
           priceAfterDiscount: Number(f.priceAfterDiscount || f.price),
@@ -985,8 +994,54 @@ const StockManagement = () => {
           showOnline: !!f.showOnline
         };
 
-        await API.products.update(editProductData.Id || f.inventoryId, productPayload);
-        showToastMessage("Product updated successfully", "success");
+        // 2. Update Inventory/Stock Details (independent part)
+        const inventoryPayload = {
+          productId: f.inventoryId, // SKU
+          stockQuantity: Number(f.initialQuantity || 0),
+          stockThreshold: Number(f.threshold || 0),
+          stockPrice: Number(f.initialPrice || 0),
+          invoiceNumber: f.invoiceNumber || "",
+          supplierId: f.supplierId || null,
+        };
+
+        // 3. Update Tax Info (independent part)
+        let taxPayload = null;
+        if (f.ItemCode || f.taxRate || f.ItemDescription || f.unitMeasure) {
+          taxPayload = {
+            productId: f.inventoryId, // SKU
+            ItemCode: f.ItemCode || "",
+            taxRate: Number(f.taxRate || 0),
+            ItemDescription: f.ItemDescription || "",
+            unitMeasure: f.unitMeasure || "",
+          };
+        }
+
+        // Perform independent updates
+        const updates = [];
+        // Use Product ID for product update
+        updates.push(API.products.update(productId, productPayload).then(() => {
+          showToastMessage("Product details updated successfully", "success");
+        }));
+
+        // Use Inventory ID (SKU) for inventory update
+        updates.push(API.inventories.update(f.inventoryId, inventoryPayload).then(() => {
+          showToastMessage("Inventory/Stock updated successfully", "success");
+        }));
+
+        if (taxPayload) {
+          // Use Inventory ID (SKU) for tax update
+          updates.push(API.goodsInfo.update(f.inventoryId, taxPayload).then(() => {
+            showToastMessage("Tax info updated successfully", "success");
+          }).catch(err => {
+            console.error("Tax info update failed:", err);
+            return API.goodsInfo.create(taxPayload).then(() => {
+              showToastMessage("Tax info created successfully", "success");
+            });
+          }));
+        }
+
+        await Promise.all(updates);
+        showToastMessage("Complete product updated successfully", "success");
 
         setShowAddCompleteProductModal(false);
         resetForms();
@@ -1092,6 +1147,87 @@ const StockManagement = () => {
       }
     } finally {
       setIsSubmitting(false);
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdateProductIndependent = async () => {
+    try {
+      setIsLoading(true);
+      const f = completeProductForm;
+      const productId = editProductData.Id || f.id;
+      if (!productId) {
+        throw new Error("Product ID not found");
+      }
+      const productPayload = {
+        inventoryId: f.inventoryId,
+        name: f.name,
+        price: Number(f.price),
+        priceAfterDiscount: Number(f.priceAfterDiscount || f.price),
+        category: f.categoryId ? Number(f.categoryId) : null,
+        subcategory: f.subCategoryId ? Number(f.subCategoryId) : null,
+        purchaseCap: Number(f.purchaseCap || 1),
+        discountQuantity: Number(f.discountQuantity || 0),
+        barcodes: f.barcodes,
+        showOnline: !!f.showOnline
+      };
+      await API.products.update(productId, productPayload);
+      showToastMessage("Product details updated successfully", "success");
+      fetchProducts(currentProductPage, true);
+    } catch (error) {
+      showToastMessage("Failed to update product: " + (error?.message || "error"), "danger");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdateInventoryIndependent = async () => {
+    try {
+      setIsLoading(true);
+      const f = completeProductForm;
+      const inventoryPayload = {
+        productId: f.inventoryId,
+        stockQuantity: Number(f.initialQuantity || 0),
+        stockThreshold: Number(f.threshold || 0),
+        stockPrice: Number(f.initialPrice || 0),
+        invoiceNumber: f.invoiceNumber || "",
+        supplierId: f.supplierId || null,
+      };
+      await API.inventories.update(f.inventoryId, inventoryPayload);
+      showToastMessage("Inventory updated successfully", "success");
+      fetchStocks(currentInventoryPage, true);
+    } catch (error) {
+      showToastMessage("Failed to update inventory: " + (error?.message || "error"), "danger");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdateTaxIndependent = async () => {
+    try {
+      setIsLoading(true);
+      const f = completeProductForm;
+      if (!f.ItemCode || !f.taxRate || !f.ItemDescription || !f.unitMeasure) {
+        showToastMessage("Please fill all tax fields before updating", "warning");
+        return;
+      }
+      const taxPayload = {
+        productId: f.inventoryId,
+        ItemCode: f.ItemCode || "",
+        taxRate: Number(f.taxRate || 0),
+        ItemDescription: f.ItemDescription || "",
+        unitMeasure: f.unitMeasure || "",
+      };
+      try {
+        await API.goodsInfo.update(f.inventoryId, taxPayload);
+        showToastMessage("Tax info updated successfully", "success");
+      } catch (taxErr) {
+        await API.goodsInfo.create(taxPayload);
+        showToastMessage("Tax info created successfully", "success");
+      }
+    } catch (error) {
+      showToastMessage("Failed to update tax info: " + (error?.message || "error"), "danger");
+    } finally {
       setIsLoading(false);
     }
   };
@@ -1452,7 +1588,19 @@ const StockManagement = () => {
 
             {/* Inventory Details */}
             <div className="mb-4 p-3 border rounded bg-light">
-              <h5 className="mb-3">Inventory Details</h5>
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <h5 className="mb-0">Inventory Details</h5>
+                {isEditingCompleteProduct && (
+                  <Button
+                    variant="outline-primary"
+                    size="sm"
+                    onClick={handleUpdateInventoryIndependent}
+                    disabled={isLoading}
+                  >
+                    Update Inventory Only
+                  </Button>
+                )}
+              </div>
 
               <Row>
                 <Col md={6}>
@@ -1592,7 +1740,19 @@ const StockManagement = () => {
 
             {/* Product Details */}
             <div className="mb-4 p-3 border rounded bg-light">
-              <h5 className="mb-3">Product Details</h5>
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <h5 className="mb-0">Product Details</h5>
+                {isEditingCompleteProduct && (
+                  <Button
+                    variant="outline-primary"
+                    size="sm"
+                    onClick={handleUpdateProductIndependent}
+                    disabled={isLoading}
+                  >
+                    Update Product Only
+                  </Button>
+                )}
+              </div>
 
               <Row>
                 <Col md={6}>
@@ -1809,7 +1969,19 @@ const StockManagement = () => {
 
             {/* Tax Information (Optional) */}
             <div className="mb-4 p-3 border rounded bg-light">
-              <h5 className="mb-3">Tax Information (Optional)</h5>
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <h5 className="mb-0">Tax Information (Optional)</h5>
+                {isEditingCompleteProduct && (
+                  <Button
+                    variant="outline-primary"
+                    size="sm"
+                    onClick={handleUpdateTaxIndependent}
+                    disabled={isLoading}
+                  >
+                    Update Tax Only
+                  </Button>
+                )}
+              </div>
 
               <Row>
                 <Col md={6}>
@@ -2207,6 +2379,16 @@ const StockManagement = () => {
               </Form.Group>
 
               <Form.Group className="mb-3">
+                <Form.Label>Invoice Number <span className="text-danger">*</span></Form.Label>
+                <Form.Control
+                  type="text"
+                  value={editStockData.invoiceNumber ?? ""}
+                  onChange={(e) => setEditStockData({ ...editStockData, invoiceNumber: e.target.value })}
+                  required
+                />
+              </Form.Group>
+
+              <Form.Group className="mb-3">
                 <Form.Label>Supplier <span className="text-danger">*</span></Form.Label>
                 <Form.Select
                   value={editStockData.supplierId ?? editStockData.supplier ?? ""}
@@ -2237,13 +2419,15 @@ const StockManagement = () => {
               try {
                 setIsLoading(true);
                 const payload = {
-                  productId: editStockData.id ?? editStockData.inventoryId ?? editStockData.productId,
+                  productId: editStockData.productId ?? editStockData.id ?? editStockData.inventoryId,
                   stockQuantity: Number(editStockData.stockQuantity ?? editStockData.quantity ?? 0),
-                  stockPrice: Number(editStockData.stockPrice ?? editStockData.purchasePrice ?? 0),
                   stockThreshold: Number(editStockData.stockThreshold ?? editStockData.threshold ?? 0),
+                  stockPrice: Number(editStockData.stockPrice ?? editStockData.purchasePrice ?? 0),
+                  invoiceNumber: editStockData.invoiceNumber ?? "",
                   supplierId: editStockData.supplierId ?? editStockData.supplier ?? null,
                 };
-                const id = editStockData.id ?? editStockData.inventoryId ?? editStockData.productId;
+                // Use productId (SKU) as the URL parameter for the inventory endpoint
+                const id = editStockData.productId ?? editStockData.id ?? editStockData.inventoryId;
                 if (typeof API.inventories?.update === "function") {
                   await API.inventories.update(id, payload);
                   showToastMessage("Stock updated successfully", "success");

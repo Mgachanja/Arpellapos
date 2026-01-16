@@ -59,7 +59,7 @@ export default function POS() {
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [coords, setCoords] = useState({ lat: 0, lng: 0 });
   const [defaultPriceType, setDefaultPriceType] = useState('Retail');
-  
+
   // Held Sales State
   const [showHeldSales, setShowHeldSales] = useState(false);
   const [heldSales, setHeldSales] = useState([]);
@@ -115,22 +115,22 @@ export default function POS() {
 
   const focusSearchInput = useCallback(() => {
     const el = searchInputRef.current;
-    if (el?.focus) try { el.focus({ preventScroll: true }); } catch (err) {}
+    if (el?.focus) try { el.focus({ preventScroll: true }); } catch (err) { }
   }, []);
 
   const clearSearchAndProducts = useCallback(() => {
-    if (searchInputRef.current) try { searchInputRef.current.value = ''; } catch (e) {}
-    setSearchTerm(''); 
-    setFilteredProducts([]); 
-    setHasSearched(false); 
-    setSearchType(''); 
+    if (searchInputRef.current) try { searchInputRef.current.value = ''; } catch (e) { }
+    setSearchTerm('');
+    setFilteredProducts([]);
+    setHasSearched(false);
+    setSearchType('');
     barcodeResultsRef.current = null;
     // NOTE: do NOT clear scannedProduct here — we keep the pinned product until explicit clear/add or TTL expiry
-    requestAnimationFrame(() => { 
-      try { 
-        if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
-        else focusSearchInput(); 
-      } catch (e) {} 
+    requestAnimationFrame(() => {
+      try {
+        if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+        else focusSearchInput();
+      } catch (e) { }
     });
   }, [focusSearchInput]);
 
@@ -144,34 +144,34 @@ export default function POS() {
 
   const handleOrderCompletion = useCallback(async (orderData, cartSnapshot = null, paymentTypeSnapshot = null, paymentDataSnapshot = null) => {
     toast.success('Order completed');
-  
+
     // Use provided snapshots or current state
     const itemsToReceipt = cartSnapshot || cart;
     const usedPaymentType = paymentTypeSnapshot || paymentType;
     const usedPaymentData = paymentDataSnapshot || paymentData;
-  
+
     const receiptItems = (Array.isArray(itemsToReceipt) ? itemsToReceipt : []).map(ci => {
       const sellingPrice = ci.priceType === 'Retail' ? (ci.price || 0) : (ci.priceAfterDiscount || ci.price || 0);
       const quantity = ci.quantity || 1;
       const lineTotal = sellingPrice * quantity;
-      return { 
-        name: ci.name || ci.productName || 'Item', 
-        productName: ci.name || ci.productName || 'Item', 
-        salePrice: sellingPrice, 
-        sellingPrice, 
-        price: sellingPrice, 
-        quantity, 
-        qty: quantity, 
-        lineTotal, 
-        total: lineTotal, 
-        priceType: ci.priceType, 
-        barcode: ci.barcode || '' 
+      return {
+        name: ci.name || ci.productName || 'Item',
+        productName: ci.name || ci.productName || 'Item',
+        salePrice: sellingPrice,
+        sellingPrice,
+        price: sellingPrice,
+        quantity,
+        qty: quantity,
+        lineTotal,
+        total: lineTotal,
+        priceType: ci.priceType,
+        barcode: ci.barcode || ''
       };
     });
-  
+
     const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
     const actualUser = Array.isArray(user) ? user[0] : user;
-  
+
     const getCashierName = () => {
       if (!actualUser) return 'Staff';
       const candidates = [
@@ -183,104 +183,126 @@ export default function POS() {
         actualUser.username,
         actualUser.email
       ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
-  
+
       const chosen = candidates.length > 0 ? candidates[0] : 'Staff';
       const firstToken = (chosen.split(/\s+/)[0] || chosen).trim();
       return firstToken || 'Staff';
     };
-  
+
     const cashierName = getCashierName();
-    const storeSettings = { 
-      storeName: 'ARPELLA STORE LIMITED', 
-      storeAddress: 'Ngong, Matasia', 
-      storePhone: '+254 7xx xxx xxx', 
-      pin: 'P052336649L', 
-      receiptFooter: 'Thank you for your business!' 
+    const storeSettings = {
+      storeName: 'ARPELLA STORE LIMITED',
+      storeAddress: 'Ngong, Matasia',
+      storePhone: '+254 7xx xxx xxx',
+      pin: 'P052336649L',
+      receiptFooter: 'Thank you for your business!'
     };
-  
+
     const calculatePaymentDetails = () => {
       const paymentInfo = { cashAmount: 0, mpesaAmount: 0, change: 0 };
-      if (usedPaymentType === 'cash') { 
-        paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0; 
-        paymentInfo.change = Math.max(0, paymentInfo.cashAmount - cartTotalFromLines); 
-      } else if (usedPaymentType === 'mpesa') { 
-        paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || cartTotalFromLines; 
-      } else if (usedPaymentType === 'both') { 
-        paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0; 
-        paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || 0; 
-        const totalPaid = paymentInfo.cashAmount + paymentInfo.mpesaAmount; 
-        paymentInfo.change = Math.max(0, totalPaid - cartTotalFromLines); 
+      if (usedPaymentType === 'cash') {
+        paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0;
+        paymentInfo.change = Math.max(0, paymentInfo.cashAmount - cartTotalFromLines);
+      } else if (usedPaymentType === 'mpesa') {
+        paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || cartTotalFromLines;
+      } else if (usedPaymentType === 'both') {
+        paymentInfo.cashAmount = Number(usedPaymentData.cashAmount) || 0;
+        paymentInfo.mpesaAmount = Number(usedPaymentData.mpesaAmount) || 0;
+        const totalPaid = paymentInfo.cashAmount + paymentInfo.mpesaAmount;
+        paymentInfo.change = Math.max(0, totalPaid - cartTotalFromLines);
       }
       return paymentInfo;
     };
-  
+
     const paymentDetails = calculatePaymentDetails();
-  
+
     const normalizedUser = {
       id: actualUser?.id || actualUser?._id || actualUser?.userId || null,
-      fullName: cashierName, 
-      full_name: cashierName, 
+      fullName: cashierName,
+      full_name: cashierName,
       name: cashierName,
-      firstName: actualUser?.firstName || actualUser?.first_name || '', 
+      firstName: actualUser?.firstName || actualUser?.first_name || '',
       first_name: actualUser?.firstName || actualUser?.first_name || '',
-      lastName: actualUser?.lastName || actualUser?.last_name || '', 
+      lastName: actualUser?.lastName || actualUser?.last_name || '',
       last_name: actualUser?.lastName || actualUser?.last_name || '',
-      userName: actualUser?.userName || actualUser?.username || cashierName, 
+      userName: actualUser?.userName || actualUser?.username || cashierName,
       username: actualUser?.userName || actualUser?.username || cashierName,
-      phone: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', 
-      phoneNumber: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '', 
+      phone: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '',
+      phoneNumber: actualUser?.phone || actualUser?.phoneNumber || actualUser?.mobile || '',
       email: actualUser?.email || ''
     };
-  
+
     const rawCustomerPhone = (usedPaymentType === 'mpesa' || usedPaymentType === 'both') ? (usedPaymentData.mpesaPhone || '').trim() || '' : (user && (user.phone || user.phoneNumber)) || '';
     const maskedCustomerPhone = rawCustomerPhone ? maskPhoneForReceipt(rawCustomerPhone) : 'Walk-in';
-  
+
     const receiptData = {
       cart: receiptItems,
       cartTotal: Number.isFinite(cartTotalFromLines) && cartTotalFromLines >= 0 ? cartTotalFromLines : cartTotalFromLines,
       paymentType: usedPaymentType || 'cash',
       paymentData: paymentDetails,
-      user: normalizedUser, 
+      user: normalizedUser,
       cashier: normalizedUser,
       orderNumber: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || orderData?.id || `ORD-${Date.now().toString().slice(-6)}`,
       orderId: orderData?.orderNumber || orderData?.orderId || orderData?.orderid || orderData?.id || `ORD-${Date.now().toString().slice(-6)}`,
       customerPhone: maskedCustomerPhone,
       storeSettings
     };
-  
+
+    // Construct and store local order in indexedDB (Sales Management)
+    try {
+      const orderId = orderData?.orderid || orderData?.orderId || orderData?.id || orderData?.order_id || receiptData.orderId;
+      const totalPaid = (paymentDetails.cashAmount || 0) + (paymentDetails.mpesaAmount || 0);
+      const status = totalPaid >= cartTotalFromLines ? 'paid' : 'pending';
+
+      const localOrder = {
+        orderId,
+        orderData: orderData || {},
+        cart: usedPaymentType === 'cash' ? (cartSnapshot || cart) : receiptItems, // capture items
+        cartTotal: cartTotalFromLines,
+        paymentType: usedPaymentType,
+        paymentData: usedPaymentData,
+        status,
+        createdAt: Date.now()
+      };
+
+      await indexedDb.putOrder(localOrder);
+      toast.info('Order recorded in sales');
+    } catch (err) {
+      console.warn('Failed to write order to indexedDb', err);
+    }
+
     // Only clear cart if not using snapshot
     if (!cartSnapshot) {
       dispatch(clearCart());
-      setPaymentType(''); 
-      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
-      setCurrentOrderId(null); 
-      
+      setPaymentType('');
+      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+      setCurrentOrderId(null);
+
       setProcessingOrder(false);
       setPendingOrderData(null);
       clearSearchAndProducts();
     }
-  
+
     if (paymentDetails.change > 0) {
       toast.info(`Change: ${KSH(paymentDetails.change)}`, { autoClose: 5000, position: 'top-center' });
     }
-  
+
     try {
       const res = await printOrderReceipt(receiptData, null, storeSettings);
-      if (res?.success) toast.success('Receipt printed successfully'); 
+      if (res?.success) toast.success('Receipt printed successfully');
       else toast.warning(`Receipt printing: ${res?.message || 'failed'}`);
     } catch (err) {
       toast.error('Receipt printing failed - check printer');
     }
-  
+
     // Clean up after receipt printing for M-Pesa orders
     if (cartSnapshot) {
       dispatch(clearCart());
-      setPaymentType(''); 
-      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' }); 
-      setCurrentOrderId(null); 
+      setPaymentType('');
+      setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '' });
+      setCurrentOrderId(null);
       setPendingOrderData(null);
       setProcessingOrder(false);
-      setPendingOrderData(null);
       clearSearchAndProducts();
     }
   }, [cart, paymentType, paymentData, user, maskPhoneForReceipt, dispatch, clearSearchAndProducts]);
@@ -406,44 +428,14 @@ export default function POS() {
 
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
 
-      try {
-        const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
-        const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
-        const usedPaymentType = paymentTypeSnapshot || paymentType;
-        const usedPaymentData = paymentDataSnapshot || paymentData;
 
-        const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
-          const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
-          return s + price * (it.quantity || 1);
-        }, 0);
-        const cash = Number(usedPaymentData?.cashAmount) || 0;
-        const mpesa = Number(usedPaymentData?.mpesaAmount) || 0;
-        const totalPaid = usedPaymentType === 'cash' ? cash : usedPaymentType === 'mpesa' ? mpesa : cash + mpesa;
-        const status = totalPaid >= cartTotal ? 'paid' : 'pending';
-
-        const localOrder = {
-          orderId,
-          orderData: res.data || {},
-          cart: cartSnap,
-          cartTotal,
-          paymentType: usedPaymentType,
-          paymentData: usedPaymentData,
-          status,
-          createdAt: Date.now()
-        };
-
-        await indexedDb.putOrder(localOrder);
-        toast.info('Order cached locally');
-      } catch (err) {
-        console.warn('Failed to write order to indexedDb', err);
-      }
 
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
 
       if (orderId) {
         setCurrentOrderId(orderId);
         toast.success(`Order created. ID: ${orderId}`);
-        if (pt !== 'both') {
+        if (pt === 'cash') {
           await handleOrderCompletion(res.data);
         } else {
           setPendingOrderData({
@@ -452,18 +444,20 @@ export default function POS() {
             paymentTypeSnapshot,
             paymentDataSnapshot
           });
-          toast.info('Hybrid order created. Confirm M-Pesa payment.');
+          toast.info(pt === 'both' ? 'Hybrid order created. Confirm M-Pesa payment.' : 'M-Pesa order created. Confirm payment.');
         }
       } else {
         toast.success('Order created.');
-        if (pt !== 'both') await handleOrderCompletion(res.data);
-        else {
+        if (pt === 'cash') {
+          await handleOrderCompletion(res.data);
+        } else {
           setPendingOrderData({
             orderData: res.data,
             cartSnapshot,
             paymentTypeSnapshot,
             paymentDataSnapshot
           });
+          toast.info(pt === 'both' ? 'Hybrid order created. Confirm M-Pesa payment.' : 'M-Pesa order created. Confirm payment.');
         }
       }
     } catch (err) {
@@ -537,37 +531,7 @@ export default function POS() {
 
       const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
 
-      try {
-        const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id || `ORD-${Date.now().toString().slice(-6)}`;
-        const cartSnap = cartSnapshot || JSON.parse(JSON.stringify(cart));
-        const usedPaymentType = paymentTypeSnapshot || paymentType;
-        const usedPaymentData = paymentDataSnapshot || paymentData;
 
-        const cartTotal = (Array.isArray(cartSnap) ? cartSnap : []).reduce((s, it) => {
-          const price = it.priceType === 'Retail' ? (it.price || 0) : (it.priceAfterDiscount || it.price || 0);
-          return s + price * (it.quantity || 1);
-        }, 0);
-        const cash = Number(usedPaymentData?.cashAmount) || 0;
-        const mpesa = Number(usedPaymentData?.mpesaAmount) || 0;
-        const totalPaid = usedPaymentType === 'cash' ? cash : usedPaymentType === 'mpesa' ? mpesa : cash + mpesa;
-        const status = totalPaid >= cartTotal ? 'paid' : 'pending';
-
-        const localOrder = {
-          orderId,
-          orderData: res.data || {},
-          cart: cartSnap,
-          cartTotal,
-          paymentType: usedPaymentType,
-          paymentData: usedPaymentData,
-          status,
-          createdAt: Date.now()
-        };
-
-        await indexedDb.putOrder(localOrder);
-        toast.info('Order cached locally');
-      } catch (err) {
-        console.warn('Failed to write order to indexedDb', err);
-      }
 
       const orderId = res?.data?.orderid || res?.data?.orderId || res?.data?.id || res?.data?.order_id;
 
@@ -604,7 +568,7 @@ export default function POS() {
       toast.error('Sale not found');
       return;
     }
-  
+
     // restore cart (synchronous dispatches)
     dispatch(clearCart());
     if (Array.isArray(sale.items)) {
@@ -615,32 +579,32 @@ export default function POS() {
         }));
       });
     }
-  
+
     // gather overrides (do not rely on state re-render timing)
     const overrides = {
       paymentType: opts.paymentType ?? sale.paymentType ?? 'cash',
       paymentData: opts.paymentData ?? sale.paymentData ?? { cashAmount: '', mpesaPhone: '', mpesaAmount: '' }
     };
-  
+
     // also set the UI state so cart shows correct values (optional, but keeps UX consistent)
     setPaymentData(overrides.paymentData);
     setPaymentType(overrides.paymentType);
-  
+
     // ensure orderId cleared before checkout
     setCurrentOrderId(null);
-  
+
     // small delay to let store settle (the checkout functions use cart selector; this is just to be safe)
     await new Promise(res => setTimeout(res, 0));
-  
+
     try {
       if (overrides.paymentType === 'both') {
         await createOrder(overrides);
       } else {
         await completeCheckout(overrides);
       }
-  
+
       // delete held sale after successful checkout
-      try { heldSalesService.deleteHeldSale(saleId); } catch (e) {}
+      try { heldSalesService.deleteHeldSale(saleId); } catch (e) { }
       setHeldSales(heldSalesService.getAllHeldSales());
       setShowHeldSales(false);
     } catch (err) {
@@ -649,16 +613,16 @@ export default function POS() {
   }, [dispatch, createOrder, completeCheckout]);
 
   const checkPaymentStatus = useCallback(async () => {
-    if (!currentOrderId) { 
-      toast.error('No order ID to check'); 
-      return; 
+    if (!currentOrderId) {
+      toast.error('No order ID to check');
+      return;
     }
-    
+
     try {
-      setCheckingPayment(true); 
+      setCheckingPayment(true);
       toast.info('Checking payment status...');
       let paid = false;
-      
+
       try {
         const response = await api.get(`/payments/${currentOrderId}`);
         const remoteData = response?.data || {};
@@ -666,15 +630,15 @@ export default function POS() {
           const statusVal = remoteData?.status || remoteData?.paymentStatus || remoteData?.state || null;
           if (statusVal && String(statusVal).toLowerCase() === 'completed') paid = true;
         } else {
-          if (remoteData.paid === true || 
-              String(remoteData.paymentStatus || '').toLowerCase() === 'paid' || 
-              String(remoteData.status || '').toLowerCase() === 'paid' || 
-              String(remoteData.status || '').toLowerCase() === 'completed') {
+          if (remoteData.paid === true ||
+            String(remoteData.paymentStatus || '').toLowerCase() === 'paid' ||
+            String(remoteData.status || '').toLowerCase() === 'paid' ||
+            String(remoteData.status || '').toLowerCase() === 'completed') {
             paid = true;
           }
         }
       } catch (err) { /* ignore */ }
-  
+
       if (!paid) {
         try {
           const orderResp = await api.get(`/order/${currentOrderId}`);
@@ -683,21 +647,21 @@ export default function POS() {
             const statusVal = od?.status || od?.paymentStatus || (od.payment && od.payment.status) || null;
             if (statusVal && String(statusVal).toLowerCase() === 'completed') paid = true;
           } else {
-            if (od && (od.paid === true || 
-                String(od.status || '').toLowerCase() === 'paid' || 
-                String(od.paymentStatus || '').toLowerCase() === 'paid')) {
+            if (od && (od.paid === true ||
+              String(od.status || '').toLowerCase() === 'paid' ||
+              String(od.paymentStatus || '').toLowerCase() === 'paid')) {
               paid = true;
-            } else if (od && od.payment && (od.payment.paid === true || 
-                String(od.payment.status || '').toLowerCase() === 'paid')) {
+            } else if (od && od.payment && (od.payment.paid === true ||
+              String(od.payment.status || '').toLowerCase() === 'paid')) {
               paid = true;
             }
           }
         } catch (err) { /* ignore */ }
       }
-  
-      if (paid) { 
+
+      if (paid) {
         toast.success('Payment confirmed');
-        
+
         // Use pending order data for receipt printing
         if (pendingOrderData) {
           await handleOrderCompletion(
@@ -831,7 +795,7 @@ export default function POS() {
 
       // Clear any visible text in search input (but keep internal searchTerm empty)
       if (searchInputRef.current) {
-        try { searchInputRef.current.value = ''; } catch (e) {}
+        try { searchInputRef.current.value = ''; } catch (e) { }
       }
       setSearchTerm('');
 
@@ -938,8 +902,8 @@ export default function POS() {
   useEffect(() => {
     if (navigator?.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (p) => setCoords({ lat: p.coords.latitude, lng: p.coords.longitude }), 
-        () => {}, 
+        (p) => setCoords({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => { },
         { timeout: 3000 }
       );
     }
@@ -949,11 +913,11 @@ export default function POS() {
     const handleCheckoutEnter = (e) => {
       if (e.key !== 'Enter') return;
       if (!paymentType || (Array.isArray(cart) ? cart.length === 0 : true) || processingOrder) return;
-      try { 
-        e.preventDefault(); 
-        e.stopPropagation(); 
-      } catch (err) {}
-      if (paymentType === 'both') createOrder(); 
+      try {
+        e.preventDefault();
+        e.stopPropagation();
+      } catch (err) { }
+      if (paymentType === 'both') createOrder();
       else completeCheckout();
     };
 
@@ -976,9 +940,9 @@ export default function POS() {
         return;
       }
       // otherwise clear results
-      setFilteredProducts([]); 
-      setHasSearched(false); 
-      setSearchType(''); 
+      setFilteredProducts([]);
+      setHasSearched(false);
+      setSearchType('');
       return;
     }
 
@@ -1011,15 +975,15 @@ export default function POS() {
       if (foundByBarcode && isLikelyBarcode(originalTerm)) {
         barcodeResultsRef.current = allResults.slice();
         if (searchInputRef.current) {
-          try { 
-            searchInputRef.current.value = ''; 
-          } catch (e) {}
+          try {
+            searchInputRef.current.value = '';
+          } catch (e) { }
         }
         setSearchTerm('');
-        requestAnimationFrame(() => { 
-          try { 
-            if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
-          } catch (e) {} 
+        requestAnimationFrame(() => {
+          try {
+            if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+          } catch (e) { }
         });
       }
     } catch (error) {
@@ -1030,9 +994,9 @@ export default function POS() {
   }, [isLikelyBarcode, scannedProduct]);
 
   const debouncedSearch = useDebouncedCallback(performSearch, 300);
-  
-  useEffect(() => { 
-    debouncedSearch(searchTerm); 
+
+  useEffect(() => {
+    debouncedSearch(searchTerm);
   }, [searchTerm, debouncedSearch]);
 
   // wrapper to setSearchTerm (keeps scannedProduct pinned)
@@ -1047,38 +1011,38 @@ export default function POS() {
   const handleClearCart = useCallback(() => {
     if ((cartItemCount || 0) === 0) {
       toast.info('Cart is already empty');
-      requestAnimationFrame(() => { 
-        try { 
-          if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
-        } catch (e) {} 
+      requestAnimationFrame(() => {
+        try {
+          if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+        } catch (e) { }
       });
       return;
     }
 
     dispatch(clearCart());
     toast.success('Cart cleared');
-    setCurrentOrderId(null); 
+    setCurrentOrderId(null);
     setPendingOrderData(null);
-    setPaymentType(''); 
+    setPaymentType('');
     setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' });
-    requestAnimationFrame(() => { 
-      try { 
-        if (searchInputRef.current) { 
-          searchInputRef.current.value = ''; 
-          searchInputRef.current.focus({ preventScroll: true }); 
+    requestAnimationFrame(() => {
+      try {
+        if (searchInputRef.current) {
+          searchInputRef.current.value = '';
+          searchInputRef.current.focus({ preventScroll: true });
         } else {
-          focusSearchInput(); 
+          focusSearchInput();
         }
-      } catch (e) {} 
+      } catch (e) { }
     });
   }, [cartItemCount, dispatch, focusSearchInput]);
 
   const handleQuantityChange = useCallback(async (productId, priceType, newQuantity, productData = null) => {
     try {
       const product = productData || (filteredProducts || []).find(p => (p.id || p._id) === productId);
-      if (!product) { 
-        toast.error('Product not found'); 
-        return; 
+      if (!product) {
+        toast.error('Product not found');
+        return;
       }
 
       const existingCartItem = (Array.isArray(cart) ? cart : []).find(item => (item.id || item._id) === productId && item.priceType === priceType);
@@ -1086,15 +1050,15 @@ export default function POS() {
       if (newQuantity === 0) {
         if (existingCartItem) {
           const cartItemId = `${productId}_${priceType}`;
-          try { dispatch(removeItemFromCart(cartItemId)); } catch (e) {}
-          try { dispatch(removeItemFromCart({ id: cartItemId })); } catch (e) {}
-          try { dispatch(removeItemFromCart({ productId, priceType })); } catch (e) {}
-          try { dispatch(updateCartItemQuantity({ productId, quantity: 0 })); } catch (e) {}
+          try { dispatch(removeItemFromCart(cartItemId)); } catch (e) { }
+          try { dispatch(removeItemFromCart({ id: cartItemId })); } catch (e) { }
+          try { dispatch(removeItemFromCart({ productId, priceType })); } catch (e) { }
+          try { dispatch(updateCartItemQuantity({ productId, quantity: 0 })); } catch (e) { }
           toast.success('Removed from cart');
-          requestAnimationFrame(() => { 
-            try { 
-              if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
-            } catch (e) {} 
+          requestAnimationFrame(() => {
+            try {
+              if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+            } catch (e) { }
           });
         }
         return;
@@ -1102,9 +1066,9 @@ export default function POS() {
 
       const currentCartQty = existingCartItem ? existingCartItem.quantity : 0;
       const inventoryId = getInventoryId(product);
-      if (!inventoryId) { 
-        toast.error('Cannot validate stock - inventory ID missing'); 
-        return; 
+      if (!inventoryId) {
+        toast.error('Cannot validate stock - inventory ID missing');
+        return;
       }
 
       setProductLoading(productId, true);
@@ -1112,36 +1076,36 @@ export default function POS() {
       if (newQuantity > currentCartQty) {
         const qtyToAdd = newQuantity - currentCartQty;
         try {
-          const validation = await validateAndAddToCart({ 
-            productId, 
-            inventoryId, 
-            qty: qtyToAdd, 
-            currentCartQty 
+          const validation = await validateAndAddToCart({
+            productId,
+            inventoryId,
+            qty: qtyToAdd,
+            currentCartQty
           });
-          if (validation.status === 'conflict' || validation.status === 'error') { 
-            toast.error(validation.message); 
-            setProductLoading(productId, false); 
-            return; 
+          if (validation.status === 'conflict' || validation.status === 'error') {
+            toast.error(validation.message);
+            setProductLoading(productId, false);
+            return;
           }
           if (validation.status === 'warning') toast.warning(validation.message);
-        } catch (validationError) { 
-          /* proceed if validation service fails */ 
+        } catch (validationError) {
+          /* proceed if validation service fails */
         }
       } else {
         try {
-          const validation = await validateCartQuantityChange({ 
-            productId, 
-            inventoryId, 
-            newQty: newQuantity, 
-            currentCartQty 
+          const validation = await validateCartQuantityChange({
+            productId,
+            inventoryId,
+            newQty: newQuantity,
+            currentCartQty
           });
-          if (validation.status === 'conflict' || validation.status === 'error') { 
-            toast.error(validation.message); 
-            setProductLoading(productId, false); 
-            return; 
+          if (validation.status === 'conflict' || validation.status === 'error') {
+            toast.error(validation.message);
+            setProductLoading(productId, false);
+            return;
           }
-        } catch (validationError) { 
-          /* proceed if validation service fails */ 
+        } catch (validationError) {
+          /* proceed if validation service fails */
         }
       }
 
@@ -1149,36 +1113,36 @@ export default function POS() {
         dispatch(updateCartItemQuantity({ productId, quantity: newQuantity }));
         toast.success('Cart updated');
       } else {
-        dispatch(addItemToCart({ 
-          product: { 
-            ...product, 
-            id: productId, 
-            priceType, 
-            price: product.price, 
-            priceAfterDiscount: product.priceAfterDiscount 
-          }, 
-          quantity: newQuantity 
+        dispatch(addItemToCart({
+          product: {
+            ...product,
+            id: productId,
+            priceType,
+            price: product.price,
+            priceAfterDiscount: product.priceAfterDiscount
+          },
+          quantity: newQuantity
         }));
         toast.success(`Added to cart (${priceType === 'Retail' ? 'Retail' : 'Wholesale'})`);
       }
 
       setProductLoading(productId, false);
-      
+
       // AFTER adding/updating, clear the pinned scanned product and the search input
       clearScannedProductTimer();
       setScannedProduct(null);
       barcodeResultsRef.current = null;
       clearSearchAndProducts();
-      
+
       // Keep focus on search input
-      requestAnimationFrame(() => { 
-        try { 
+      requestAnimationFrame(() => {
+        try {
           if (searchInputRef.current) {
-            searchInputRef.current.focus({ preventScroll: true }); 
+            searchInputRef.current.focus({ preventScroll: true });
           } else {
-            focusSearchInput(); 
+            focusSearchInput();
           }
-        } catch (e) {} 
+        } catch (e) { }
       });
     } catch (error) {
       toast.error(`Failed to update cart: ${error?.message || 'Unexpected error'}`);
@@ -1187,31 +1151,31 @@ export default function POS() {
   }, [filteredProducts, cart, getInventoryId, setProductLoading, dispatch, focusSearchInput, clearSearchAndProducts, clearScannedProductTimer]);
 
   const handleRemoveItem = useCallback((cartKey, item) => {
-    if (!cartKey) { 
-      toast.error('Invalid cart item key'); 
-      return; 
+    if (!cartKey) {
+      toast.error('Invalid cart item key');
+      return;
     }
     const productId = item?.id || item?._id || null;
     const priceType = item?.priceType || (cartKey.includes('_') ? cartKey.split('_').slice(-1)[0] : null);
 
     try {
-      try { dispatch(removeItemFromCart(cartKey)); } catch (e) {}
-      try { dispatch(removeItemFromCart({ id: cartKey })); } catch (e) {}
+      try { dispatch(removeItemFromCart(cartKey)); } catch (e) { }
+      try { dispatch(removeItemFromCart({ id: cartKey })); } catch (e) { }
       if (productId && priceType) {
-        try { dispatch(removeItemFromCart({ productId, priceType })); } catch (e) {}
+        try { dispatch(removeItemFromCart({ productId, priceType })); } catch (e) { }
       }
       if (productId) {
-        try { dispatch(updateCartItemQuantity({ productId, quantity: 0 })); } catch (e) {}
-        try { dispatch(removeItemFromCart(productId)); } catch (e) {}
+        try { dispatch(updateCartItemQuantity({ productId, quantity: 0 })); } catch (e) { }
+        try { dispatch(removeItemFromCart(productId)); } catch (e) { }
       }
       toast.success('Item removed from cart');
     } catch (err) {
       toast.error('Failed to remove item');
     } finally {
-      requestAnimationFrame(() => { 
-        try { 
-          if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true }); 
-        } catch (e) {} 
+      requestAnimationFrame(() => {
+        try {
+          if (searchInputRef.current) searchInputRef.current.focus({ preventScroll: true });
+        } catch (e) { }
       });
     }
   }, [dispatch]);
@@ -1253,18 +1217,18 @@ export default function POS() {
     <div className="container-fluid py-4" style={{ background: '#f8f9fa', minHeight: '100vh', maxWidth: '100%', overflow: 'hidden' }}>
       <div className="row h-100" style={{ minHeight: 'calc(100vh - 2rem)' }}>
         <div className="col-xl-4 col-lg-5 col-md-6 col-12 mb-4">
-          <SearchHeader 
-            searchTerm={searchTerm} 
-            setSearchTerm={handleSetSearchTerm} 
-            searchInputRef={searchInputRef} 
+          <SearchHeader
+            searchTerm={searchTerm}
+            setSearchTerm={handleSetSearchTerm}
+            searchInputRef={searchInputRef}
           />
 
-          <SearchTools 
-            loading={loading} 
-            onRefresh={refresh} 
-            onClear={clearSearchAndProducts} 
-            defaultPriceType={defaultPriceType} 
-            setDefaultPriceType={setDefaultPriceType} 
+          <SearchTools
+            loading={loading}
+            onRefresh={refresh}
+            onClear={clearSearchAndProducts}
+            defaultPriceType={defaultPriceType}
+            setDefaultPriceType={setDefaultPriceType}
           />
 
           {/* Show pinned scanned product and allow manual clear */}
@@ -1273,7 +1237,7 @@ export default function POS() {
               <div className="badge bg-info text-dark" style={{ padding: '8px 10px', fontSize: 14 }}>
                 <i className="fas fa-barcode me-1" /> {scannedProduct.name || 'Scanned item'}
               </div>
-              <button 
+              <button
                 className="btn btn-sm btn-outline-secondary"
                 onClick={() => {
                   clearScannedProductTimer();
@@ -1290,14 +1254,14 @@ export default function POS() {
 
           <div className="products-container" style={{ height: 'calc(100vh - 320px)', overflowY: 'auto', paddingRight: 10 }}>
             <div className="row">
-              <ProductsGrid 
-                hasSearched={hasSearched} 
-                filteredProducts={displayedProducts} 
-                searchTerm={searchTerm} 
-                isLikelyBarcode={isLikelyBarcode} 
-                cart={cart} 
-                onQuantityChange={handleQuantityChange} 
-                loadingProducts={loadingProducts} 
+              <ProductsGrid
+                hasSearched={hasSearched}
+                filteredProducts={displayedProducts}
+                searchTerm={searchTerm}
+                isLikelyBarcode={isLikelyBarcode}
+                cart={cart}
+                onQuantityChange={handleQuantityChange}
+                loadingProducts={loadingProducts}
               />
             </div>
 
@@ -1326,8 +1290,8 @@ export default function POS() {
                 {cartItemCount > 0 && <span className="badge bg-primary ms-2">{cartItemCount} items</span>}
               </h5>
               <div className="d-flex gap-2">
-                <button 
-                  className="btn btn-outline-warning btn-sm" 
+                <button
+                  className="btn btn-outline-warning btn-sm"
                   onClick={() => setShowHeldSales(true)}
                   title="View held sales"
                   aria-label="Held sales"
@@ -1338,8 +1302,8 @@ export default function POS() {
                 </button>
                 {cartItemCount > 0 && (
                   <>
-                    <button 
-                      className="btn btn-warning btn-sm" 
+                    <button
+                      className="btn btn-warning btn-sm"
                       onClick={() => {
                         if (cart.length === 0) { toast.error('Cart is empty - nothing to hold'); return; }
                         try {
@@ -1365,10 +1329,10 @@ export default function POS() {
                       <i className="fas fa-pause-circle me-1" />
                       Hold This Sale
                     </button>
-                    <button 
-                      className="btn btn-outline-danger btn-sm" 
-                      onClick={() => { dispatch(clearCart()); toast.success('Cart cleared'); setCurrentOrderId(null); setPendingOrderData(null); setPaymentType(''); setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' }); clearSearchAndProducts(); }} 
-                      title="Clear all items" 
+                    <button
+                      className="btn btn-outline-danger btn-sm"
+                      onClick={() => { dispatch(clearCart()); toast.success('Cart cleared'); setCurrentOrderId(null); setPendingOrderData(null); setPaymentType(''); setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' }); clearSearchAndProducts(); }}
+                      title="Clear all items"
                       aria-label="Clear cart"
                     >
                       <i className="fas fa-trash me-1" /> Clear
@@ -1391,11 +1355,11 @@ export default function POS() {
                   <span className="fw-bold fs-3 text-success">{KSH(currentCartTotal)}</span>
                 </div>
 
-                <PaymentForm 
-                  paymentType={paymentType} 
-                  setPaymentType={setPaymentType} 
-                  paymentData={paymentData} 
-                  setPaymentData={setPaymentData} 
+                <PaymentForm
+                  paymentType={paymentType}
+                  setPaymentType={setPaymentType}
+                  paymentData={paymentData}
+                  setPaymentData={setPaymentData}
                   cartTotal={currentCartTotal}
                   setCurrentOrderId={setCurrentOrderId}
                 />
@@ -1408,21 +1372,21 @@ export default function POS() {
                         <small>Order ID: <strong>{currentOrderId}</strong></small>
                       </div>
                       <div>
-                        <Button 
-                          variant="outline-success" 
-                          size="sm" 
-                          onClick={checkPaymentStatus} 
+                        <Button
+                          variant="outline-success"
+                          size="sm"
+                          onClick={checkPaymentStatus}
                           disabled={checkingPayment}
                         >
                           {checkingPayment ? (
-                            <> 
-                              <span className="spinner-border spinner-border-sm me-2" /> 
-                              Checking... 
+                            <>
+                              <span className="spinner-border spinner-border-sm me-2" />
+                              Checking...
                             </>
                           ) : (
-                            <> 
-                              <i className="fas fa-check-circle me-2" /> 
-                              Confirm 
+                            <>
+                              <i className="fas fa-check-circle me-2" />
+                              Confirm
                             </>
                           )}
                         </Button>
@@ -1434,21 +1398,21 @@ export default function POS() {
                   </div>
                 )}
 
-                <Button 
-                  style={{ ...CTA, width: '100%', padding: '14px', fontSize: '1.1rem', fontWeight: 600 }} 
-                  onClick={paymentType === 'both' ? () => createOrder() : () => completeCheckout()} 
-                  disabled={!paymentType || processingOrder} 
+                <Button
+                  style={{ ...CTA, width: '100%', padding: '14px', fontSize: '1.1rem', fontWeight: 600 }}
+                  onClick={paymentType === 'both' ? () => createOrder() : () => completeCheckout()}
+                  disabled={!paymentType || processingOrder}
                   size="lg"
                 >
                   {processingOrder ? (
-                    <> 
-                      <span className="spinner-border spinner-border-sm me-2" /> 
-                      Processing... 
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" />
+                      Processing...
                     </>
                   ) : (
-                    <> 
+                    <>
                       <i className="fas fa-check me-2" />
-                      {paymentType === 'both' ? 'Create Order' : 'Complete Order'} - {KSH(currentCartTotal)} 
+                      {paymentType === 'both' ? 'Create Order' : 'Complete Order'} - {KSH(currentCartTotal)}
                     </>
                   )}
                 </Button>
@@ -1459,7 +1423,7 @@ export default function POS() {
       </div>
 
       {/* Held Sales Modal */}
-      <HeldSales 
+      <HeldSales
         show={showHeldSales}
         onHide={() => setShowHeldSales(false)}
         heldSales={safeHeldSales}
@@ -1481,7 +1445,7 @@ export default function POS() {
           try { const sale = heldSalesService.retrieveHeldSale(saleId); heldSalesService.deleteHeldSale(saleId); setHeldSales(heldSalesService.getAllHeldSales()); toast.success(`${sale?.name || 'Sale'} deleted`); } catch (error) { console.error(error); toast.error('Failed to delete sale'); }
         }
         }
-        onCheckoutSale={(saleId, opts) => handleCheckoutSale(saleId, opts)} 
+        onCheckoutSale={(saleId, opts) => handleCheckoutSale(saleId, opts)}
       />
 
       <style>{`

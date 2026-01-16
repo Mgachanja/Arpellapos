@@ -1,5 +1,6 @@
 // src/app/dashboard/SalesDashboard.jsx
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { toast } from 'react-toastify';
 import {
   TrendingUp,
   DollarSign,
@@ -9,7 +10,8 @@ import {
   ChevronRight,
   Eye,
   X,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
 import api from '../../services/api';         // same pattern you use in POS.jsx
 import indexedDb from '../../services/indexedDB'; // same helper used in POS
@@ -68,10 +70,10 @@ const normalizeOrder = (o) => {
   const items = Array.isArray(o.cart)
     ? o.cart
     : Array.isArray(o.orderitems)
-    ? o.orderitems
-    : Array.isArray(o.orderItems)
-    ? o.orderItems
-    : [];
+      ? o.orderitems
+      : Array.isArray(o.orderItems)
+        ? o.orderItems
+        : [];
 
   const cartTotal =
     num(o.cartTotal ?? o.total ??
@@ -101,6 +103,8 @@ export default function SalesDashboard() {
   const [rowsLimit, setRowsLimit] = useState('all');
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [orderToDelete, setOrderToDelete] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const rowsOptions = ['all', 20, 50, 100, 200];
@@ -267,10 +271,10 @@ export default function SalesDashboard() {
                   await indexedDb.putInventories(remote);
                 } else if (typeof indexedDb.putInventory === 'function' && remote && remote.length) {
                   for (const inv of remote) {
-                    try { await indexedDb.putInventory(inv); } catch (e) {}
+                    try { await indexedDb.putInventory(inv); } catch (e) { }
                   }
                 }
-              } catch (e) {}
+              } catch (e) { }
               // productInventoryKey preserved from prev
               if (isMountedRef.current) setInventoryCostMap({ costMap: newCostMap, productInventoryKey: prev.productInventoryKey || new Map() });
             } catch (e) {
@@ -395,6 +399,26 @@ export default function SalesDashboard() {
   const closeModal = () => {
     setSelectedOrder(null);
     setShowModal(false);
+  };
+
+  const handleDeleteOrder = (orderId) => {
+    setOrderToDelete(orderId);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!orderToDelete) return;
+    try {
+      await indexedDb.deleteOrder(orderToDelete);
+      setOrders(prev => prev.filter(o => o.id !== orderToDelete));
+      toast.success('Transaction deleted');
+    } catch (err) {
+      console.error('Delete failed:', err);
+      toast.error('Failed to delete');
+    } finally {
+      setShowDeleteModal(false);
+      setOrderToDelete(null);
+    }
   };
 
   /* ================= RENDER ================= */
@@ -577,16 +601,28 @@ export default function SalesDashboard() {
                           </td>
                           <td className="text-right bold">{formatKsh(o.cartTotal)}</td>
                           <td className="text-right bold profit">{formatKsh(orderProfit)}</td>
-                          <td className="text-center">
+                          <td className="text-center actions-cell">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openOrderModal(o);
                               }}
-                              className="icon-btn"
+                              className="icon-btn view-btn"
+                              title="View details"
                               aria-label={`View order ${o.id}`}
                             >
-                              <Eye />
+                              <Eye size={18} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteOrder(o.id);
+                              }}
+                              className="icon-btn delete-btn"
+                              title="Delete transaction"
+                              aria-label={`Delete order ${o.id}`}
+                            >
+                              <Trash2 size={18} />
                             </button>
                           </td>
                         </tr>
@@ -665,6 +701,35 @@ export default function SalesDashboard() {
                   <div className="summary-label">Items Count</div>
                   <div className="summary-value">{selectedOrder.items.length}</div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="modal-backdrop" onClick={() => setShowDeleteModal(false)}>
+          <div className="modal-panel delete-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header delete-header">
+              <div className="d-flex align-items-center gap-3">
+                <div className="alert-icon-wrap">
+                  <AlertCircle size={24} color="#dc2626" />
+                </div>
+                <div>
+                  <h3 className="m-0">Delete Transaction</h3>
+                  <p className="meta m-0">This action cannot be undone</p>
+                </div>
+              </div>
+              <button className="icon-btn close" onClick={() => setShowDeleteModal(false)}>
+                <X />
+              </button>
+            </div>
+            <div className="modal-body text-center py-4">
+              <p className="fs-5 mb-4">Are you sure you want to permanently delete transaction <br /><strong>#{orderToDelete}</strong>?</p>
+              <div className="d-flex justify-content-center gap-3 mt-4">
+                <button className="btn outline" onClick={() => setShowDeleteModal(false)}>Cancel</button>
+                <button className="btn danger" onClick={confirmDelete}>Delete Permanently</button>
               </div>
             </div>
           </div>
@@ -762,8 +827,13 @@ export default function SalesDashboard() {
         .text-center { text-align:center; }
         .bold { font-weight:700; }
         .profit { color:#059669; }
-        .icon-btn { background:transparent; border:1px solid transparent; padding:6px; border-radius:8px; cursor:pointer; transition:background .12s; }
-        .icon-btn:hover { background:#f8fafc; }
+        .icon-btn { background:transparent; border:1px solid transparent; padding:6px; border-radius:8px; cursor:pointer; transition:all .12s; display:inline-flex; align-items:center; justify-content:center; }
+        .icon-btn:hover { background:#f1f5f9; transform:translateY(-1px); }
+        .view-btn { color:#64748b; }
+        .view-btn:hover { color:#2563eb; background:#eff6ff; }
+        .delete-btn { color:#94a3b8; }
+        .delete-btn:hover { color:#dc2626; background:#fef2f2; }
+        .actions-cell { display:flex; gap:8px; justify-content:center; }
 
         /* Empty states */
         .empty-state { padding:36px; text-align:center; color:var(--muted); }
@@ -797,6 +867,14 @@ export default function SalesDashboard() {
         .profit-positive { color:#059669; }
         .profit-negative { color:#dc2626; }
         .profit-total { color:#059669; font-weight:900; }
+
+        .delete-modal { max-width: 480px; }
+        .delete-header { background: #fff; border-bottom: 1px solid #f1f5f9; }
+        .alert-icon-wrap { background: #fef2f2; padding: 10px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+        .btn.outline { background: transparent; border: 1px solid #e2e8f0; color: #64748b; }
+        .btn.outline:hover { background: #f8fafc; border-color: #cbd5e1; }
+        .btn.danger { background: #dc2626; color: white; }
+        .btn.danger:hover { background: #b91c1c; }
       `}</style>
     </div>
   );

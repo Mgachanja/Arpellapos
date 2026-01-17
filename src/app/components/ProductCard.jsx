@@ -6,7 +6,7 @@ const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 export default function ProductCard({
   product = {},
   cartItems = [],
-  onQuantityChange = () => {}
+  onQuantityChange = () => { }
 }) {
   const normalize = (p) => {
     const id = p.id ?? p._id ?? p.productId ?? p.sku ?? null;

@@ -352,7 +352,7 @@ export default function POS() {
       return {
         productId: pid,
         quantity: Number(ci.quantity) || 1,
-        priceType: ci.priceType === 'Wholesale' ? 'Wholesale' : 'Retail'
+        priceType: ci.priceType === 'Discounted' || ci.priceType === 'Wholesale' ? 'Discounted' : 'Retail'
       };
     }));
 

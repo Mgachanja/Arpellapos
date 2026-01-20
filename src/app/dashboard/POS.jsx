@@ -421,6 +421,10 @@ export default function POS() {
         payload.transactionId = String(tx);
       }
 
+      if (pt === 'both') {
+        payload.order.total = Number(pd.cashAmount) || 0;
+      }
+
       // Take snapshot BEFORE API call
       const cartSnapshot = JSON.parse(JSON.stringify(cart));
       const paymentTypeSnapshot = pt;

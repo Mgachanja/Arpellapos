@@ -21,8 +21,8 @@ function openDB() {
         pStore.createIndex('inventoryId', 'inventoryId', { unique: false });
       } else {
         // ensure indexes
-        try { const pStore = ev.target.transaction.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('inventoryId')) pStore.createIndex('inventoryId','inventoryId',{unique:false}); } catch(e){}
-        try { const pStore = ev.target.transaction.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('name_lower')) pStore.createIndex('name_lower','name_lower',{unique:false}); } catch(e){}
+        try { const pStore = ev.target.transaction.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('inventoryId')) pStore.createIndex('inventoryId', 'inventoryId', { unique: false }); } catch (e) { }
+        try { const pStore = ev.target.transaction.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('name_lower')) pStore.createIndex('name_lower', 'name_lower', { unique: false }); } catch (e) { }
       }
 
       if (!db.objectStoreNames.contains(STORE_BARCODES)) {
@@ -128,14 +128,14 @@ async function putProducts(products = []) {
         pStore.put(product);
       }
     } catch (e) {
-      try { pStore.put(product); } catch (err) {}
+      try { pStore.put(product); } catch (err) { }
     }
 
     const barcodes = Array.isArray(raw.barcodes) ? raw.barcodes : (raw.barcodes ? [raw.barcodes] : []);
     if (raw.barcode) barcodes.push(raw.barcode);
     for (const code of barcodes) {
       if (!code) continue;
-      try { bStore.put({ code: String(code).trim(), productId: id }); } catch (e) {}
+      try { bStore.put({ code: String(code).trim(), productId: id }); } catch (e) { }
     }
   }
 
@@ -173,18 +173,18 @@ async function getProductById(id) {
   try {
     const direct = await reqToPromise(store.get(id));
     if (direct) return direct;
-  } catch (e) {}
+  } catch (e) { }
 
   try {
     const directS = await reqToPromise(store.get(String(id)));
     if (directS) return directS;
-  } catch (e) {}
+  } catch (e) { }
 
   try {
     const invIdx = store.index('inventoryId');
     const found = await reqToPromise(invIdx.get(String(id)));
     if (found) return found;
-  } catch (e) {}
+  } catch (e) { }
 
   // barcode mapping
   try {
@@ -194,13 +194,13 @@ async function getProductById(id) {
       const p = await reqToPromise(store.get(bRec.productId));
       if (p) return p;
     }
-  } catch (e) {}
+  } catch (e) { }
 
   try {
     const nameIdx = store.index('name_lower');
     const maybe = await reqToPromise(nameIdx.get(String(id).toLowerCase()));
     if (maybe) return maybe;
-  } catch (e) {}
+  } catch (e) { }
 
   // fallback cursor scan: small scan to find a match
   try {
@@ -221,7 +221,7 @@ async function getProductById(id) {
       r.onerror = () => resolve(null);
     });
     if (maybe) return maybe;
-  } catch (e) {}
+  } catch (e) { }
 
   return null;
 }
@@ -287,7 +287,7 @@ async function putInventories(inventories = []) {
 
   for (const raw of inventories) {
     // canonicalize inventoryId: prefer inventoryId field, otherwise productId-based key
-    const invId = raw.inventoryId ?? raw.inventory_id ?? (raw.inventoryId === undefined ? null : raw.inventoryId) ?? String(raw.inventoryId ?? Date.now() + Math.random().toString(36).slice(2,8));
+    const invId = raw.inventoryId ?? raw.inventory_id ?? (raw.inventoryId === undefined ? null : raw.inventoryId) ?? String(raw.inventoryId ?? Date.now() + Math.random().toString(36).slice(2, 8));
     const record = {
       ...raw,
       inventoryId: invId,
@@ -327,7 +327,7 @@ async function putInventories(inventories = []) {
             pStore.put(existing);
           }
         }
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 
@@ -393,12 +393,12 @@ function broadcastOrderMessage(msg) {
       bc.close();
       return;
     }
-    const key = `arpella-orders-msg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    const key = `arpella-orders-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     try {
       localStorage.setItem(key, JSON.stringify(msg));
-      setTimeout(() => { try { localStorage.removeItem(key); } catch(e){} }, 2000);
-    } catch (e) {}
-  } catch (e) {}
+      setTimeout(() => { try { localStorage.removeItem(key); } catch (e) { } }, 2000);
+    } catch (e) { }
+  } catch (e) { }
 }
 
 async function putOrder(orderObj) {
@@ -419,7 +419,7 @@ async function putOrder(orderObj) {
   };
   store.put(toStore);
   return new Promise((resolve, reject) => {
-    tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'order-put', orderId: toStore.orderId }); } catch(e){}; resolve(toStore); };
+    tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'order-put', orderId: toStore.orderId }); } catch (e) { }; resolve(toStore); };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -436,7 +436,7 @@ async function updateOrder(orderId, patch = {}) {
       if (!existing) return reject(new Error('order not found'));
       const updated = { ...existing, ...patch, updatedAt: Date.now() };
       store.put(updated);
-      tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'order-updated', orderId }); } catch(e){}; resolve(updated); };
+      tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'order-updated', orderId }); } catch (e) { }; resolve(updated); };
       tx.onerror = () => reject(tx.error);
     };
     getReq.onerror = () => reject(getReq.error);
@@ -477,7 +477,7 @@ async function deleteOrder(orderId) {
   const store = tx.objectStore(STORE_ORDERS);
   store.delete(orderId);
   return new Promise((resolve, reject) => {
-    tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'order-deleted', orderId }); } catch(e){}; resolve(true); };
+    tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'order-deleted', orderId }); } catch (e) { }; resolve(true); };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -487,7 +487,7 @@ async function clearOrders() {
   const tx = db.transaction([STORE_ORDERS], 'readwrite');
   tx.objectStore(STORE_ORDERS).clear();
   return new Promise((resolve, reject) => {
-    tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'orders-cleared' }); } catch(e){}; resolve(true); };
+    tx.oncomplete = () => { try { broadcastOrderMessage({ type: 'orders-cleared' }); } catch (e) { }; resolve(true); };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -527,7 +527,7 @@ async function calculateOrderProfit(order = {}) {
         const store = tx.objectStore(STORE_INVENTORIES);
         const maybe = await reqToPromise(store.get(String(c))).catch(() => null);
         if (maybe) { inv = maybe; break; }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // barcode fallback

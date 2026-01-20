@@ -8,7 +8,7 @@ try {
   // if your constants file is elsewhere adjust the path
   // use require to avoid bundler issues during SSR
   // eslint-disable-next-line global-require, import/no-dynamic-require
-  const constants = require('../../app/constants/index');
+  const constants = require('../app/constants/index');
   SERVER_BASE = constants?.baseUrl || constants?.default?.baseUrl || SERVER_BASE;
 } catch (e) {
   try {

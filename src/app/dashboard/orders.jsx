@@ -172,10 +172,17 @@ export default function SalesDashboard() {
         }
 
         // Build productInventoryKey: inventoryId -> productId (as in your original)
+        // Also build nameMap: name -> productId (for fallback)
         const productInventoryKey = new Map();
+        const nameMap = new Map();
         (productsRaw || []).forEach(p => {
           if (p.inventoryId && p.productId) {
             productInventoryKey.set(String(p.inventoryId), String(p.productId));
+          }
+          const name = (p.name || p.productName || p.title || '').trim().toLowerCase();
+          const pId = String(p.productId || p.id || '');
+          if (name && pId) {
+            nameMap.set(name, pId);
           }
         });
 
@@ -214,7 +221,7 @@ export default function SalesDashboard() {
         }
 
         if (!isMountedRef.current) return;
-        setInventoryCostMap({ costMap, productInventoryKey });
+        setInventoryCostMap({ costMap, productInventoryKey, nameMap });
 
         // normalize orders to expected shape
         const normalized = (ordersRaw || []).map(normalizeOrder).sort((a, b) => b.createdAt - a.createdAt);
@@ -309,9 +316,22 @@ export default function SalesDashboard() {
 
   /* ================= PROFIT CALC ================= */
   const getUnitCost = (item) => {
+    // 1. Try direct ID lookup
     const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? item.product_id ?? '');
     const productKey = inventoryCostMap.productInventoryKey?.get(invId) || invId;
-    const entry = inventoryCostMap.costMap?.get(productKey) || inventoryCostMap.costMap?.get(invId);
+    let entry = inventoryCostMap.costMap?.get(productKey) || inventoryCostMap.costMap?.get(invId);
+
+    // 2. Fallback: Name lookup if no entry found
+    if (!entry) {
+      const name = (item.name ?? item.title ?? item.productName ?? '').trim().toLowerCase();
+      if (name) {
+        const fallbackId = inventoryCostMap.nameMap?.get(name);
+        if (fallbackId) {
+          entry = inventoryCostMap.costMap?.get(fallbackId);
+        }
+      }
+    }
+
     return num(entry?.stockPrice);
   };
 

@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 
-export default function ProductCard({
+export function ProductCard({
   product = {},
   cartItems = [],
   onQuantityChange = () => { }
@@ -264,3 +264,33 @@ export default function ProductCard({
     </div>
   );
 }
+
+// deep comparison for cartItems to ensure we only re-render if THIS product's quantity changed
+// (or if other props change, which shouldn't happen often)
+export const MemoizedProductCard = React.memo(ProductCard, (prevProps, nextProps) => {
+  if (prevProps.product !== nextProps.product) return false;
+
+  // compare cartItems purely by quantity/priceType
+  const prevItems = prevProps.cartItems || [];
+  const nextItems = nextProps.cartItems || [];
+
+  // If lengths differ, definitely re-render
+  if (prevItems.length !== nextItems.length) return false;
+
+  // simple check: if any item has different qty, re-render
+  // (We assume cartItems only contains items FOR THIS PRODUCT)
+  // sorting helps ensure order doesn't matter (though typically stable from ProductsGrid)
+  const sortedPrev = [...prevItems].sort((a, b) => (a.priceType || '').localeCompare(b.priceType));
+  const sortedNext = [...nextItems].sort((a, b) => (a.priceType || '').localeCompare(b.priceType));
+
+  for (let i = 0; i < sortedPrev.length; ++i) {
+    if (sortedPrev[i].quantity !== sortedNext[i].quantity) return false;
+    if (sortedPrev[i].priceType !== sortedNext[i].priceType) return false;
+  }
+
+  // If we got here, quantities are same. Stable.
+  return true;
+});
+
+// Since default export was requested:
+export default MemoizedProductCard;

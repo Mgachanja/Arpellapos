@@ -1,5 +1,5 @@
 // ProductsGrid.jsx
-import React from 'react';
+import React, { useMemo } from 'react';
 import ProductCard from './ProductCard';
 
 function getPid(product) {
@@ -7,7 +7,10 @@ function getPid(product) {
   return String(product.id ?? product._id ?? product.productId ?? product.sku ?? product.barcode ?? product.inventoryId ?? product.inventory_id ?? '');
 }
 
-export default function ProductsGrid({
+
+
+
+const ProductsGrid = ({
   hasSearched,
   filteredProducts,
   searchTerm,
@@ -15,14 +18,18 @@ export default function ProductsGrid({
   cart,
   onQuantityChange,
   loadingProducts
-}) {
+}) => {
   const safeCart = Array.isArray(cart) ? cart : [];
-  const cartByProduct = safeCart.reduce((acc, item) => {
-    const pid = getPid(item) || String(item.id || item._id || '');
-    if (!acc[pid]) acc[pid] = [];
-    acc[pid].push(item);
-    return acc;
-  }, {});
+
+  // MEMOIZE the cart map so we don't rebuild it on every render unless cart changes
+  const cartByProduct = useMemo(() => {
+    return safeCart.reduce((acc, item) => {
+      const pid = getPid(item) || String(item.id || item._id || '');
+      if (!acc[pid]) acc[pid] = [];
+      acc[pid].push(item);
+      return acc;
+    }, {});
+  }, [safeCart]);
 
   // outer wrapper provides horizontal breathing room so cards don't hug the viewport edge
   const outerClass = 'w-100 px-3';
@@ -36,7 +43,13 @@ export default function ProductsGrid({
             const isLoading = loadingProducts && typeof loadingProducts.has === 'function'
               ? loadingProducts.has(pid)
               : loadingProducts && Boolean(loadingProducts[pid]);
+
+            // Because we memoized cartByProduct, this array reference will be stable 
+            // if the cart didn't change, or if this specific product's items didn't change 
+            // (depending on how strict safeCart deep equality is, but usually reducers return new objects.
+            //  ProductCard's memo comparison handles the granular check though.)
             const cartItems = cartByProduct[pid] || [];
+
             return (
               <div key={pid || `${product.barcode || Math.random()}`} className="col-12 px-2">
                 <div style={{ position: 'relative' }}>
@@ -94,4 +107,6 @@ export default function ProductsGrid({
       </div>
     </div>
   );
-}
+};
+
+export default React.memo(ProductsGrid);

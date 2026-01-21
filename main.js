@@ -527,15 +527,6 @@ data.push({
   style: { fontSize: 10, textAlign: 'center' }
 });
 
-// Receipt QR (keeps original receipt link)
-data.push({
-  type: 'qrCode',
-  value: receiptUrl,
-  height: 70,
-  width: 70,
-  position: 'center'
-});
-
 data.push({
   type: 'text',
   value: `Printed: ${timestamp.toLocaleString('en-KE')}`,

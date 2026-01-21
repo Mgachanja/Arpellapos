@@ -486,14 +486,66 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     }
 
     // Footer, QR code with receipt reference
-    const receiptUrl = ss.receiptUrl || ss.receipt_url || `https://arpellastore.com/receipt/${orderIdFinal}`;
-    data.push({ type: 'divider' });
-    data.push({ type: 'text', value: storeSettingsObj.receiptFooter, style: { fontSize: 11, textAlign: 'center', fontWeight: '700' } });
-    data.push({ type: 'text', value: 'Thank you for your purchase!', style: { fontSize: 10, textAlign: 'center' } });
-    data.push({ type: 'qrCode', value: receiptUrl, height: 70, width: 70, position: 'center' });
-    data.push({ type: 'text', value: `Printed: ${timestamp.toLocaleString('en-KE')}`, style: { fontSize: 9, textAlign: 'center' } });
-    data.push({ type: 'text', value: 'Powered by Arpella POS', style: { fontSize: 9, textAlign: 'center' } });
+   const playStoreUrl = storeSettingsObj.playStoreUrl ||
+  'https://play.google.com/store/apps/details?id=com.mgachanja.Arpella';
 
+data.push({ type: 'divider' });
+
+// optional store footer (keeps existing value if present)
+if (storeSettingsObj.receiptFooter) {
+  data.push({
+    type: 'text',
+    value: storeSettingsObj.receiptFooter,
+    style: { fontSize: 10, textAlign: 'center' }
+  });
+}
+
+// Call to action — short, bold, clear
+data.push({
+  type: 'text',
+  value: 'Join our Beta Testers — Shop from home, get goods delivered to your door',
+  style: { fontSize: 11, textAlign: 'center', fontWeight: '700' }
+});
+data.push({
+  type: 'text',
+  value: 'Scan the code or search "Arpella" on Google Play',
+  style: { fontSize: 9, textAlign: 'center' }
+});
+
+// Play Store QR (smaller than the receipt QR)
+data.push({
+  type: 'qrCode',
+  value: playStoreUrl,
+  height: 60,
+  width: 60,
+  position: 'center'
+});
+
+data.push({
+  type: 'text',
+  value: 'Thank you for your purchase!',
+  style: { fontSize: 10, textAlign: 'center' }
+});
+
+// Receipt QR (keeps original receipt link)
+data.push({
+  type: 'qrCode',
+  value: receiptUrl,
+  height: 70,
+  width: 70,
+  position: 'center'
+});
+
+data.push({
+  type: 'text',
+  value: `Printed: ${timestamp.toLocaleString('en-KE')}`,
+  style: { fontSize: 9, textAlign: 'center' }
+});
+data.push({
+  type: 'text',
+  value: 'Powered by Arpella POS',
+  style: { fontSize: 9, textAlign: 'center' }
+});
     const options = {
       preview: false,
       silent: true,

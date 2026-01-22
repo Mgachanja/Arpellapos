@@ -32,6 +32,7 @@ import ProductsGrid from '../components/ProductsGrid';
 import CartItems from '../components/CartItems';
 import PaymentForm from '../components/PaymentForm';
 import HeldSales from '../components/HeldSales';
+import { mapCartToReceiptItems } from '../../utils/orderUtils';
 
 const CTA = { background: '#FF7F50', color: '#fff' };
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
@@ -150,24 +151,7 @@ export default function POS() {
     const usedPaymentType = paymentTypeSnapshot || paymentType;
     const usedPaymentData = paymentDataSnapshot || paymentData;
 
-    const receiptItems = (Array.isArray(itemsToReceipt) ? itemsToReceipt : []).map(ci => {
-      const sellingPrice = ci.priceType === 'Retail' ? (ci.price || 0) : (ci.priceAfterDiscount || ci.price || 0);
-      const quantity = ci.quantity || 1;
-      const lineTotal = sellingPrice * quantity;
-      return {
-        name: ci.name || ci.productName || 'Item',
-        productName: ci.name || ci.productName || 'Item',
-        salePrice: sellingPrice,
-        sellingPrice,
-        price: sellingPrice,
-        quantity,
-        qty: quantity,
-        lineTotal,
-        total: lineTotal,
-        priceType: ci.priceType,
-        barcode: ci.barcode || ''
-      };
-    });
+    const receiptItems = mapCartToReceiptItems(Array.isArray(itemsToReceipt) ? itemsToReceipt : []);
 
     const cartTotalFromLines = receiptItems.reduce((s, it) => s + (it.lineTotal || 0), 0);
     const actualUser = Array.isArray(user) ? user[0] : user;
@@ -257,14 +241,20 @@ export default function POS() {
       const localOrder = {
         orderId,
         orderData: orderData || {},
-        cart: usedPaymentType === 'cash' ? (cartSnapshot || cart) : receiptItems, // capture items
+        cart: usedPaymentType === 'cash' ? (cartSnapshot || cart) : receiptItems,
         cartTotal: cartTotalFromLines,
         paymentType: usedPaymentType,
-        paymentData: usedPaymentData,
+        paymentData: {
+          // ✅ Merge form data with calculated amounts
+          cashAmount: String(paymentDetails.cashAmount || 0),
+          mpesaAmount: String(paymentDetails.mpesaAmount || 0),
+          mpesaPhone: usedPaymentData.mpesaPhone || '',
+          mpesaCode: usedPaymentData.mpesaCode || '',
+          change: paymentDetails.change || 0
+        },
         status,
         createdAt: Date.now()
       };
-
       await indexedDb.putOrder(localOrder);
       toast.info('Order recorded in sales');
     } catch (err) {

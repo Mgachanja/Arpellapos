@@ -163,7 +163,8 @@
     "dist": "npm run make-icons && npm run build:web && npm run build:electron",
     "dist:publish": "npm run make-icons && npm run build:web && npm run build:electron:publish",
     "clean": "rimraf dist build buildResources",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "test": "react-scripts test --watchAll=false"
   },
   "eslintConfig": {
     "extends": [

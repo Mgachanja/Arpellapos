@@ -316,28 +316,52 @@ export default function SalesDashboard() {
 
   /* ================= PROFIT CALC ================= */
   const getUnitCost = (item) => {
-    // 1. Try direct ID lookup
-    const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? item.product_id ?? '');
-    const productKey = inventoryCostMap.productInventoryKey?.get(invId) || invId;
-    let entry = inventoryCostMap.costMap?.get(productKey) || inventoryCostMap.costMap?.get(invId);
+    // 1. Try direct ID lookup with multiple field names
+    const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? item.product_id ?? item.id ?? '');
+
+    if (invId) {
+      // Try productInventoryKey mapping first
+      const productKey = inventoryCostMap.productInventoryKey?.get(invId);
+      if (productKey) {
+        const entry = inventoryCostMap.costMap?.get(productKey);
+        if (entry) return num(entry.stockPrice);
+      }
+
+      // Try direct lookup
+      const entry = inventoryCostMap.costMap?.get(invId);
+      if (entry) return num(entry.stockPrice);
+    }
 
     // 2. Fallback: Name lookup if no entry found
-    if (!entry) {
-      const name = (item.name ?? item.title ?? item.productName ?? '').trim().toLowerCase();
-      if (name) {
-        const fallbackId = inventoryCostMap.nameMap?.get(name);
-        if (fallbackId) {
-          entry = inventoryCostMap.costMap?.get(fallbackId);
-        }
+    const name = (item.name ?? item.title ?? item.productName ?? '').trim().toLowerCase();
+    if (name) {
+      const fallbackId = inventoryCostMap.nameMap?.get(name);
+      if (fallbackId) {
+        const entry = inventoryCostMap.costMap?.get(fallbackId);
+        if (entry) return num(entry.stockPrice);
       }
     }
 
-    return num(entry?.stockPrice);
+    // 3. Last resort: check if item has embedded cost fields
+    return num(item.stockPrice ?? item.unitCost ?? item.cost ?? item.purchasePrice ?? 0);
   };
 
   const calculateOrderProfit = (order) =>
     (order.items || []).reduce((sum, it) => {
-      const sell = num(it.price ?? it.unitPrice ?? it.salePrice);
+      const pType = String(it.priceType || 'Retail').toLowerCase();
+      const isWholesale = pType.includes('wholesale') || pType.includes('discount');
+
+      let sell = 0;
+      if (num(it.sellingPrice) > 0) {
+        sell = num(it.sellingPrice);
+      } else if (isWholesale) {
+        // If wholesale/discounted, prefer explicit discounted price
+        sell = num(it.priceAfterDiscount) || num(it.price);
+      } else {
+        // Default to retail price
+        sell = num(it.price);
+      }
+
       const cost = getUnitCost(it);
       const qty = num(it.quantity ?? it.qty ?? 1);
       return sum + (sell - cost) * qty;
@@ -351,35 +375,58 @@ export default function SalesDashboard() {
   }, [dayOrders, rowsLimit]);
 
   const totals = useMemo(() => {
-    let revenue = 0, cogs = 0, cash = 0, mpesa = 0;
+    const acc = {
+      revenue: 0,
+      cogs: 0,
+      cash: 0,
+      mpesa: 0,
+      capital: startingCapital,
+      retailRevenue: 0,
+      wholesaleRevenue: 0
+    };
 
     dayOrders.forEach(o => {
-      revenue += num(o.cartTotal);
+      // Revenue & Type Split
+      let orderRetail = 0;
+      let orderWholesale = 0;
+
       (o.items || []).forEach(it => {
-        cogs += getUnitCost(it) * num(it.quantity ?? it.qty ?? 1);
+        const lineTotal = (num(it.sellingPrice) || num(it.price) || 0) * (num(it.quantity) || 1);
+        // "Wholesale" is often "Discounted" in priceType, checking both to be safe
+        const pType = String(it.priceType || '').toLowerCase();
+        if (pType === 'retail') {
+          orderRetail += lineTotal;
+        } else {
+          // Assume non-retail (Discounted/Wholesale) is wholesale
+          orderWholesale += lineTotal;
+        }
+
+        // Cost aggregation
+        acc.cogs += getUnitCost(it) * num(it.quantity ?? it.qty ?? 1);
       });
 
+      acc.retailRevenue += orderRetail;
+      acc.wholesaleRevenue += orderWholesale;
+      acc.revenue += num(o.cartTotal);
+
+      // Payment Split
       const pt = String(o.paymentType || 'cash').toLowerCase();
-      if (pt.includes('mpesa')) mpesa += num(o.cartTotal);
+      if (pt.includes('mpesa')) acc.mpesa += num(o.cartTotal);
       else if (pt.includes('hybrid')) {
         const pd = o.raw?.paymentData ?? o.raw?.orderData?.paymentData ?? {};
-        cash += num(pd.cashAmount ?? pd.cash ?? 0);
-        mpesa += num(pd.mpesaAmount ?? pd.mpesa ?? 0);
-      } else cash += num(o.cartTotal);
+        acc.cash += num(pd.cashAmount ?? pd.cash ?? 0);
+        acc.mpesa += num(pd.mpesaAmount ?? pd.mpesa ?? 0);
+      } else acc.cash += num(o.cartTotal);
     });
 
-    const profit = revenue - cogs;
-    const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+    const profit = acc.revenue - acc.cogs;
+    const margin = acc.revenue > 0 ? (profit / acc.revenue) * 100 : 0;
 
     return {
-      revenue,
-      cogs,
+      ...acc,
       profit,
       margin,
-      netAfterCapital: profit - startingCapital,
-      cash,
-      mpesa,
-      capital: startingCapital
+      netAfterCapital: profit - startingCapital
     };
   }, [dayOrders, inventoryCostMap, startingCapital]);
 
@@ -537,6 +584,27 @@ export default function SalesDashboard() {
           </article>
         </section>
 
+        {/* Breakdown Metrics */}
+        <section className="metrics-grid" style={{ marginTop: '16px' }} role="region" aria-label="Sales breakdown">
+          <article className="metric-card">
+            <div className="metric-head">
+              <div className="metric-icon bg-indigo"><DollarSign /></div>
+              <span className="metric-label">Retail Sales</span>
+            </div>
+            <div className="metric-value">{formatKsh(totals.retailRevenue)}</div>
+            <div className="metric-note">Total retail revenue</div>
+          </article>
+
+          <article className="metric-card">
+            <div className="metric-head">
+              <div className="metric-icon bg-orange"><DollarSign /></div>
+              <span className="metric-label">Wholesale Sales</span>
+            </div>
+            <div className="metric-value">{formatKsh(totals.wholesaleRevenue)}</div>
+            <div className="metric-note">Total wholesale revenue</div>
+          </article>
+        </section>
+
         {/* Payment breakdown */}
         <section className="payment-breakdown">
           <div className="payment-card cash">
@@ -595,6 +663,7 @@ export default function SalesDashboard() {
                     <tr>
                       <th>Time</th>
                       <th>Order ID</th>
+                      <th>Type</th>
                       <th>Payment</th>
                       <th className="text-right">Amount</th>
                       <th className="text-right">Profit</th>
@@ -610,6 +679,17 @@ export default function SalesDashboard() {
                         <tr key={o.id} onClick={() => openOrderModal(o)} className="table-row">
                           <td className="mono">{o.time}</td>
                           <td className="mono id-cell">{String(o.id).slice(0, 12)}</td>
+                          <td>
+                            {(() => {
+                              const types = (o.items || []).map(i => String(i.priceType || 'Retail').toLowerCase());
+                              const hasRetail = types.includes('retail');
+                              const hasWholesale = types.some(t => t.includes('wholesale') || t.includes('discount'));
+
+                              if (hasRetail && hasWholesale) return <span className="badge warning">Mixed</span>;
+                              if (hasWholesale) return <span className="badge orange">Wholesale</span>;
+                              return <span className="badge dark-brown">Retail</span>;
+                            })()}
+                          </td>
                           <td>
                             {paymentType.includes('mpesa') ? (
                               <span className="badge mpesa">M-Pesa</span>
@@ -676,6 +756,7 @@ export default function SalesDashboard() {
                   <thead>
                     <tr>
                       <th>Item</th>
+                      <th>Type</th>
                       <th className="text-right">Price</th>
                       <th className="text-center">Qty</th>
                       <th className="text-right">Cost</th>
@@ -691,6 +772,11 @@ export default function SalesDashboard() {
                       return (
                         <tr key={idx}>
                           <td className="item-name">{it.name ?? it.title ?? 'Item'}</td>
+                          <td>
+                            <span className={`badge small ${String(it.priceType || 'Retail').toLowerCase() === 'retail' ? 'dark-brown' : 'orange'}`}>
+                              {it.priceType || 'Retail'}
+                            </span>
+                          </td>
                           <td className="text-right">{formatKsh(sell)}</td>
                           <td className="text-center">{qty}</td>
                           <td className="text-right">{formatKsh(cost)}</td>
@@ -843,6 +929,11 @@ export default function SalesDashboard() {
         .badge.cash { background:#ecfdf5; color:#065f46; }
         .badge.mpesa { background:#e6f0ff; color:#1e40af; }
         .badge.hybrid { background:#fff7ed; color:#92400e; }
+        .badge.warning { background:#fef3c7; color:#d97706; }
+        .badge.info { background:#e0f2fe; color:#0284c7; }
+        .badge.orange { background:#fff7ed; color:#ea580c; border: 1px solid #ffedd5; }
+        .badge.dark-brown { background:#efebe9; color:#5d4037; border: 1px solid #d7ccc8; }
+        .badge.small { font-size: 0.75rem; padding: 2px 6px; }
         .text-right { text-align:right; }
         .text-center { text-align:center; }
         .bold { font-weight:700; }

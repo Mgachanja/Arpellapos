@@ -316,7 +316,11 @@ export default function SalesDashboard() {
 
   /* ================= PROFIT CALC ================= */
   const getUnitCost = (item) => {
-    // 1. Try direct ID lookup with multiple field names
+    // 1. Prefer explicitly frozen snapshot cost (from time of sale)
+    const frozen = num(item.snapshotCost);
+    if (frozen > 0) return frozen;
+
+    // 2. Try direct ID lookup with multiple field names
     const invId = String(item.inventoryId ?? item.inventory_id ?? item.productId ?? item.product_id ?? item.id ?? '');
 
     if (invId) {

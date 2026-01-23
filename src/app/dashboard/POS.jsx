@@ -364,10 +364,35 @@ export default function POS() {
   const buildOrderItemsResolved = useCallback(async (cartArr = []) => {
     const items = await Promise.all((Array.isArray(cartArr) ? cartArr : []).map(async (ci) => {
       const pid = (await resolveNumericProductId(ci)) ?? Number(ci.productId ?? ci.id ?? ci._id) ?? null;
+
+      // Resolve cost for snapshot
+      let cost = 0;
+      try {
+        // 1. Try authoritative inventory
+        const inv = await indexedDb.getLatestInventoryForProduct(pid || ci.id);
+        if (inv) cost = Number(inv.stockPrice ?? inv.unitCost ?? inv.cost ?? 0);
+
+        // 2. Fallback to name search locally if not found by ID
+        if (!cost && ci.name) {
+          const matches = await indexedDb.searchByName(ci.name, 1);
+          if (matches.length > 0) {
+            const mInv = await indexedDb.getLatestInventoryForProduct(matches[0].id);
+            if (mInv) cost = Number(mInv.stockPrice ?? mInv.unitCost ?? mInv.cost ?? 0);
+          }
+        }
+      } catch (e) { console.warn('Cost resolve failed', e); }
+
+      // 3. Last fallback: embedded fields (be careful of selling price collisions)
+      if (!cost) {
+        cost = Number(ci.stockPrice ?? ci.cost ?? ci.buyingPrice ?? ci.purchasePrice ??
+          (ci.prices && ci.prices.cost) ?? 0);
+      }
+
       return {
         productId: pid,
         quantity: Number(ci.quantity) || 1,
-        priceType: ci.priceType === 'Discounted' || ci.priceType === 'Wholesale' ? 'Discounted' : 'Retail'
+        priceType: ci.priceType === 'Discounted' || ci.priceType === 'Wholesale' ? 'Discounted' : 'Retail',
+        snapshotCost: cost
       };
     }));
 

@@ -1,5 +1,5 @@
 // src/app/dashboard/orderManagement.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -31,7 +31,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import axios from 'axios';
 import { fetchStaffMembers } from '../../redux/slices/staffSlice';
 import { baseUrl } from '../constants';
-import { subscribe, clearNewFlag, checkNow } from '../../services/orderPoller';
+// import { subscribe, clearNewFlag, checkNow } from '../../services/orderPoller';
 
 const OrderManagement = () => {
   const [orders, setOrders] = useState([]);
@@ -79,46 +79,14 @@ const OrderManagement = () => {
     return order._id || order.id || order.orderId || order.orderid || '';
   };
 
-  // Subscribe to order poller: don't show toast immediately on 'new' event.
-  useEffect(() => {
-    const unsubscribe = subscribe((event) => {
-      if (event.type === 'new') {
-        // mark that there may be new orders, but we'll confirm on next fetch
-        setHasNewOrders(true);
-        // keep a suggested count; actual new count computed after fetch
-        setNewOrdersCount((prev) => {
-          const suggested = event.count || 1;
-          return Math.max(prev || 0, suggested);
-        });
-        // auto-refresh if on first page
-        if (pageNumber === 1) {
-          fetchOrders();
-        }
-      } else if (event.type === 'state') {
-        setHasNewOrders(Boolean(event.hasNew));
-        setNewOrdersCount(event.count || 0);
-      } else if (event.type === 'cleared') {
-        setHasNewOrders(false);
-        setNewOrdersCount(0);
-      }
-    });
+  // orderPoller removed in favor of simple polling
 
-    return unsubscribe;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageNumber]);
-
-  // Clear server-side new flag when user views orders
-  useEffect(() => {
-    if (hasNewOrders) {
-      clearNewFlag();
-    }
-  }, [hasNewOrders]);
 
   // fetch orders and compute real "new" delta vs lastKnownOrderIdsRef
-  const fetchOrders = async () => {
-    setOrdersLoading(true);
+  const fetchOrders = useCallback(async (silent = false) => {
+    if (!silent) setOrdersLoading(true);
     try {
-      const url = `${baseUrl}/paged-orders?pageNumber=${pageNumber}&pageSize=${pageSize}`;
+      const url = `${baseUrl}/pending-orders`;
       const res = await axios.get(url);
       const data = res.data;
 
@@ -131,6 +99,8 @@ const OrderManagement = () => {
       else if (Array.isArray(data.results)) items = data.results;
       else items = [];
 
+      // If we are not paginating via server params anymore, this check might be less relevant 
+      // but keeping it simple:
       if (items.length === 0 && pageNumber > 1) {
         setPageNumber((p) => Math.max(1, p - 1));
         return;
@@ -163,96 +133,30 @@ const OrderManagement = () => {
           });
           setHasNewOrders(true);
           setNewOrdersCount(added);
-        } else {
-          // no actually new orders found
-          setHasNewOrders(false);
-          setNewOrdersCount(0);
         }
-        // update last known ids to the latest snapshot
+        // Update ref to new set
         lastKnownOrderIdsRef.current = newIds;
       }
     } catch (err) {
-      console.error('Failed to fetch orders (paged):', err);
-      setOrders([]);
-      setIsLastPage(true);
+      console.error('Failed to fetch orders:', err);
+      // setOrders([]); // optional: don't clear orders on silent failure
     } finally {
-      setOrdersLoading(false);
+      if (!silent) setOrdersLoading(false);
     }
-  };
+  }, [pageNumber, pageSize, toast]);
 
-  // auto-fetch when pageNumber / pageSize change
+  // Initial fetch and Polling
   useEffect(() => {
-    let cancelled = false;
+    // Initial fetch
+    fetchOrders();
 
-    const doFetch = async () => {
-      setOrdersLoading(true);
-      try {
-        const url = `${baseUrl}/paged-orders?pageNumber=${pageNumber}&pageSize=${pageSize}`;
-        const res = await axios.get(url);
-        const data = res.data;
+    // Poll every 30 seconds
+    const interval = setInterval(() => {
+      fetchOrders(true); // pass true for silent
+    }, 30000);
 
-        let items = [];
-        if (!data) items = [];
-        else if (Array.isArray(data)) items = data;
-        else if (Array.isArray(data.items)) items = data.items;
-        else if (Array.isArray(data.data)) items = data.data;
-        else if (Array.isArray(data.orders)) items = data.orders;
-        else if (Array.isArray(data.results)) items = data.results;
-        else items = [];
-
-        if (cancelled) return;
-
-        if (items.length === 0 && pageNumber > 1) {
-          setPageNumber((p) => Math.max(1, p - 1));
-          return;
-        }
-
-        setOrders(items);
-        setIsLastPage(items.length < pageSize);
-
-        // same new-order detection logic as fetchOrders to handle cases where doFetch runs directly
-        const newIds = new Set(items.map((o) => computeFullOrderId(o)).filter(Boolean));
-        let added = 0;
-        if (initialLoadRef.current) {
-          initialLoadRef.current = false;
-          lastKnownOrderIdsRef.current = newIds;
-          setHasNewOrders(false);
-          setNewOrdersCount(0);
-        } else {
-          for (const id of newIds) {
-            if (!lastKnownOrderIdsRef.current.has(id)) added += 1;
-          }
-          if (added > 0) {
-            setToast({
-              open: true,
-              message: `${added} new order${added > 1 ? 's' : ''} received!`,
-              severity: 'info',
-            });
-            setHasNewOrders(true);
-            setNewOrdersCount(added);
-          } else {
-            setHasNewOrders(false);
-            setNewOrdersCount(0);
-          }
-          lastKnownOrderIdsRef.current = newIds;
-        }
-      } catch (err) {
-        console.error('Failed to fetch orders (paged):', err);
-        if (!cancelled) {
-          setOrders([]);
-          setIsLastPage(true);
-        }
-      } finally {
-        if (!cancelled) setOrdersLoading(false);
-      }
-    };
-
-    doFetch();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageNumber, pageSize]);
+    return () => clearInterval(interval);
+  }, [fetchOrders]);
 
   // fetch users
   useEffect(() => {
@@ -315,9 +219,9 @@ const OrderManagement = () => {
           x._id === userIdentifier ||
           x.username === userIdentifier
       ) || null;
-    
+
     if (!u) return 'Walk-in Customer';
-    
+
     const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim();
     return fullName || u.firstName || u.phoneNumber || u.username || 'Walk-in Customer';
   };
@@ -334,10 +238,10 @@ const OrderManagement = () => {
     setSelectedOrder(order);
     setDeliveryGuy(
       order.assignedDelivery?.username ||
-        order.assignedDelivery?.phoneNumber ||
-        order.assignedDelivery?.id ||
-        order.assignedDelivery?._id ||
-        ''
+      order.assignedDelivery?.phoneNumber ||
+      order.assignedDelivery?.id ||
+      order.assignedDelivery?._id ||
+      ''
     );
     setOpenModal(true);
   };
@@ -411,9 +315,9 @@ const OrderManagement = () => {
       prev.map((o) =>
         computeFullOrderId(o) === fullOrderId
           ? {
-              ...o,
-              assignedDelivery: staff || { phoneNumber: deliveryGuy, username: payload.deliveryAgent },
-            }
+            ...o,
+            assignedDelivery: staff || { phoneNumber: deliveryGuy, username: payload.deliveryAgent },
+          }
           : o
       )
     );
@@ -457,15 +361,15 @@ const OrderManagement = () => {
     try {
       const url = `${baseUrl}/order/${searchOrderId.trim()}`;
       const { data } = await axios.get(url);
-      
+
       if (data) {
         setSelectedOrder(data);
         setDeliveryGuy(
           data.assignedDelivery?.username ||
-            data.assignedDelivery?.phoneNumber ||
-            data.assignedDelivery?.id ||
-            data.assignedDelivery?._id ||
-            ''
+          data.assignedDelivery?.phoneNumber ||
+          data.assignedDelivery?.id ||
+          data.assignedDelivery?._id ||
+          ''
         );
         setOpenModal(true);
         setSearchOrderId('');
@@ -486,7 +390,8 @@ const OrderManagement = () => {
 
   const handleManualRefresh = async () => {
     setOrdersLoading(true);
-    await checkNow();
+    // await checkNow();
+
     await fetchOrders();
   };
 
@@ -522,7 +427,7 @@ const OrderManagement = () => {
         <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
           Order Management
         </Typography>
-        
+
         <Button
           variant="outlined"
           startIcon={<RefreshIcon />}
@@ -617,8 +522,8 @@ const OrderManagement = () => {
                   <TableCell>{getCustomerFirstName(order.userId || order.user)}</TableCell>
                   <TableCell>{computeOrderTotal(order)}</TableCell>
                   <TableCell>
-                    <Chip 
-                      label={order.status || '—'} 
+                    <Chip
+                      label={order.status || '—'}
                       size="small"
                       color={order.status?.toLowerCase() === 'pending' ? 'error' : 'default'}
                     />
@@ -739,9 +644,9 @@ const OrderManagement = () => {
           )}
 
           <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-            <Button 
-              variant="contained" 
-              onClick={handleAssignDelivery} 
+            <Button
+              variant="contained"
+              onClick={handleAssignDelivery}
               disabled={!deliveryGuy || isDeliveryAssigned(selectedOrder)}
             >
               Assign Delivery

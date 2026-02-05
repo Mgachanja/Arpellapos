@@ -21,8 +21,10 @@ import axios from "axios";
 import { useDispatch, useSelector } from "react-redux";
 import {
   selectAllProducts,
-  selectProductsLoading
+  selectProductsLoading,
+  fetchAndIndexAllProducts,
 } from "../../redux/slices/productSlice";
+import indexedDb from "../../services/indexedDB";
 
 // Base URL from your helpers
 const BASE_URL = "https://api.arpellastore.com";
@@ -88,11 +90,15 @@ const API = {
   }
 };
 
+const SEARCH_DEBOUNCE_MS = 300;
+
+
 const StockManagement = () => {
   // const dispatch = useDispatch();
   // const reduxProducts = useSelector(selectAllProducts);
   // const reduxLoading = useSelector(selectProductsLoading);
 
+  const dispatch = useDispatch();
   // Modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showAddCompleteProductModal, setShowAddCompleteProductModal] = useState(false);
@@ -111,6 +117,19 @@ const StockManagement = () => {
   // Loading states
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Search
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timerRef.current);
+  }, [searchTerm]);
 
   // Active view
   const [activeView, setActiveView] = useState("stocks");
@@ -268,26 +287,145 @@ const StockManagement = () => {
     }
   };
 
+  const [allInventories, setAllInventories] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
+
   useEffect(() => {
+    // 1. Sync products on mount
+    dispatch(fetchAndIndexAllProducts({ pageSize: 200, force: false }))
+      .unwrap()
+      .then(() => {
+        // 2. Load data from IDB
+        loadDataFromIDB();
+      })
+      .catch((err) => {
+        console.error("Sync failed", err);
+        // still try to load what we have
+        loadDataFromIDB();
+      });
     fetchData();
     setActiveView("stocks");
-  }, []);
+  }, [dispatch]);
 
-  // Fetch stocks
-  const fetchStocks = async (page = 1, preservePosition = false) => {
-    setIsLoading(true);
+  const loadDataFromIDB = async () => {
     try {
-      const data = await safePagedFetch(API.inventories, page);
-      setInventories(data || []);
-      setHasMoreInventories((data || []).length === pageSize);
-      if (!preservePosition) setLastInventoryPage(page);
-    } catch (err) {
-      console.error("Error fetching stocks:", err);
-      showToastMessage("Failed to fetch stocks", "danger");
-    } finally {
-      setIsLoading(false);
+      const [invs, prods] = await Promise.all([
+        indexedDb.getAllInventories({ limit: 10000 }),
+        indexedDb.getAllProducts(),
+      ]);
+
+      // Create Product Map for Name Lookup
+      const productMap = new Map();
+      (prods || []).forEach(p => {
+        // Key by both id and inventoryId to be safe
+        if (p.id) productMap.set(String(p.id), p);
+        if (p.inventoryId) productMap.set(String(p.inventoryId), p);
+      });
+
+      // Deduplicate inventories by productId
+      // Prioritize records with Quantity > 0, then by latest UpdatedAt
+      const uniqueMap = new Map();
+      (invs || []).forEach(inv => {
+        const pId = String(inv.productId || inv.product_id || inv.inventoryId); // Fallback to inventoryId if no productId
+
+        // Enrich Name if missing
+        if (!inv.productName && !inv.raw?.name) {
+          const p = productMap.get(pId);
+          if (p) {
+            inv.productName = p.name || p.productName || "";
+          }
+        }
+
+        if (!uniqueMap.has(pId)) {
+          uniqueMap.set(pId, inv);
+        } else {
+          const existing = uniqueMap.get(pId);
+          // 1. Prefer strictly positive quantity over 0
+          const currentHasQty = Number(inv.stockQuantity) > 0;
+          const existingHasQty = Number(existing.stockQuantity) > 0;
+
+          if (currentHasQty && !existingHasQty) {
+            uniqueMap.set(pId, inv);
+          } else if (currentHasQty === existingHasQty) {
+            // 2. Tie-breaker: latest updatedAt
+            const curTime = new Date(inv.updatedAt || 0).getTime();
+            const exTime = new Date(existing.updatedAt || 0).getTime();
+            if (curTime > exTime) {
+              uniqueMap.set(pId, inv);
+            }
+          }
+        }
+      });
+
+      const uniqueInvs = Array.from(uniqueMap.values());
+      setAllInventories(uniqueInvs);
+      setAllProducts(prods || []);
+
+      // Initialize lists
+      setInventories(uniqueInvs.slice(0, pageSize));
+      setProducts((prods || []).slice(0, pageSize));
+      setHasMoreInventories(uniqueInvs.length > pageSize);
+      setHasMoreProducts((prods || []).length > pageSize);
+    } catch (e) {
+      console.error("Failed to load IDB data", e);
     }
   };
+
+  // Search Effect
+  useEffect(() => {
+    const term = debouncedSearchTerm.trim().toLowerCase();
+
+    // Filter Inventories
+    let filteredInvs = allInventories;
+    if (term) {
+      filteredInvs = allInventories.filter(i => {
+        const pName = i.raw?.name || i.productName || "";
+        const pId = i.productId || i.inventoryId || "";
+        return String(pName).toLowerCase().includes(term) || String(pId).toLowerCase().includes(term);
+      });
+    }
+    // Update Inventory Page 1
+    setCurrentInventoryPage(1);
+    const invSlice = filteredInvs.slice(0, pageSize);
+    setInventories(invSlice);
+    setHasMoreInventories(filteredInvs.length > pageSize);
+
+    // Filter Products
+    let filteredProds = allProducts;
+    if (term) {
+      filteredProds = allProducts.filter(p => {
+        const name = p.name || "";
+        const id = p.id || p.inventoryId || "";
+        const barcodeStr = p.barcode ? String(p.barcode) : (Array.isArray(p.barcodes) ? p.barcodes.join(" ") : String(p.barcodes || ""));
+        return String(name).toLowerCase().includes(term) || String(id).toLowerCase().includes(term) || String(barcodeStr).toLowerCase().includes(term);
+      });
+    }
+    // Update Product Page 1
+    setCurrentProductPage(1);
+    const prodSlice = filteredProds.slice(0, pageSize);
+    setProducts(prodSlice);
+    setHasMoreProducts(filteredProds.length > pageSize);
+
+  }, [debouncedSearchTerm, allInventories, allProducts]);
+
+  // Fetch stocks (Local Pagination)
+  const fetchStocks = (page = 1) => {
+    const term = debouncedSearchTerm.trim().toLowerCase();
+    let source = allInventories;
+    if (term) {
+      source = allInventories.filter(i => {
+        const pName = i.raw?.name || i.productName || "";
+        const pId = i.productId || i.inventoryId || "";
+        return String(pName).toLowerCase().includes(term) || String(pId).toLowerCase().includes(term);
+      });
+    }
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    setInventories(source.slice(start, end));
+    setHasMoreInventories(source.length > end);
+    setLastInventoryPage(page);
+  };
+
 
   useEffect(() => {
     fetchStocks(currentInventoryPage);
@@ -307,21 +445,26 @@ const StockManagement = () => {
     }
   };
 
-  // Fetch products
-  const fetchProducts = async (page = 1, preservePosition = false) => {
-    setIsLoading(true);
-    try {
-      const data = await safePagedFetch(API.products, page);
-      setProducts(data || []);
-      setHasMoreProducts((data || []).length === pageSize);
-      if (!preservePosition) setLastProductPage(page);
-    } catch (err) {
-      console.error("Error fetching products:", err);
-      showToastMessage("Failed to fetch products", "danger");
-    } finally {
-      setIsLoading(false);
+  // Fetch products (Local Pagination)
+  // Fetch products (Local Pagination)
+  const fetchProducts = (page = 1) => {
+    const term = debouncedSearchTerm.trim().toLowerCase();
+    let source = allProducts;
+    if (term) {
+      source = allProducts.filter(p => {
+        const name = p.name || "";
+        const id = p.id || p.inventoryId || "";
+        const barcodeStr = p.barcode ? String(p.barcode) : (Array.isArray(p.barcodes) ? p.barcodes.join(" ") : String(p.barcodes || ""));
+        return String(name).toLowerCase().includes(term) || String(id).toLowerCase().includes(term) || String(barcodeStr).toLowerCase().includes(term);
+      });
     }
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    setProducts(source.slice(start, end));
+    setHasMoreProducts(source.length > end);
+    setLastProductPage(page);
   };
+
 
   useEffect(() => {
     fetchProducts(currentProductPage);
@@ -1026,6 +1169,8 @@ const StockManagement = () => {
         // Use Inventory ID (SKU) for inventory update
         updates.push(API.inventories.update(f.inventoryId, inventoryPayload).then(() => {
           showToastMessage("Inventory/Stock updated successfully", "success");
+          // Sync to IDB
+          indexedDb.putInventories([{ ...inventoryPayload, inventoryId: f.inventoryId }]);
         }));
 
         if (taxPayload) {
@@ -1041,6 +1186,10 @@ const StockManagement = () => {
         }
 
         await Promise.all(updates);
+
+        // Sync product to IDB
+        indexedDb.putProducts([{ ...productPayload, id: productId }]);
+
         showToastMessage("Complete product updated successfully", "success");
 
         setShowAddCompleteProductModal(false);
@@ -1079,6 +1228,8 @@ const StockManagement = () => {
       const invResp = await API.inventories.create(invPayload);
       inventoryCreated = true;
       inventoryIdentifier = invResp?.id || invResp?.productId || f.inventoryId;
+      // Sync IDB
+      indexedDb.putInventories([{ ...invPayload, inventoryId: inventoryIdentifier }]);
       showToastMessage("Inventory created successfully", "success");
 
       // 2. Create Product
@@ -1100,6 +1251,10 @@ const StockManagement = () => {
       const prodResp = await API.products.create(prodPayload);
       productCreated = true;
       productId = prodResp?.id || prodResp?.productId;
+      // Sync IDB
+      if (productId) {
+        indexedDb.putProducts([{ ...prodPayload, id: productId }]);
+      }
       showToastMessage("Product created successfully", "success");
 
       // 3. Create Tax (if filled)
@@ -1172,6 +1327,8 @@ const StockManagement = () => {
         showOnline: !!f.showOnline
       };
       await API.products.update(productId, productPayload);
+      // Sync IDB
+      indexedDb.putProducts([{ ...productPayload, id: productId }]);
       showToastMessage("Product details updated successfully", "success");
       fetchProducts(currentProductPage, true);
     } catch (error) {
@@ -1194,6 +1351,8 @@ const StockManagement = () => {
         supplierId: f.supplierId || null,
       };
       await API.inventories.update(f.inventoryId, inventoryPayload);
+      // Sync IDB
+      indexedDb.putInventories([{ ...inventoryPayload, inventoryId: f.inventoryId }]);
       showToastMessage("Inventory updated successfully", "success");
       fetchStocks(currentInventoryPage, true);
     } catch (error) {
@@ -1272,6 +1431,16 @@ const StockManagement = () => {
       {/* STOCKS VIEW */}
       {activeView === "stocks" && (
         <Container>
+          {/* SEARCH BAR */}
+          <div className="mb-3">
+            <Form.Control
+              type="text"
+              placeholder="Search stocks by name or ID..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <Button onClick={() => setShowRestockModal(true)}>Add Restock Data</Button>
             <Button onClick={() => fetchSuppliers()}>View Suppliers</Button>
@@ -1301,15 +1470,14 @@ const StockManagement = () => {
                 <th>Quantity</th>
                 <th>Threshold</th>
                 <th>Purchase Price</th>
+                <th>Product Name</th>
                 <th>Updated At</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && inventories.length === 0 ? (
-                <tr><td colSpan="6" className="text-center">Loading...</td></tr>
-              ) : inventories.length === 0 ? (
-                <tr><td colSpan="6" className="text-center">No data available</td></tr>
+              {inventories.length === 0 ? (
+                <tr><td colSpan="7" className="text-center">No data available</td></tr>
               ) : (
                 inventories.map((inv, index) => (
                   <tr key={index}>
@@ -1317,6 +1485,7 @@ const StockManagement = () => {
                     <td>{inv.stockQuantity}</td>
                     <td>{inv.stockThreshold}</td>
                     <td>{inv.stockPrice}</td>
+                    <td>{inv.raw?.name || inv.productName || ""}</td>
                     <td>{inv.updatedAt ? new Date(inv.updatedAt).toLocaleString() : ""}</td>
                     <td>
                       <Button variant="outline-primary" size="sm" onClick={() => handleEditStock(inv)}>Edit</Button>
@@ -1332,6 +1501,16 @@ const StockManagement = () => {
       {/* PRODUCTS VIEW */}
       {activeView === "products" && (
         <Container>
+          {/* SEARCH BAR */}
+          <div className="mb-3">
+            <Form.Control
+              type="text"
+              placeholder="Search products by name, ID or barcode..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <Button onClick={() => setShowAddCompleteProductModal(true)}>Add Complete Product</Button>
             <Button onClick={() => setShowImageUploadModal(true)}>Upload Product Image</Button>
@@ -1363,9 +1542,7 @@ const StockManagement = () => {
               </tr>
             </thead>
             <tbody>
-              {isLoading && products.length === 0 ? (
-                <tr><td colSpan="6" className="text-center">Loading...</td></tr>
-              ) : products.length === 0 ? (
+              {products.length === 0 ? (
                 <tr><td colSpan="6" className="text-center">No data available</td></tr>
               ) : (
                 products.map((prod, index) => (
@@ -2430,6 +2607,8 @@ const StockManagement = () => {
                 const id = editStockData.productId ?? editStockData.id ?? editStockData.inventoryId;
                 if (typeof API.inventories?.update === "function") {
                   await API.inventories.update(id, payload);
+                  // Sync IDB
+                  indexedDb.putInventories([{ ...payload, inventoryId: id }]);
                   showToastMessage("Stock updated successfully", "success");
                   setShowEditStockModal(false);
                   fetchStocks(lastInventoryPage || currentInventoryPage, true);

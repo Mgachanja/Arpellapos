@@ -3,7 +3,7 @@
 // Inventories are stored in a dedicated store. Profit calculation uses latest inventory record.
 
 const DB_NAME = 'ArpellaProductsDB';
-const DB_VERSION = 4; // bump to create inventories store
+const DB_VERSION = 5; // bump to ensure indices
 const STORE_PRODUCTS = 'products';
 const STORE_BARCODES = 'barcodes';
 const STORE_ORDERS = 'orders';
@@ -14,6 +14,7 @@ function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = (ev) => {
       const db = ev.target.result;
+      const tx = ev.target.transaction;
 
       if (!db.objectStoreNames.contains(STORE_PRODUCTS)) {
         const pStore = db.createObjectStore(STORE_PRODUCTS, { keyPath: 'id' });
@@ -21,8 +22,8 @@ function openDB() {
         pStore.createIndex('inventoryId', 'inventoryId', { unique: false });
       } else {
         // ensure indexes
-        try { const pStore = ev.target.transaction.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('inventoryId')) pStore.createIndex('inventoryId', 'inventoryId', { unique: false }); } catch (e) { }
-        try { const pStore = ev.target.transaction.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('name_lower')) pStore.createIndex('name_lower', 'name_lower', { unique: false }); } catch (e) { }
+        try { const pStore = tx.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('inventoryId')) pStore.createIndex('inventoryId', 'inventoryId', { unique: false }); } catch (e) { }
+        try { const pStore = tx.objectStore(STORE_PRODUCTS); if (!pStore.indexNames.contains('name_lower')) pStore.createIndex('name_lower', 'name_lower', { unique: false }); } catch (e) { }
       }
 
       if (!db.objectStoreNames.contains(STORE_BARCODES)) {
@@ -40,6 +41,13 @@ function openDB() {
         const invStore = db.createObjectStore(STORE_INVENTORIES, { keyPath: 'inventoryId' });
         invStore.createIndex('productId', 'productId', { unique: false });
         invStore.createIndex('createdAt', 'createdAt', { unique: false });
+      } else {
+        // ensure indexes exist for inventories
+        try {
+          const invStore = tx.objectStore(STORE_INVENTORIES);
+          if (!invStore.indexNames.contains('productId')) invStore.createIndex('productId', 'productId', { unique: false });
+          if (!invStore.indexNames.contains('createdAt')) invStore.createIndex('createdAt', 'createdAt', { unique: false });
+        } catch (e) { console.error("Error creating inventory indexes", e); }
       }
     };
     req.onsuccess = () => resolve(req.result);

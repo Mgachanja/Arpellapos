@@ -559,7 +559,19 @@ async function calculateOrderProfit(order = {}) {
     }
 
     const cost = toNumber(inv?.stockPrice ?? 0, 0);
-    const salePrice = toNumber(it.salePrice ?? it.price ?? it.unitPrice ?? 0, 0);
+    
+    const pType = String(it.priceType || 'Retail').toLowerCase();
+    const isWholesale = pType.includes('wholesale') || pType.includes('discount');
+
+    let salePrice = 0;
+    if (toNumber(it.sellingPrice) > 0) {
+      salePrice = toNumber(it.sellingPrice);
+    } else if (isWholesale) {
+      salePrice = toNumber(it.priceAfterDiscount) || toNumber(it.price);
+    } else {
+      salePrice = toNumber(it.salePrice ?? it.price ?? it.unitPrice ?? 0, 0);
+    }
+
     const qty = toNumber(it.quantity ?? it.qty ?? 1, 1);
     profit += (salePrice - cost) * qty;
   }

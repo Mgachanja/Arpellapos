@@ -395,9 +395,20 @@ export default function SalesDashboard() {
       let orderWholesale = 0;
 
       (o.items || []).forEach(it => {
-        const lineTotal = (num(it.sellingPrice) || num(it.price) || 0) * (num(it.quantity) || 1);
-        // "Wholesale" is often "Discounted" in priceType, checking both to be safe
         const pType = String(it.priceType || '').toLowerCase();
+        const isWholesale = pType.includes('wholesale') || pType.includes('discount');
+        
+        let itSell = 0;
+        if (num(it.sellingPrice) > 0) {
+          itSell = num(it.sellingPrice);
+        } else if (isWholesale) {
+          itSell = num(it.priceAfterDiscount) || num(it.price);
+        } else {
+          itSell = num(it.price);
+        }
+        
+        const lineTotal = itSell * (num(it.quantity) || 1);
+        
         if (pType === 'retail') {
           orderRetail += lineTotal;
         } else {
@@ -769,7 +780,18 @@ export default function SalesDashboard() {
                   </thead>
                   <tbody>
                     {selectedOrder.items.map((it, idx) => {
-                      const sell = num(it.price ?? it.unitPrice ?? it.salePrice);
+                      const pType = String(it.priceType || 'Retail').toLowerCase();
+                      const isWholesale = pType.includes('wholesale') || pType.includes('discount');
+
+                      let sell = 0;
+                      if (num(it.sellingPrice) > 0) {
+                        sell = num(it.sellingPrice);
+                      } else if (isWholesale) {
+                        sell = num(it.priceAfterDiscount) || num(it.price);
+                      } else {
+                        sell = num(it.price ?? it.unitPrice ?? it.salePrice);
+                      }
+
                       const qty = num(it.quantity ?? it.qty ?? 1);
                       const cost = getUnitCost(it);
                       const profit = (sell - cost) * qty;

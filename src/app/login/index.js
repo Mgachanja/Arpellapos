@@ -1,7 +1,8 @@
 // src/pages/Login.js
 import React, { useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { loginUser, selectUser } from '../../redux/slices/userSlice';
+import { useSelector } from 'react-redux';
+import { selectUser } from '../../redux/slices/userSlice';
+import { useLoginMutation } from '../../services/rtkApi';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Form, Button, Container, Row, Col, InputGroup, Spinner } from 'react-bootstrap';
@@ -9,14 +10,13 @@ import { AiOutlineEye, AiOutlineEyeInvisible, AiOutlinePhone, AiOutlineLock, AiO
 import logo from '../../assets/logo.jpeg';
 
 export default function LoginPage() {
-  const dispatch = useDispatch();
   const navigate = useNavigate();
   const currentUser = useSelector(selectUser);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const loading = useSelector(state => state.user.loading);
-  const error = useSelector(state => state.user.error);
+  const [login, { isLoading: loading, error: mutationError }] = useLoginMutation();
+  const error = mutationError ? (mutationError.data?.message || mutationError.error || 'Login failed') : null;
 
   // If already logged in, redirect
   if (currentUser) {
@@ -42,12 +42,11 @@ export default function LoginPage() {
 
     try {
       const payload = { phoneNumber: phoneNumber.trim(), password };
-      const result = await dispatch(loginUser(payload)).unwrap();
-      toast.success(`Welcome ${result[0].firstName || result[0].userName || 'User'}`);
+      const result = await login(payload).unwrap();
+      toast.success(`Welcome ${result.firstName || result.userName || 'User'}`);
       navigate('/app/dashboard', { replace: true });
     } catch (err) {
-      // err is the rejected value from thunk
-      toast.error(err || 'Login failed');
+      toast.error(err.data?.message || err.message || err.error || 'Login failed');
     }
   };
 

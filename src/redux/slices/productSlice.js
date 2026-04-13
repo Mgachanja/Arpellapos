@@ -1,6 +1,6 @@
 // src/redux/slices/productSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import axios from 'axios';
+import { rtkApi } from '../../services/rtkApi';
 import indexedDb from '../../services/indexedDB'; // <-- match actual filename on disk
 import { baseUrl, addItemToCart as addItemToCartHelper } from './productsSlice-helpers';
 
@@ -101,9 +101,8 @@ export const fetchSinglePage = createAsyncThunk(
   async ({ pageNumber, pageSize = 200 }, { dispatch, rejectWithValue }) => {
     try {
       dispatch(_setPagePending({ pageNumber }));
-      const url = `${baseUrl}/pos-paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
-      const res = await axios.get(url);
-      const data = res.data;
+      const res = await dispatch(rtkApi.endpoints.getPagedProducts.initiate({ pageNumber, pageSize })).unwrap();
+      const data = res?.data ?? res;
       const items = Array.isArray(data) ? data : (data.items || []);
 
       // write raw page items into products store

@@ -27,11 +27,14 @@ import {
   Chip,
 } from '@mui/material';
 import { Search as SearchIcon, Refresh as RefreshIcon } from '@mui/icons-material';
-import { useSelector, useDispatch } from 'react-redux';
-import axios from 'axios';
-import { fetchStaffMembers } from '../../redux/slices/staffSlice';
-import { baseUrl } from '../constants';
-// import { subscribe, clearNewFlag, checkNow } from '../../services/orderPoller';
+import { useSelector } from 'react-redux';
+import { 
+  useGetPendingOrdersQuery, 
+  useGetUsersQuery,
+  useGetStaffsQuery,
+  useLazyGetOrderByIdQuery,
+  useCreateDeliveryTrackingMutation 
+} from '../../services/rtkApi';
 
 const OrderManagement = () => {
   const [orders, setOrders] = useState([]);
@@ -41,8 +44,9 @@ const OrderManagement = () => {
   const [pageNumber, setPageNumber] = useState(1);
   const [pageSize, setPageSize] = useState(100);
 
-  const [users, setUsers] = useState([]);
-  const [usersLoading, setUsersLoading] = useState(false);
+  const { data: usersData = [], isLoading: usersLoadingIsLoading, isFetching: usersIsFetching } = useGetUsersQuery();
+  const users = Array.isArray(usersData) ? usersData : [];
+  const usersLoading = usersLoadingIsLoading || usersIsFetching;
 
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [deliveryGuy, setDeliveryGuy] = useState('');
@@ -50,25 +54,17 @@ const OrderManagement = () => {
   // default filter now set to 'Pending'
   const [filterStatus, setFilterStatus] = useState('Pending');
   const [toast, setToast] = useState({ open: false, message: '', severity: 'success' });
-
-  const [searchOrderId, setSearchOrderId] = useState('');
-  const [searchLoading, setSearchLoading] = useState(false);
-
   const [hasNewOrders, setHasNewOrders] = useState(false);
   const [newOrdersCount, setNewOrdersCount] = useState(0);
+  const [searchOrderId, setSearchOrderId] = useState('');
 
-  // local staff fallback if redux slice empty / not wired
-  const [localStaff, setLocalStaff] = useState([]);
-
-  const dispatch = useDispatch();
-  const staffListFromStore = useSelector((state) => (state?.staff?.staffList ?? []));
-  const staffList = Array.isArray(staffListFromStore) && staffListFromStore.length ? staffListFromStore : localStaff;
-
+  const { data: staffList = [] } = useGetStaffsQuery();
   const deliveryGuys = Array.isArray(staffList)
     ? staffList.filter((staff) => (staff.role || '').toLowerCase() === 'delivery guy')
     : [];
 
-  const DELIVERY_TRACKING_BASE = `${baseUrl}/deliverytracking`;
+  const [getOrderById, { isFetching: searchLoading }] = useLazyGetOrderByIdQuery();
+  const [createDeliveryTracking] = useCreateDeliveryTrackingMutation();
 
   // refs to keep track of last known orders without causing re-renders
   const lastKnownOrderIdsRef = useRef(new Set());
@@ -79,28 +75,27 @@ const OrderManagement = () => {
     return order._id || order.id || order.orderId || order.orderid || '';
   };
 
-  // orderPoller removed in favor of simple polling
+  const { 
+    data: pendingOrdersData, 
+    isLoading: ordersIsLoading,
+    isFetching: ordersIsFetching,
+    refetch: refetchOrders 
+  } = useGetPendingOrdersQuery(undefined, { pollingInterval: 30000 });
 
+  useEffect(() => {
+    setOrdersLoading(ordersIsLoading || ordersIsFetching);
+  }, [ordersIsLoading, ordersIsFetching]);
 
-  // fetch orders and compute real "new" delta vs lastKnownOrderIdsRef
-  const fetchOrders = useCallback(async (silent = false) => {
-    if (!silent) setOrdersLoading(true);
-    try {
-      const url = `${baseUrl}/pending-orders`;
-      const res = await axios.get(url);
-      const data = res.data;
-
+  useEffect(() => {
+    if (pendingOrdersData) {
+      const data = pendingOrdersData;
       let items = [];
-      if (!data) items = [];
-      else if (Array.isArray(data)) items = data;
+      if (Array.isArray(data)) items = data;
       else if (Array.isArray(data.items)) items = data.items;
       else if (Array.isArray(data.data)) items = data.data;
       else if (Array.isArray(data.orders)) items = data.orders;
       else if (Array.isArray(data.results)) items = data.results;
-      else items = [];
 
-      // If we are not paginating via server params anymore, this check might be less relevant 
-      // but keeping it simple:
       if (items.length === 0 && pageNumber > 1) {
         setPageNumber((p) => Math.max(1, p - 1));
         return;
@@ -109,23 +104,19 @@ const OrderManagement = () => {
       setOrders(items);
       setIsLastPage(items.length < pageSize);
 
-      // compute id set and count new ones compared to lastKnownOrderIdsRef
       const newIds = new Set(items.map((o) => computeFullOrderId(o)).filter(Boolean));
       let added = 0;
       if (initialLoadRef.current) {
-        // on first load, don't show toast; just seed the ref
         initialLoadRef.current = false;
         lastKnownOrderIdsRef.current = newIds;
         setHasNewOrders(false);
         setNewOrdersCount(0);
       } else {
-        // count ids in newIds not present in lastKnownOrderIdsRef
         for (const id of newIds) {
           if (!lastKnownOrderIdsRef.current.has(id)) added += 1;
         }
 
         if (added > 0) {
-          // show a single toast for actual newly discovered orders
           setToast({
             open: true,
             message: `${added} new order${added > 1 ? 's' : ''} received!`,
@@ -134,74 +125,12 @@ const OrderManagement = () => {
           setHasNewOrders(true);
           setNewOrdersCount(added);
         }
-        // Update ref to new set
         lastKnownOrderIdsRef.current = newIds;
       }
-    } catch (err) {
-      console.error('Failed to fetch orders:', err);
-      // setOrders([]); // optional: don't clear orders on silent failure
-    } finally {
-      if (!silent) setOrdersLoading(false);
     }
-  }, [pageNumber, pageSize, toast]);
+  }, [pendingOrdersData, pageNumber, pageSize]);
 
-  // Initial fetch and Polling
-  useEffect(() => {
-    // Initial fetch
-    fetchOrders();
-
-    // Poll every 30 seconds
-    const interval = setInterval(() => {
-      fetchOrders(true); // pass true for silent
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [fetchOrders]);
-
-  // fetch users
-  useEffect(() => {
-    let cancelled = false;
-    const fetchUsers = async () => {
-      setUsersLoading(true);
-      try {
-        const { data } = await axios.get(`${baseUrl}/users`);
-        if (!cancelled) setUsers(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error('Failed to fetch users:', err);
-        if (!cancelled) setUsers([]);
-      } finally {
-        if (!cancelled) setUsersLoading(false);
-      }
-    };
-    fetchUsers();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // dispatch thunk to populate staff slice; also try fallback fetch if slice is empty
-  useEffect(() => {
-    dispatch(fetchStaffMembers());
-
-    // if redux slice doesn't return staff (e.g. store not wired), fetch directly and populate localStaff
-    let cancelled = false;
-    const fetchLocalStaffIfNeeded = async () => {
-      try {
-        // only fetch fallback if store returned empty and localStaff empty
-        if ((!Array.isArray(staffListFromStore) || staffListFromStore.length === 0) && localStaff.length === 0) {
-          const { data } = await axios.get(`${baseUrl}/special-users`);
-          if (!cancelled && Array.isArray(data)) setLocalStaff(data);
-        }
-      } catch (err) {
-        console.warn('Fallback staff fetch failed (this is non-fatal):', err?.message || err);
-      }
-    };
-    fetchLocalStaffIfNeeded();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispatch]);
+// users and staff logic was migrated to RTK query hooks above
 
   const loading = ordersLoading || usersLoading;
 
@@ -327,8 +256,7 @@ const OrderManagement = () => {
     setOpenModal(false);
 
     try {
-      const trackingUrl = `${DELIVERY_TRACKING_BASE}/`;
-      await axios.post(trackingUrl, payload);
+      await createDeliveryTracking(payload).unwrap();
 
       setOrders((prev) =>
         prev.map((o) =>
@@ -357,10 +285,8 @@ const OrderManagement = () => {
       return;
     }
 
-    setSearchLoading(true);
     try {
-      const url = `${baseUrl}/order/${searchOrderId.trim()}`;
-      const { data } = await axios.get(url);
+      const data = await getOrderById(searchOrderId.trim()).unwrap();
 
       if (data) {
         setSelectedOrder(data);
@@ -380,19 +306,14 @@ const OrderManagement = () => {
       console.error('Failed to fetch order:', err);
       setToast({
         open: true,
-        message: `Order not found: ${err?.response?.data?.message || err?.message || 'server error'}`,
+        message: `Order not found: ${err?.data?.message || err?.message || 'server error'}`,
         severity: 'error',
       });
-    } finally {
-      setSearchLoading(false);
     }
   };
 
   const handleManualRefresh = async () => {
-    setOrdersLoading(true);
-    // await checkNow();
-
-    await fetchOrders();
+    refetchOrders();
   };
 
   const handleCloseToast = (e, reason) => {

@@ -833,6 +833,10 @@ const StockManagement = () => {
         priceAfterDiscount: editProductData.priceAfterDiscount,
       };
       await API.products.update(editProductData.Id, payload);
+      
+      // Update IndexedDB instantly
+      indexedDb.putProducts([{ ...payload, id: editProductData.Id }]);
+      
       showToastMessage("Product updated successfully", "success");
       setShowEditModal(false);
       fetchProducts(lastProductPage, true);
@@ -1039,7 +1043,7 @@ const StockManagement = () => {
     setFormErrors({});
 
     // Find related inventory
-    const inv = inventories.find(i => String(i.productId || i.inventoryId) === String(product.inventoryId || product.id));
+    const inv = allInventories.find(i => String(i.productId || i.inventoryId) === String(product.inventoryId || product.id));
     // Find related supplier
     const supplierId = inv?.supplierId || product.SupplierId;
 

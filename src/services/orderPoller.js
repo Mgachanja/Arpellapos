@@ -57,16 +57,24 @@ async function checkOnce() {
 
       if (!items || items.length === 0) break;
 
+      let hitOldOrder = false;
+
       for (const it of items) {
         const t = Number(it.createdAt || it.created_at || it.timestamp || it.orderDate || 0);
-        if (!lastLatestTs || t > lastLatestTs) {
+        if (!lastLatestTs) {
+          // If first run, just establish baseline from first page
+          newest = Math.max(newest, t);
+        } else if (t > lastLatestTs) {
           foundNewOrders.push(it);
           newest = Math.max(newest, t);
+        } else {
+          hitOldOrder = true;
         }
       }
 
       if (items.length < PAGE_SIZE) break;
-      if (foundNewOrders.length > 0) break;
+      if (!lastLatestTs) break; // Don't fetch entire history on first load
+      if (hitOldOrder) break;   // Stop fetching once we reach older orders
       page += 1;
     }
 

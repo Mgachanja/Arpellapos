@@ -1,5 +1,5 @@
 // src/pages/Login.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import { selectUser } from '../../redux/slices/userSlice';
 import { useLoginMutation } from '../../services/rtkApi';
@@ -19,9 +19,11 @@ export default function LoginPage() {
   const error = mutationError ? (mutationError.data?.message || mutationError.error || 'Login failed') : null;
 
   // If already logged in, redirect
-  if (currentUser) {
-    navigate('/app/dashboard', { replace: true });
-  }
+  useEffect(() => {
+    if (currentUser) {
+      navigate('/app/dashboard', { replace: true });
+    }
+  }, [currentUser, navigate]);
 
   const validatePhone = (p) => {
     const s = String(p || '');

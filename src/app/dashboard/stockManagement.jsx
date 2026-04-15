@@ -361,17 +361,18 @@ const StockManagement = () => {
       setAllInventories(uniqueInvs);
       setAllProducts(prods || []);
 
-      // Initialize lists
-      setInventories(uniqueInvs.slice(0, pageSize));
-      setProducts((prods || []).slice(0, pageSize));
-      setHasMoreInventories(uniqueInvs.length > pageSize);
-      setHasMoreProducts((prods || []).length > pageSize);
+      // Initialize lists with current page
+      const startInv = (currentInventoryPage - 1) * pageSize;
+      const startProd = (currentProductPage - 1) * pageSize;
+      setInventories(uniqueInvs.slice(startInv, startInv + pageSize));
+      setProducts((prods || []).slice(startProd, startProd + pageSize));
+      setHasMoreInventories(uniqueInvs.length > startInv + pageSize);
+      setHasMoreProducts((prods || []).length > startProd + pageSize);
     } catch (e) {
       console.error("Failed to load IDB data", e);
     }
   };
 
-  // Search Effect
   useEffect(() => {
     const term = debouncedSearchTerm.trim().toLowerCase();
 
@@ -384,11 +385,16 @@ const StockManagement = () => {
         return String(pName).toLowerCase().includes(term) || String(pId).toLowerCase().includes(term);
       });
     }
-    // Update Inventory Page 1
-    setCurrentInventoryPage(1);
-    const invSlice = filteredInvs.slice(0, pageSize);
+    
+    // Calculate bounds keeping current page
+    let startInv = (currentInventoryPage - 1) * pageSize;
+    if (startInv >= filteredInvs.length && filteredInvs.length > 0) {
+      setCurrentInventoryPage(1);
+      startInv = 0;
+    }
+    const invSlice = filteredInvs.slice(startInv, startInv + pageSize);
     setInventories(invSlice);
-    setHasMoreInventories(filteredInvs.length > pageSize);
+    setHasMoreInventories(filteredInvs.length > startInv + pageSize);
 
     // Filter Products
     let filteredProds = allProducts;
@@ -400,11 +406,15 @@ const StockManagement = () => {
         return String(name).toLowerCase().includes(term) || String(id).toLowerCase().includes(term) || String(barcodeStr).toLowerCase().includes(term);
       });
     }
-    // Update Product Page 1
-    setCurrentProductPage(1);
-    const prodSlice = filteredProds.slice(0, pageSize);
+
+    let startProd = (currentProductPage - 1) * pageSize;
+    if (startProd >= filteredProds.length && filteredProds.length > 0) {
+      setCurrentProductPage(1);
+      startProd = 0;
+    }
+    const prodSlice = filteredProds.slice(startProd, startProd + pageSize);
     setProducts(prodSlice);
-    setHasMoreProducts(filteredProds.length > pageSize);
+    setHasMoreProducts(filteredProds.length > startProd + pageSize);
 
   }, [debouncedSearchTerm, allInventories, allProducts]);
 
@@ -833,10 +843,10 @@ const StockManagement = () => {
         priceAfterDiscount: editProductData.priceAfterDiscount,
       };
       await API.products.update(editProductData.Id, payload);
+      await indexedDb.putProducts([{ ...payload, id: editProductData.Id }]);
+      await loadDataFromIDB();
       showToastMessage("Product updated successfully", "success");
       setShowEditModal(false);
-      fetchProducts(lastProductPage, true);
-      setCurrentProductPage(lastProductPage);
     } catch (error) {
       console.error(error);
       showToastMessage("Failed to update product: " + (error?.message || "error"), "danger");
@@ -1039,7 +1049,7 @@ const StockManagement = () => {
     setFormErrors({});
 
     // Find related inventory
-    const inv = inventories.find(i => String(i.productId || i.inventoryId) === String(product.inventoryId || product.id));
+    const inv = allInventories.find(i => String(i.productId || i.inventoryId) === String(product.inventoryId || product.id));
     // Find related supplier
     const supplierId = inv?.supplierId || product.SupplierId;
 
@@ -1188,14 +1198,14 @@ const StockManagement = () => {
         await Promise.all(updates);
 
         // Sync product to IDB
-        indexedDb.putProducts([{ ...productPayload, id: productId }]);
+        await indexedDb.putProducts([{ ...productPayload, id: productId }]);
+
+        await loadDataFromIDB();
 
         showToastMessage("Complete product updated successfully", "success");
 
         setShowAddCompleteProductModal(false);
         resetForms();
-        fetchProducts(currentProductPage, true);
-        fetchStocks(currentInventoryPage, true);
       } catch (error) {
         console.error("Update failed", error);
         showToastMessage("Failed to update product: " + (error?.response?.data?.message || error?.message || "Error"), "danger");
@@ -1229,7 +1239,7 @@ const StockManagement = () => {
       inventoryCreated = true;
       inventoryIdentifier = invResp?.id || invResp?.productId || f.inventoryId;
       // Sync IDB
-      indexedDb.putInventories([{ ...invPayload, inventoryId: inventoryIdentifier }]);
+      await indexedDb.putInventories([{ ...invPayload, inventoryId: inventoryIdentifier }]);
       showToastMessage("Inventory created successfully", "success");
 
       // 2. Create Product
@@ -1253,7 +1263,7 @@ const StockManagement = () => {
       productId = prodResp?.id || prodResp?.productId;
       // Sync IDB
       if (productId) {
-        indexedDb.putProducts([{ ...prodPayload, id: productId }]);
+        await indexedDb.putProducts([{ ...prodPayload, id: productId }]);
       }
       showToastMessage("Product created successfully", "success");
 
@@ -1275,8 +1285,7 @@ const StockManagement = () => {
       showToastMessage("Complete product added successfully!", "success");
       setShowAddCompleteProductModal(false);
       resetForms();
-      fetchProducts(lastProductPage || currentProductPage, true);
-      fetchStocks(lastInventoryPage || currentInventoryPage, true);
+      await loadDataFromIDB();
 
     } catch (error) {
       console.error("Error in complete product creation:", error);
@@ -1328,9 +1337,9 @@ const StockManagement = () => {
       };
       await API.products.update(productId, productPayload);
       // Sync IDB
-      indexedDb.putProducts([{ ...productPayload, id: productId }]);
+      await indexedDb.putProducts([{ ...productPayload, id: productId }]);
       showToastMessage("Product details updated successfully", "success");
-      fetchProducts(currentProductPage, true);
+      await loadDataFromIDB();
     } catch (error) {
       showToastMessage("Failed to update product: " + (error?.message || "error"), "danger");
     } finally {
@@ -1352,9 +1361,9 @@ const StockManagement = () => {
       };
       await API.inventories.update(f.inventoryId, inventoryPayload);
       // Sync IDB
-      indexedDb.putInventories([{ ...inventoryPayload, inventoryId: f.inventoryId }]);
+      await indexedDb.putInventories([{ ...inventoryPayload, inventoryId: f.inventoryId }]);
       showToastMessage("Inventory updated successfully", "success");
-      fetchStocks(currentInventoryPage, true);
+      await loadDataFromIDB();
     } catch (error) {
       showToastMessage("Failed to update inventory: " + (error?.message || "error"), "danger");
     } finally {
@@ -1457,10 +1466,12 @@ const StockManagement = () => {
               <Pagination.Next onClick={() => handleInventoryPageChange(currentInventoryPage + 1)} disabled={!hasMoreInventories} />
             </Pagination>
 
-            <InputGroup style={{ width: 220 }} size="sm" className="ms-auto">
-              <Form.Control placeholder="Jump to page #" value={inventoryJumpPage} onChange={(e) => setInventoryJumpPage(e.target.value)} />
-              <Button variant="outline-secondary" onClick={handleInventoryJumpToPage}>Go</Button>
-            </InputGroup>
+            <Form onSubmit={(e) => { e.preventDefault(); handleInventoryJumpToPage(); }} className="ms-auto" style={{ width: 220 }}>
+              <InputGroup size="sm">
+                <Form.Control placeholder="Jump to page #" value={inventoryJumpPage} onChange={(e) => setInventoryJumpPage(e.target.value)} />
+                <Button type="submit" variant="outline-secondary">Go</Button>
+              </InputGroup>
+            </Form>
           </div>
 
           <Table striped bordered hover className="mt-2">
@@ -1524,10 +1535,12 @@ const StockManagement = () => {
               <Pagination.Next onClick={() => handleProductPageChange(currentProductPage + 1)} disabled={!hasMoreProducts} />
             </Pagination>
 
-            <InputGroup style={{ width: 220 }} size="sm" className="ms-auto">
-              <Form.Control placeholder="Jump to page #" value={productJumpPage} onChange={(e) => setProductJumpPage(e.target.value)} />
-              <Button variant="outline-secondary" onClick={handleProductJumpToPage}>Go</Button>
-            </InputGroup>
+            <Form onSubmit={(e) => { e.preventDefault(); handleProductJumpToPage(); }} className="ms-auto" style={{ width: 220 }}>
+              <InputGroup size="sm">
+                <Form.Control placeholder="Jump to page #" value={productJumpPage} onChange={(e) => setProductJumpPage(e.target.value)} />
+                <Button type="submit" variant="outline-secondary">Go</Button>
+              </InputGroup>
+            </Form>
           </div>
 
           <Table striped bordered hover className="mt-2">
@@ -1624,10 +1637,12 @@ const StockManagement = () => {
               <Pagination.Next onClick={() => handleInvoicePageChange(currentInvoicePage + 1)} disabled={!hasMoreInvoices} />
             </Pagination>
 
-            <InputGroup style={{ width: 220 }} size="sm" className="ms-auto">
-              <Form.Control placeholder="Jump to page #" value={invoiceJumpPage} onChange={(e) => setInvoiceJumpPage(e.target.value)} />
-              <Button variant="outline-secondary" onClick={handleInvoiceJumpToPage}>Go</Button>
-            </InputGroup>
+            <Form onSubmit={(e) => { e.preventDefault(); handleInvoiceJumpToPage(); }} className="ms-auto" style={{ width: 220 }}>
+              <InputGroup size="sm">
+                <Form.Control placeholder="Jump to page #" value={invoiceJumpPage} onChange={(e) => setInvoiceJumpPage(e.target.value)} />
+                <Button type="submit" variant="outline-secondary">Go</Button>
+              </InputGroup>
+            </Form>
           </div>
 
           <Table striped bordered hover className="mt-2">
@@ -2509,7 +2524,38 @@ const StockManagement = () => {
         </Modal.Header>
         <Modal.Body>
           {editStockData ? (
-            <Form>
+            <Form id="editStockForm" onSubmit={async (e) => {
+              e.preventDefault();
+              if (!editStockData) return;
+              try {
+                setIsLoading(true);
+                const payload = {
+                  productId: editStockData.productId ?? editStockData.id ?? editStockData.inventoryId,
+                  stockQuantity: Number(editStockData.stockQuantity ?? editStockData.quantity ?? 0),
+                  stockThreshold: Number(editStockData.stockThreshold ?? editStockData.threshold ?? 0),
+                  stockPrice: Number(editStockData.stockPrice ?? editStockData.purchasePrice ?? 0),
+                  invoiceNumber: editStockData.invoiceNumber ?? "",
+                  supplierId: editStockData.supplierId ?? editStockData.supplier ?? null,
+                };
+                // Use productId (SKU) as the URL parameter for the inventory endpoint
+                const id = editStockData.productId ?? editStockData.id ?? editStockData.inventoryId;
+                if (typeof API.inventories?.update === "function") {
+                  await API.inventories.update(id, payload);
+                  // Sync IDB
+                  await indexedDb.putInventories([{ ...payload, inventoryId: id }]);
+                  await loadDataFromIDB();
+                  showToastMessage("Stock updated successfully", "success");
+                  setShowEditStockModal(false);
+                } else {
+                  showToastMessage("Inventory update API not available", "danger");
+                }
+              } catch (err) {
+                console.error(err);
+                showToastMessage("Failed to update stock: " + (err?.message || "error"), "danger");
+              } finally {
+                setIsLoading(false);
+              }
+            }}>
               <Form.Group className="mb-3">
                 <Form.Label>Product SKU <span className="text-danger">*</span></Form.Label>
                 <Form.Control
@@ -2590,39 +2636,9 @@ const StockManagement = () => {
             Close
           </Button>
           <Button
+            type="submit"
+            form="editStockForm"
             variant="primary"
-            onClick={async () => {
-              if (!editStockData) return;
-              try {
-                setIsLoading(true);
-                const payload = {
-                  productId: editStockData.productId ?? editStockData.id ?? editStockData.inventoryId,
-                  stockQuantity: Number(editStockData.stockQuantity ?? editStockData.quantity ?? 0),
-                  stockThreshold: Number(editStockData.stockThreshold ?? editStockData.threshold ?? 0),
-                  stockPrice: Number(editStockData.stockPrice ?? editStockData.purchasePrice ?? 0),
-                  invoiceNumber: editStockData.invoiceNumber ?? "",
-                  supplierId: editStockData.supplierId ?? editStockData.supplier ?? null,
-                };
-                // Use productId (SKU) as the URL parameter for the inventory endpoint
-                const id = editStockData.productId ?? editStockData.id ?? editStockData.inventoryId;
-                if (typeof API.inventories?.update === "function") {
-                  await API.inventories.update(id, payload);
-                  // Sync IDB
-                  indexedDb.putInventories([{ ...payload, inventoryId: id }]);
-                  showToastMessage("Stock updated successfully", "success");
-                  setShowEditStockModal(false);
-                  fetchStocks(lastInventoryPage || currentInventoryPage, true);
-                  setCurrentInventoryPage(lastInventoryPage || currentInventoryPage);
-                } else {
-                  showToastMessage("Inventory update API not available", "danger");
-                }
-              } catch (err) {
-                console.error(err);
-                showToastMessage("Failed to update stock: " + (err?.message || "error"), "danger");
-              } finally {
-                setIsLoading(false);
-              }
-            }}
             disabled={isLoading}
           >
             {isLoading ? "Updating..." : "Update Stock"}

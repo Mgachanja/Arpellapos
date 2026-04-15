@@ -113,78 +113,84 @@ export default function MpesaTillPayment({ show, onHide, cartTotal, onSubmit }) 
 
   return (
     <Modal show={show} onHide={onHide} centered backdrop="static">
-      <Modal.Header closeButton className="bg-success text-white">
-        <Modal.Title>M-Pesa Till Payment</Modal.Title>
-      </Modal.Header>
+      <Form onSubmit={(e) => {
+        e.preventDefault();
+        if (transactionDetails) handleSubmit();
+        else handleVerifyTransaction();
+      }}>
+        <Modal.Header closeButton className="bg-success text-white">
+          <Modal.Title>M-Pesa Till Payment</Modal.Title>
+        </Modal.Header>
 
-      <Modal.Body>
-        <Alert variant="info">
-          Till Number: <strong>5678901</strong><br />
-          Amount: <strong>{KSH(cartTotal)}</strong>
-        </Alert>
-
-        {/* PAYMENTS API PREVIEW */}
-        <div className="mb-3">
-          <div className="d-flex justify-content-between align-items-center mb-1">
-            <strong>/payments response</strong>
-            <Button size="sm" variant="outline-secondary" onClick={fetchPayments}>
-              Refresh
-            </Button>
-          </div>
-
-          <div className="small text-muted mb-2">
-            ⚠ This part is still pending — raw server response shown below
-          </div>
-
-          <div
-            style={{
-              maxHeight: 220,
-              overflow: 'auto',
-              background: '#f8f9fa',
-              border: '1px solid #ddd',
-              padding: 8,
-              borderRadius: 6,
-              fontFamily: 'monospace',
-              fontSize: 12
-            }}
-          >
-            {paymentsLoading && <Spinner size="sm" />}
-            {paymentsError && <span className="text-danger">{paymentsError}</span>}
-            {paymentsData &&
-              JSON.stringify(paymentsData, null, 2)}
-          </div>
-        </div>
-
-        {/* TRANSACTION INPUT */}
-        <Form.Group className="mb-3">
-          <Form.Label>M-Pesa Transaction Code</Form.Label>
-          <div className="d-flex gap-2">
-            <Form.Control
-              value={transactionId}
-              maxLength={10}
-              onChange={(e) => setTransactionId(e.target.value.toUpperCase())}
-            />
-            <Button onClick={handleVerifyTransaction} disabled={verifying}>
-              {verifying ? <Spinner size="sm" /> : 'Verify'}
-            </Button>
-          </div>
-        </Form.Group>
-
-        {transactionDetails && (
-          <Alert variant="success">
-            Verified: {transactionDetails.transactionId}
+        <Modal.Body>
+          <Alert variant="info">
+            Till Number: <strong>5678901</strong><br />
+            Amount: <strong>{KSH(cartTotal)}</strong>
           </Alert>
-        )}
 
-        {error && <Alert variant="danger">{error}</Alert>}
-      </Modal.Body>
+          {/* PAYMENTS API PREVIEW */}
+          <div className="mb-3">
+            <div className="d-flex justify-content-between align-items-center mb-1">
+              <strong>/payments response</strong>
+              <Button size="sm" variant="outline-secondary" type="button" onClick={fetchPayments}>
+                Refresh
+              </Button>
+            </div>
 
-      <Modal.Footer>
-        <Button variant="secondary" onClick={onHide}>Cancel</Button>
-        <Button variant="success" onClick={handleSubmit} disabled={!transactionDetails || loading}>
-          {loading ? <Spinner size="sm" /> : 'Complete Order'}
-        </Button>
-      </Modal.Footer>
+            <div className="small text-muted mb-2">
+              ⚠ This part is still pending — raw server response shown below
+            </div>
+
+            <div
+              style={{
+                maxHeight: 220,
+                overflow: 'auto',
+                background: '#f8f9fa',
+                border: '1px solid #ddd',
+                padding: 8,
+                borderRadius: 6,
+                fontFamily: 'monospace',
+                fontSize: 12
+              }}
+            >
+              {paymentsLoading && <Spinner size="sm" />}
+              {paymentsError && <span className="text-danger">{paymentsError}</span>}
+              {paymentsData &&
+                JSON.stringify(paymentsData, null, 2)}
+            </div>
+          </div>
+
+          {/* TRANSACTION INPUT */}
+          <Form.Group className="mb-3">
+            <Form.Label>M-Pesa Transaction Code</Form.Label>
+            <div className="d-flex gap-2">
+              <Form.Control
+                value={transactionId}
+                maxLength={10}
+                onChange={(e) => setTransactionId(e.target.value.toUpperCase())}
+              />
+              <Button type="button" onClick={handleVerifyTransaction} disabled={verifying}>
+                {verifying ? <Spinner size="sm" /> : 'Verify'}
+              </Button>
+            </div>
+          </Form.Group>
+
+          {transactionDetails && (
+            <Alert variant="success">
+              Verified: {transactionDetails.transactionId}
+            </Alert>
+          )}
+
+          {error && <Alert variant="danger">{error}</Alert>}
+        </Modal.Body>
+
+        <Modal.Footer>
+          <Button variant="secondary" type="button" onClick={onHide}>Cancel</Button>
+          <Button variant="success" type="submit" disabled={!transactionDetails || loading}>
+            {loading ? <Spinner size="sm" /> : 'Complete Order'}
+          </Button>
+        </Modal.Footer>
+      </Form>
     </Modal>
   );
 }

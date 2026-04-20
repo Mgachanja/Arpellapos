@@ -13,7 +13,8 @@ import {
   AlertCircle,
   Trash2
 } from 'lucide-react';
-import api from '../../services/api';         // same pattern you use in POS.jsx
+import { useDispatch } from 'react-redux';
+import { rtkApi } from '../../services/rtkApi';
 import indexedDb from '../../services/indexedDB'; // same helper used in POS
 
 /* ================= Helpers ================= */
@@ -93,6 +94,7 @@ const normalizeOrder = (o) => {
 
 /* ================= Component ================= */
 export default function SalesDashboard() {
+  const dispatch = useDispatch();
   const today = toLocalYMD(Date.now());
 
   const [date, setDate] = useState(today);
@@ -186,12 +188,11 @@ export default function SalesDashboard() {
           }
         });
 
-        // fetch remote paged inventories using your api service (same pattern as POS)
+        // fetch remote paged inventories using rtkApi
         let remoteInventories = [];
         try {
-          // api.getPagedInventories(pageNumber, pageSize) expected by services/api
-          const resp = await api.getPagedInventories(1, 2000);
-          // axios response shape
+          const resp = await dispatch(rtkApi.endpoints.getPagedInventories.initiate({ pageNumber: 1, pageSize: 2000 })).unwrap();
+          // rtk query returns unwrapped data directly
           const payload = resp?.data ?? resp;
           remoteInventories = Array.isArray(payload) ? payload : (Array.isArray(payload.data) ? payload.data : []);
         } catch (e) {
@@ -253,7 +254,7 @@ export default function SalesDashboard() {
     refreshTimerRef.current = setInterval(async () => {
       try {
         // only fetch remote page (we keep local indexes intact)
-        const resp = await api.getPagedInventories(1, 2000).catch(() => null);
+        const resp = await dispatch(rtkApi.endpoints.getPagedInventories.initiate({ pageNumber: 1, pageSize: 2000 }, { forceRefetch: true })).unwrap().catch(() => null);
         const payload = resp?.data ?? resp ?? null;
         const remote = Array.isArray(payload) ? payload : (Array.isArray(payload?.data) ? payload.data : []);
         if (!remote || remote.length === 0) return;

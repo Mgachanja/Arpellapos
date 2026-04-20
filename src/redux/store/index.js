@@ -7,29 +7,20 @@ import { combineReducers } from '@reduxjs/toolkit';
 // Import your reducers
 import productSlice from '../slices/productSlice';
 import userSlice from '../slices/userSlice';
+import { rtkApi } from '../../services/rtkApi';
 // Persist configuration
 const persistConfig = {
   key: 'root',
   storage,
-  whitelist: ['products'], // Only persist products slice (cart will be persisted)
-  blacklist: [] // Don't persist these slices
-};
-
-// Cart persist config (separate config for cart to handle complex objects)
-const cartPersistConfig = {
-  key: 'cart',
-  storage,
-  whitelist: ['cart'] // Only persist the cart array from products slice
+  whitelist: ['products', 'user'], // Only persist products slice and user slice
+  blacklist: [rtkApi.reducerPath] // Don't persist these slices
 };
 
 // Root reducer combining all slices
 const rootReducer = combineReducers({
-  user:userSlice,
-  products: persistReducer(cartPersistConfig, productSlice),
-  // Add other reducers here as you create them
-  // auth: authReducer,
-  // orders: ordersReducer,
-  // settings: settingsReducer,
+  user: userSlice,
+  products: productSlice,
+  [rtkApi.reducerPath]: rtkApi.reducer,
 });
 
 // Create persisted reducer
@@ -55,7 +46,7 @@ export const store = configureStore({
         // Ignore these paths in the state
         ignoredPaths: ['_persist'],
       },
-    }),
+    }).concat(rtkApi.middleware),
   devTools: process.env.NODE_ENV !== 'production',
 });
 

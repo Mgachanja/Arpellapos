@@ -1,43 +1,6 @@
-// src/redux/slices/userSlice.js
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import axios from 'axios';
-import { baseUrl } from '../../app/constants';
-/**
- * Thunk: loginUser
- * - Calls POST /login with { phoneNumber, password }
- * - Rejects if backend returns user.role === 'Customer'
- * - Returns the user object on success
- */
-export const loginUser = createAsyncThunk(
-  'user/loginUser',
-  async ({ phoneNumber, password }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(`${baseUrl}/login`, { 
-        userName: phoneNumber, 
-        passwordHash : password
-      },
-        {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-      );
-      // backend returns user object
-      if (!data) return rejectWithValue('Invalid server response');
-
-      // Deny "Customer" role explicitly
-      if (String(data.role).toLowerCase() === 'customer') {
-        return rejectWithValue('Access denied for role: Customer');
-      }
-
-      return data;
-    } catch (err) {
-      // normalize error message
-      const msg = err?.response?.data?.message || err.message || 'Login failed';
-      return rejectWithValue(msg);
-    }
-  }
-);
+import { createSlice } from '@reduxjs/toolkit';
+import { rtkApi } from '../../services/rtkApi';
+import { STORAGE_KEYS } from '../../app/constants/index';
 
 const initialState = {
   user: null,
@@ -57,6 +20,9 @@ const userSlice = createSlice({
       state.user = null;
       state.error = null;
       state.loading = false;
+      // Mirror to localStorage for legacy Axios services
+      localStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.USER_DATA);
     },
     clearError(state) {
       state.error = null;
@@ -64,17 +30,26 @@ const userSlice = createSlice({
   },
   extraReducers: builder => {
     builder
-      .addCase(loginUser.pending, state => {
+      .addMatcher(rtkApi.endpoints.login.matchPending, state => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(loginUser.fulfilled, (state, action) => {
+      .addMatcher(rtkApi.endpoints.login.matchFulfilled, (state, action) => {
         state.user = action.payload;
         state.loading = false;
+        
+        // Mirror to localStorage for legacy Axios services
+        if (action.payload?.token) {
+          localStorage.setItem(STORAGE_KEYS.USER_TOKEN, action.payload.token);
+          localStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(action.payload));
+        } else if (Array.isArray(action.payload) && action.payload[0]?.token) {
+          localStorage.setItem(STORAGE_KEYS.USER_TOKEN, action.payload[0].token);
+          localStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(action.payload[0]));
+        }
       })
-      .addCase(loginUser.rejected, (state, action) => {
+      .addMatcher(rtkApi.endpoints.login.matchRejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || 'Login failed';
+        state.error = action.error?.message || 'Login failed';
       });
   }
 });

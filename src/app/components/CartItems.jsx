@@ -1,5 +1,5 @@
-// src/components/pos/CartItems.jsx
 import React from 'react';
+import { extractId } from '../../redux/slices/productsSlice-helpers';
 
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 
@@ -30,7 +30,7 @@ export default function CartItems({ cart, onRemoveItem }) {
           {cart.map(item => {
             const itemPrice = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
             const itemTotal = itemPrice * (item.quantity || 1);
-            const itemId = item.id || item._id;
+            const itemId = extractId(item);
             const cartKey = `${itemId}_${item.priceType}`;
             return (
               <tr key={cartKey}>

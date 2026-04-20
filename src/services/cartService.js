@@ -183,6 +183,8 @@ export async function validateAndAddToCart({
   const requestedQty = Number(qty) || 1;
   const totalRequiredQty = currentCartQty + requestedQty;
 
+  console.log('[cartService] validating', { productId, inventoryId, requestedQty, currentCartQty, totalRequiredQty });
+
   try {
     // Get inventory quantity (from cache or API)
     const availableQty = await getInventoryQuantity(inventoryId, forceRefresh);

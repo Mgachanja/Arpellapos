@@ -1,10 +1,10 @@
 // ProductsGrid.jsx
 import React, { useMemo } from 'react';
+import { extractId } from '../../redux/slices/productsSlice-helpers';
 import ProductCard from './ProductCard';
 
 function getPid(product) {
-  if (!product) return '';
-  return String(product.id ?? product._id ?? product.productId ?? product.sku ?? product.barcode ?? product.inventoryId ?? product.inventory_id ?? '');
+  return extractId(product);
 }
 
 
@@ -51,7 +51,7 @@ const ProductsGrid = ({
             const cartItems = cartByProduct[pid] || [];
 
             return (
-              <div key={pid || `${product.barcode || Math.random()}`} className="col-12 px-2">
+              <div key={extractId(product)} className="col-12 px-2">
                 <div style={{ position: 'relative' }}>
                   {/* pass showQuantityBadge=false to stop rendering the "(n)" cart counts on the Add buttons */}
                   <ProductCard product={product} cartItems={cartItems} onQuantityChange={onQuantityChange} showQuantityBadge={false} />
@@ -91,8 +91,7 @@ const ProductsGrid = ({
           </div>
         </div>
       </div>
-    );
-  }
+    );  }
 
   return (
     <div className={outerClass}>

@@ -1,5 +1,5 @@
-// src/app/components/ProductCard.jsx
 import React, { useState, useEffect } from 'react';
+import { extractId } from '../../redux/slices/productsSlice-helpers';
 
 const KSH = (amt) => `Ksh ${Number(amt || 0).toLocaleString()}`;
 
@@ -9,10 +9,11 @@ export function ProductCard({
   onQuantityChange = () => { }
 }) {
   const normalize = (p) => {
-    const id = p.id ?? p._id ?? p.productId ?? p.sku ?? null;
+    const id = extractId(p);
     return {
       ...p,
       id,
+      productId: id,
       name:
         p.name ??
         p.productName ??

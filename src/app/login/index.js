@@ -1,7 +1,8 @@
 // src/pages/Login.js
 import React, { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { loginUser, selectUser } from '../../redux/slices/userSlice';
+import { selectUser } from '../../redux/slices/userSlice';
+import { useLoginMutation } from '../../services/rtkApi';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Form, Button, Container, Row, Col, InputGroup, Spinner } from 'react-bootstrap';
@@ -15,8 +16,9 @@ export default function LoginPage() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const loading = useSelector(state => state.user.loading);
-  const error = useSelector(state => state.user.error);
+
+  const [loginApi, { isLoading: loading, error: apiError }] = useLoginMutation();
+  const error = apiError ? (apiError.data?.message || apiError.error || 'Login failed') : null;
 
   // If already logged in, redirect
   if (currentUser) {
@@ -42,12 +44,20 @@ export default function LoginPage() {
 
     try {
       const payload = { phoneNumber: phoneNumber.trim(), password };
-      const result = await dispatch(loginUser(payload)).unwrap();
-      toast.success(`Welcome ${result[0].firstName || result[0].userName || 'User'}`);
+      const result = await loginApi(payload).unwrap();
+      
+      // Additional check just like the old thunk
+      if (!result) throw new Error('Invalid server response');
+      if (Array.isArray(result) && result.length > 0 && String(result[0].role).toLowerCase() === 'customer') {
+        throw new Error('Access denied for role: Customer');
+      } else if (result && !Array.isArray(result) && String(result.role).toLowerCase() === 'customer') {
+        throw new Error('Access denied for role: Customer');
+      }
+
+      toast.success(`Welcome ${Array.isArray(result) ? (result[0].firstName || result[0].userName || 'User') : (result.firstName || result.userName || 'User')}`);
       navigate('/app/dashboard', { replace: true });
     } catch (err) {
-      // err is the rejected value from thunk
-      toast.error(err || 'Login failed');
+      toast.error(err?.data?.message || err?.message || 'Login failed');
     }
   };
 

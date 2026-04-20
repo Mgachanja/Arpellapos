@@ -15,80 +15,15 @@ import {
   Alert,
 } from "react-bootstrap";
 import { toast } from "react-toastify";
-import axios from "axios";
 
-// Import Redux hooks and actions
 import { useDispatch, useSelector } from "react-redux";
 import {
   selectAllProducts,
   selectProductsLoading,
   fetchAndIndexAllProducts,
 } from "../../redux/slices/productSlice";
+import { rtkApi } from "../../services/rtkApi";
 import indexedDb from "../../services/indexedDB";
-
-// Base URL from your helpers
-const BASE_URL = "https://api.arpellastore.com";
-
-// API Service Object
-const API = {
-  categories: {
-    list: () => axios.get(`${BASE_URL}/categories`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/categories`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/categories/${id}`, data).then(res => res.data),
-    remove: (id) => axios.delete(`${BASE_URL}/categories/${id}`).then(res => res.data),
-  },
-  subcategories: {
-    list: () => axios.get(`${BASE_URL}/subcategories`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/subcategories`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/subcategories/${id}`, data).then(res => res.data),
-    remove: (id) => axios.delete(`${BASE_URL}/subcategories/${id}`).then(res => res.data),
-  },
-  suppliers: {
-    list: () => axios.get(`${BASE_URL}/suppliers`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/suppliers`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/suppliers/${id}`, data).then(res => res.data),
-    remove: (id) => axios.delete(`${BASE_URL}/suppliers/${id}`).then(res => res.data),
-  },
-  inventories: {
-    list: () => axios.get(`${BASE_URL}/inventories`).then(res => res.data),
-    paged: (page, size) => axios.get(`${BASE_URL}/inventories?pageNumber=${page}&pageSize=${size}`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/inventory`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/inventory/${id}`, data).then(res => res.data),
-    remove: (id) => axios.delete(`${BASE_URL}/inventories/${id}`).then(res => res.data),
-    uploadExcel: (formData) => axios.post(`${BASE_URL}/inventories/upload-excel`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    }).then(res => res.data),
-  },
-  products: {
-    list: () => axios.get(`${BASE_URL}/products`).then(res => res.data),
-    paged: (page, size) => axios.get(`${BASE_URL}/pos-paged-products?pageNumber=${page}&pageSize=${size}`).then(res => res.data),
-    get: (id) => axios.get(`${BASE_URL}/products/${id}`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/product`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/product/${id}`, data).then(res => res.data),
-    remove: (id) => axios.delete(`${BASE_URL}/products/${id}`).then(res => res.data),
-    uploadImage: (formData) => axios.post(`${BASE_URL}/products/upload-image`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    }).then(res => res.data),
-    uploadExcel: (formData) => axios.post(`${BASE_URL}/products/upload-excel`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    }).then(res => res.data),
-  },
-  invoices: {
-    list: () => axios.get(`${BASE_URL}/invoices`).then(res => res.data),
-    paged: (page, size) => axios.get(`${BASE_URL}/invoices?pageNumber=${page}&pageSize=${size}`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/invoices`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/invoices/${id}`, data).then(res => res.data),
-    remove: (id) => axios.delete(`${BASE_URL}/invoices/${id}`).then(res => res.data),
-  },
-  restockLog: {
-    list: () => axios.get(`${BASE_URL}/restock-log`).then(res => res.data),
-    create: (data) => axios.post(`${BASE_URL}/restock-log`, data).then(res => res.data),
-  },
-  goodsInfo: {
-    create: (data) => axios.post(`${BASE_URL}/goods-info`, data).then(res => res.data),
-    update: (id, data) => axios.put(`${BASE_URL}/goods-info/${id}`, data).then(res => res.data),
-  }
-};
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -99,6 +34,61 @@ const StockManagement = () => {
   // const reduxLoading = useSelector(selectProductsLoading);
 
   const dispatch = useDispatch();
+
+  const API = {
+    categories: {
+      list: () => dispatch(rtkApi.endpoints.getCategories.initiate()).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createCategory.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateCategory.initiate({ id, ...data })).unwrap(),
+      remove: (id) => dispatch(rtkApi.endpoints.deleteCategory.initiate(id)).unwrap(),
+    },
+    subcategories: {
+      list: () => dispatch(rtkApi.endpoints.getSubcategories.initiate()).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createSubcategory.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateSubcategory.initiate({ id, ...data })).unwrap(),
+      remove: (id) => dispatch(rtkApi.endpoints.deleteSubcategory.initiate(id)).unwrap(),
+    },
+    suppliers: {
+      list: () => dispatch(rtkApi.endpoints.getSuppliers.initiate()).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createSupplier.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateSupplier.initiate({ id, ...data })).unwrap(),
+      remove: (id) => dispatch(rtkApi.endpoints.deleteSupplier.initiate(id)).unwrap(),
+    },
+    inventories: {
+      list: () => dispatch(rtkApi.endpoints.getPagedInventories.initiate({ pageNumber: 1, pageSize: 1000 })).unwrap(),
+      paged: (page, size) => dispatch(rtkApi.endpoints.getPagedInventories.initiate({ pageNumber: page, pageSize: size })).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createInventory.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateInventory.initiate({ id, ...data })).unwrap(),
+      remove: (id) => dispatch(rtkApi.endpoints.deleteInventory.initiate(id)).unwrap(),
+      uploadExcel: (formData) => dispatch(rtkApi.endpoints.uploadInventoryExcel.initiate(formData)).unwrap(),
+    },
+    products: {
+      list: () => dispatch(rtkApi.endpoints.getPagedProducts.initiate({ pageNumber: 1, pageSize: 1000 })).unwrap(),
+      paged: (page, size) => dispatch(rtkApi.endpoints.getPagedProducts.initiate({ pageNumber: page, pageSize: size })).unwrap(),
+      get: (id) => dispatch(rtkApi.endpoints.getProductById.initiate(id)).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createProduct.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateProduct.initiate({ id, ...data })).unwrap(),
+      remove: (id) => dispatch(rtkApi.endpoints.deleteProduct.initiate(id)).unwrap(),
+      uploadImage: (formData) => dispatch(rtkApi.endpoints.uploadProductImage.initiate(formData)).unwrap(),
+      uploadExcel: (formData) => dispatch(rtkApi.endpoints.uploadProductExcel.initiate(formData)).unwrap(),
+    },
+    invoices: {
+      list: () => dispatch(rtkApi.endpoints.getInvoices.initiate()).unwrap(),
+      paged: (page, size) => dispatch(rtkApi.endpoints.getPagedInvoices.initiate({ pageNumber: page, pageSize: size })).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createInvoice.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateInvoice.initiate({ id, ...data })).unwrap(),
+      remove: (id) => dispatch(rtkApi.endpoints.deleteInvoice.initiate(id)).unwrap(),
+    },
+    restockLog: {
+      list: () => dispatch(rtkApi.endpoints.getRestockLog.initiate()).unwrap(),
+      create: (data) => dispatch(rtkApi.endpoints.createRestockLog.initiate(data)).unwrap(),
+    },
+    goodsInfo: {
+      create: (data) => dispatch(rtkApi.endpoints.createGoodsInfo.initiate(data)).unwrap(),
+      update: (id, data) => dispatch(rtkApi.endpoints.updateGoodsInfo.initiate({ id, ...data })).unwrap(),
+    },
+  };
+
   // Modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showAddCompleteProductModal, setShowAddCompleteProductModal] = useState(false);

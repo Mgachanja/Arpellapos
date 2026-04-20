@@ -1,10 +1,13 @@
 // src/redux/slices/productSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import axios from 'axios';
-import indexedDb from '../../services/indexedDB'; // <-- match actual filename on disk
-import { baseUrl, addItemToCart as addItemToCartHelper } from './productsSlice-helpers';
+import { rtkApi } from '../../services/rtkApi';
+import indexedDb from '../../services/indexedDB';
+import { 
+  addItemToCart as addItemToCartHelper,
+  extractId
+} from './productsSlice-helpers';
 
-const getKey = (p) => String(p?.id || p?.productId || p?.inventoryId || '').trim();
+const getKey = (p) => extractId(p);
 
 function mergeProductsById(existing = [], incoming = []) {
   const map = {};
@@ -101,9 +104,10 @@ export const fetchSinglePage = createAsyncThunk(
   async ({ pageNumber, pageSize = 200 }, { dispatch, rejectWithValue }) => {
     try {
       dispatch(_setPagePending({ pageNumber }));
-      const url = `${baseUrl}/pos-paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
-      const res = await axios.get(url);
-      const data = res.data;
+      const res = await dispatch(
+        rtkApi.endpoints.getPagedProducts.initiate({ pageNumber, pageSize })
+      ).unwrap();
+      const data = res?.data ?? res;
       const items = Array.isArray(data) ? data : (data.items || []);
 
       // write raw page items into products store
@@ -141,7 +145,7 @@ export const fetchSinglePage = createAsyncThunk(
         hasMore: items.length === pageSize
       };
     } catch (err) {
-      const message = err?.response?.data || err.message || String(err);
+      const message = err?.data || err?.message || String(err);
       dispatch(_setPageRejected({ pageNumber, error: message }));
       return rejectWithValue({ pageNumber, error: message });
     }
@@ -294,22 +298,21 @@ const productsSlice = createSlice({
         console.warn('Cannot add item to cart: Invalid product');
         return;
       }
+      // addItemToCartHelper is now defensive and handles object-based cartItems
       state.cart = addItemToCartHelper(state.cart, product, quantity);
     },
 
     removeItemFromCart: (state, action) => {
-      const productId = action.payload;
-      state.cart = state.cart.filter(item => (getKey(item) !== String(productId)));
+      const identifier = action.payload;
+      // removeItemFromCart helper is now defensive and handles composite keys
+      const { removeItemFromCart: removeItemFromCartHelper } = require('./productsSlice-helpers');
+      state.cart = removeItemFromCartHelper(state.cart, identifier);
     },
 
     updateCartItemQuantity: (state, action) => {
       const { productId, quantity } = action.payload;
-      if (quantity <= 0) {
-        state.cart = state.cart.filter(item => getKey(item) !== String(productId));
-      } else {
-        const idx = state.cart.findIndex(item => getKey(item) === String(productId));
-        if (idx >= 0) state.cart[idx].quantity = quantity;
-      }
+      const { updateCartItemQuantity: updateCartItemQuantityHelper } = require('./productsSlice-helpers');
+      state.cart = updateCartItemQuantityHelper(state.cart, productId, quantity);
     },
 
     clearCart: (state) => {
@@ -414,13 +417,17 @@ export const selectSearchResults = (state) => state.products.searchResults;
 export const selectSearchLoading = (state) => state.products.searchLoading;
 export const selectSearchError = (state) => state.products.searchError;
 export const selectCart = (state) => state.products.cart;
-export const selectCartItemCount = (state) =>
-  state.products.cart.reduce((count, item) => count + (item.quantity || 1), 0);
-export const selectCartTotal = (state) =>
-  state.products.cart.reduce((total, item) => {
+export const selectCartItemCount = (state) => {
+  const items = Array.isArray(state.products.cart) ? state.products.cart : [];
+  return items.reduce((count, item) => count + (item.quantity || 1), 0);
+};
+export const selectCartTotal = (state) => {
+  const items = Array.isArray(state.products.cart) ? state.products.cart : [];
+  return items.reduce((total, item) => {
     const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
     return total + (price * (item.quantity || 1));
   }, 0);
+};
 
 export const selectFilters = (state) => state.products.filters;
 export const selectPagination = (state) => state.products.pagination;

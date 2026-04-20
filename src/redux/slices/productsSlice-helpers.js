@@ -1,49 +1,40 @@
 // src/redux/slices/productsSlice-helpers.js
-import axios from 'axios';
-
 // Base URL - adjust this to match your API endpoint
-export const baseUrl ="https://api.arpellastore.com";
+export const baseUrl = "https://api2.arpellastore.com";
 
-/**
- * API function to fetch products with pagination
- * @param {number} pageNumber - Page number to fetch
- * @param {number} pageSize - Number of items per page
- * @returns {Promise} - Axios response promise
- */
 export const fetchProductsApi = async (pageNumber = 1, pageSize = 200) => {
   const url = `${baseUrl}/pos-paged-products?pageNumber=${pageNumber}&pageSize=${pageSize}`;
-  return axios.get(url);
+  const res = await fetch(url);
+  return { data: await res.json() };
 };
 
-/**
- * API function to fetch all products without pagination
- * @returns {Promise} - Axios response promise
- */
 export const fetchAllProductsApi = async () => {
   const url = `${baseUrl}/products`;
-  return axios.get(url);
+  const res = await fetch(url);
+  return { data: await res.json() };
 };
 
-/**
- * API function to fetch a single product by ID
- * @param {string|number} productId - Product ID
- * @returns {Promise} - Axios response promise
- */
 export const fetchProductByIdApi = async (productId) => {
   const url = `${baseUrl}/products/${productId}`;
-  return axios.get(url);
+  const res = await fetch(url);
+  return { data: await res.json() };
+};
+
+export const searchProductsApi = async (searchTerm, pageNumber = 1, pageSize = 50) => {
+  const url = `${baseUrl}/products/search?q=${encodeURIComponent(searchTerm)}&pageNumber=${pageNumber}&pageSize=${pageSize}`;
+  const res = await fetch(url);
+  return { data: await res.json() };
 };
 
 /**
- * API function to search products
- * @param {string} searchTerm - Search term
- * @param {number} pageNumber - Page number
- * @param {number} pageSize - Items per page
- * @returns {Promise} - Axios response promise
+ * Centralized helper to extract a unique ID from a product or cart item.
+ * @param {Object} p 
+ * @returns {string}
  */
-export const searchProductsApi = async (searchTerm, pageNumber = 1, pageSize = 50) => {
-  const url = `${baseUrl}/products/search?q=${encodeURIComponent(searchTerm)}&pageNumber=${pageNumber}&pageSize=${pageSize}`;
-  return axios.get(url);
+export const extractId = (p) => {
+  if (!p) return '';
+  const val = p.id ?? p._id ?? p.productId ?? p.inventoryId ?? p.inventory_id ?? p.inventoryIdString ?? p.sku ?? p.barcode ?? '';
+  return String(val).trim();
 };
 
 /**
@@ -296,53 +287,60 @@ export const validateProduct = (product) => {
  */
 
 /**
+ * Normalize cart items to always be an array
+ * @param {any} items 
+ * @returns {Array}
+ */
+export const normalizeCartItems = (items) => {
+  if (Array.isArray(items)) return items;
+  if (!items) return [];
+  if (typeof items === 'object') {
+    if (Array.isArray(items.items)) return items.items;
+    if (Array.isArray(items.cartItems)) return items.cartItems;
+    if (Array.isArray(items.data)) return items.data;
+    // If it's an object of items mapped by some key
+    return Object.values(items).filter(it => it && typeof it === 'object');
+  }
+  return [];
+};
+
+/**
  * Add item to cart with quantity
- * @param {Array} cartItems - Current cart items
+ * @param {Array|Object} cartItems - Current cart items
  * @param {Object} product - Product to add
  * @param {number} quantity - Quantity to add (default: 1)
- * @returns {Array} - Updated cart items
+ * @returns {Array} - Updated cart items array
  */
-export const addItemToCart = (cartItems = [], product, quantity = 1) => {
+export const addItemToCart = (cartItemsInput, product, quantity = 1) => {
+  const cartItems = normalizeCartItems(cartItemsInput);
+
   if (!product || !product.id && !product._id) {
     console.warn('Cannot add item to cart: Invalid product');
     return cartItems;
   }
   
-  const productId = product.id || product._id;
+  const productId = extractId(product);
   const priceType = product.priceType || 'Retail'; // Default to Retail if not specified
   
-  // Check for existing item with same productId (regardless of priceType)
+  // Check for existing item with SAME productId AND SAME priceType
   const existingItemIndex = cartItems.findIndex(item => 
-    (item.id || item._id) === productId
+    (extractId(item) === productId) && (item.priceType === priceType)
   );
   
   if (existingItemIndex >= 0) {
-    // Product already exists in cart - check if it's the same price type
-    const existingItem = cartItems[existingItemIndex];
-    
-    if (existingItem.priceType === priceType) {
-      // Same price type - update quantity
-      const updatedItems = [...cartItems];
-      updatedItems[existingItemIndex] = {
-        ...updatedItems[existingItemIndex],
-        quantity: (updatedItems[existingItemIndex].quantity || 0) + quantity
-      };
-      return updatedItems;
-    } else {
-      // Different price type - replace the existing item with new price type
-      const updatedItems = [...cartItems];
-      updatedItems[existingItemIndex] = {
-        ...product,
-        quantity: quantity,
-        priceType: priceType,
-        addedAt: new Date().toISOString()
-      };
-      return updatedItems;
-    }
+    // Product with same price type exists in cart - update quantity
+    const updatedItems = [...cartItems];
+    updatedItems[existingItemIndex] = {
+      ...updatedItems[existingItemIndex],
+      quantity: (updatedItems[existingItemIndex].quantity || 0) + quantity
+    };
+    return updatedItems;
   } else {
-    // Add new item to cart
+    // Add new item to cart (different price types for same product are separate entries)
     const cartItem = {
       ...product,
+      id: productId, // ensure ID is consistent
+      productId: productId,
       quantity: quantity,
       priceType: priceType,
       addedAt: new Date().toISOString()
@@ -353,30 +351,67 @@ export const addItemToCart = (cartItems = [], product, quantity = 1) => {
 
 /**
  * Remove item from cart
- * @param {Array} cartItems - Current cart items
- * @param {string|number} productId - Product ID to remove
- * @returns {Array} - Updated cart items
+ * @param {Array|Object} cartItemsInput - Current cart items
+ * @param {string|number|Object} identifier - Product ID, composite key, or descriptor object
+ * @returns {Array} - Updated cart items array
  */
-export const removeItemFromCart = (cartItems = [], productId) => {
-  return cartItems.filter(item => 
-    (item.id || item._id) !== productId
-  );
+export const removeItemFromCart = (cartItemsInput, identifier) => {
+  const cartItems = normalizeCartItems(cartItemsInput);
+  
+  // Handle different identifier formats
+  let targetId = identifier;
+  let targetPriceType = null;
+
+  if (typeof identifier === 'object' && identifier !== null) {
+    targetId = extractId(identifier);
+    targetPriceType = identifier.priceType;
+  } else if (typeof identifier === 'string' && identifier.includes('_')) {
+    const parts = identifier.split('_');
+    targetPriceType = parts.pop();
+    targetId = parts.join('_');
+  }
+
+  return cartItems.filter(item => {
+    const itemId = extractId(item);
+    if (targetPriceType) {
+      return itemId !== String(targetId) || item.priceType !== targetPriceType;
+    }
+    return itemId !== String(targetId);
+  });
 };
 
 /**
  * Update item quantity in cart
- * @param {Array} cartItems - Current cart items
- * @param {string|number} productId - Product ID to update
+ * @param {Array|Object} cartItemsInput - Current cart items
+ * @param {string|number|Object} identifier - Product ID, composite key, or descriptor object
  * @param {number} newQuantity - New quantity
- * @returns {Array} - Updated cart items
+ * @returns {Array} - Updated cart items array
  */
-export const updateCartItemQuantity = (cartItems = [], productId, newQuantity) => {
+export const updateCartItemQuantity = (cartItemsInput, identifier, newQuantity) => {
+  const cartItems = normalizeCartItems(cartItemsInput);
+  
   if (newQuantity <= 0) {
-    return removeItemFromCart(cartItems, productId);
+    return removeItemFromCart(cartItems, identifier);
+  }
+
+  let targetId = identifier;
+  let targetPriceType = null;
+
+  if (typeof identifier === 'object' && identifier !== null) {
+    targetId = extractId(identifier);
+    targetPriceType = identifier.priceType;
+  } else if (typeof identifier === 'string' && identifier.includes('_')) {
+    const parts = identifier.split('_');
+    targetPriceType = parts.pop();
+    targetId = parts.join('_');
   }
   
   return cartItems.map(item => {
-    if ((item.id || item._id) === productId) {
+    const itemId = extractId(item);
+    const matchesId = itemId === String(targetId);
+    const matchesPriceType = !targetPriceType || item.priceType === targetPriceType;
+    
+    if (matchesId && matchesPriceType) {
       return { ...item, quantity: newQuantity };
     }
     return item;
@@ -497,6 +532,7 @@ export default {
   searchProductsApi,
   
   // Product utilities
+  extractId,
   normalizeProductsData,
   mergeProductsByName,
   mergeProductsById,
@@ -510,6 +546,7 @@ export default {
   validateProduct,
   
   // Cart utilities
+  normalizeCartItems,
   addItemToCart,
   removeItemFromCart,
   updateCartItemQuantity,

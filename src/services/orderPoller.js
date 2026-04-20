@@ -1,6 +1,5 @@
 // Robust order poller with named + default exports
 // No imports that escape src/.
-import axios from 'axios';
 
 let SERVER_BASE = '/api';
 try {
@@ -52,8 +51,9 @@ async function checkOnce() {
 
     while (true) {
       const url = `${SERVER_BASE}/paged-orders?pageNumber=${page}&pageSize=${PAGE_SIZE}`;
-      const res = await axios.get(url);
-      const items = normalizeItemsFromResp(res.data);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const items = normalizeItemsFromResp(await res.json());
 
       if (!items || items.length === 0) break;
 

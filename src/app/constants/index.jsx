@@ -1,7 +1,7 @@
 // src/constants/index.js
 
 // API Configuration
-export const baseUrl = "https://api.arpellastore.com";
+export const baseUrl = "https://api2.arpellastore.com";
 export const apiTimeout = 30000; // 30 seconds
 
 // App Configuration

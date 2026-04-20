@@ -483,7 +483,6 @@ export default function POS() {
             productId: pid,
             quantity: Number(ci.quantity) || 1,
             priceType: ci.priceType === 'Discounted' || ci.priceType === 'Wholesale' ? 'Discounted' : 'Retail',
-            snapshotCost: cost,
           };
         })
       );
@@ -539,16 +538,14 @@ export default function POS() {
         }
 
         const payload = {
-          order: {
-            userId: (user && (user.phone || user.userName)) || (pd.mpesaPhone || 'N/A'),
-            phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
-            orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
-            latitude: coords?.lat ?? 0,
-            longitude: coords?.lng ?? 0,
-            buyerPin: 'N/A',
-            orderSource: 'POS',
-            orderitems: resolvedOrderItems,
-          },
+          userId: (user && (user.phone || user.userName)) || (pd.mpesaPhone || 'N/A'),
+          phoneNumber: pt === 'mpesa' || pt === 'both' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
+          orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
+          latitude: coords?.lat ?? 0,
+          longitude: coords?.lng ?? 0,
+          buyerPin: 'N/A',
+          orderSource: 'POS',
+          orderitems: resolvedOrderItems,
         };
 
         const tx = pd?.mpesaCode || pd?.transactionId || overrides.transactionId;
@@ -557,7 +554,7 @@ export default function POS() {
         }
 
         if (pt === 'both') {
-          payload.order.total = Number(pd.cashAmount) || 0;
+          payload.total = Number(pd.cashAmount) || 0;
         }
 
         const cartSnapshot = JSON.parse(JSON.stringify(cart));
@@ -650,16 +647,14 @@ export default function POS() {
         }
 
         const payload = {
-          order: {
-            userId: (user && (user.phone || user.userName)) || (pd.mpesaPhone || 'N/A'),
-            phoneNumber: pt === 'mpesa' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
-            orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
-            latitude: coords?.lat ?? 0,
-            longitude: coords?.lng ?? 0,
-            buyerPin: 'N/A',
-            orderSource: 'POS',
-            orderitems: resolvedOrderItems,
-          },
+          userId: (user && (user.phone || user.userName)) || (pd.mpesaPhone || 'N/A'),
+          phoneNumber: pt === 'mpesa' ? (pd.mpesaPhone || '').trim() : (user && user.phone) || 'N/A',
+          orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
+          latitude: coords?.lat ?? 0,
+          longitude: coords?.lng ?? 0,
+          buyerPin: 'N/A',
+          orderSource: 'POS',
+          orderitems: resolvedOrderItems,
         };
 
         const tx = pd?.mpesaCode || pd?.transactionId || overrides.transactionId;

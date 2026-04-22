@@ -35,6 +35,8 @@ import {
   useLazyGetOrderByIdQuery,
   useCreateDeliveryTrackingMutation 
 } from '../../services/rtkApi';
+import indexedDb from '../../services/indexedDB';
+
 
 const OrderManagement = () => {
   const [orders, setOrders] = useState([]);
@@ -54,6 +56,9 @@ const OrderManagement = () => {
   // default filter now set to 'Pending'
   const [filterStatus, setFilterStatus] = useState('Pending');
   const [toast, setToast] = useState({ open: false, message: '', severity: 'success' });
+  
+  const [enrichedItems, setEnrichedItems] = useState([]);
+  const [enrichingItems, setEnrichingItems] = useState(false);
 
   const [searchOrderId, setSearchOrderId] = useState('');
   const [hasNewOrders, setHasNewOrders] = useState(false);
@@ -182,12 +187,53 @@ const OrderManagement = () => {
     setOpenModal(false);
     setSelectedOrder(null);
     setDeliveryGuy('');
+    setEnrichedItems([]);
   };
 
   const computeItems = (order) => {
     if (!order) return [];
-    return order.orderItems || order.orderitem || order.order_item || order.items || [];
+    return order.orderitems || order.orderItems || order.orderitem || order.order_item || order.items || order.cart || [];
   };
+
+  useEffect(() => {
+    if (selectedOrder) {
+      const rawItems = computeItems(selectedOrder);
+      const enrich = async () => {
+        setEnrichingItems(true);
+        try {
+          const newItems = await Promise.all(rawItems.map(async (item) => {
+            if (item.product && (item.product.name || item.product.title)) {
+              return item;
+            }
+            const pId = item.productId || item.product_id || item.product;
+            if (typeof pId === 'string' || typeof pId === 'number') {
+              const productData = await indexedDb.getProductById(pId);
+              if (productData) {
+                return {
+                  ...item,
+                  product: {
+                    ...(item.product || {}),
+                    name: productData.name || productData.productName || productData.title,
+                    price: productData.price ?? productData.salePrice ?? productData.sellingPrice
+                  }
+                };
+              }
+            }
+            return item;
+          }));
+          setEnrichedItems(newItems);
+        } catch (e) {
+          console.error('Error enriching items', e);
+          setEnrichedItems(rawItems);
+        } finally {
+          setEnrichingItems(false);
+        }
+      };
+      enrich();
+    } else {
+      setEnrichedItems([]);
+    }
+  }, [selectedOrder]);
 
   const computeOrderTotal = (order) => {
     if (!order) return 0;
@@ -502,34 +548,40 @@ const OrderManagement = () => {
           </Typography>
 
           <List dense>
-            {computeItems(selectedOrder).length === 0 && (
+            {enrichingItems ? (
+              <ListItem>
+                <CircularProgress size={20} sx={{ mr: 2 }} />
+                <ListItemText primary="Loading item details..." />
+              </ListItem>
+            ) : enrichedItems.length === 0 ? (
               <ListItem>
                 <ListItemText primary="No items found for this order." />
               </ListItem>
+            ) : (
+              enrichedItems.map((item, i) => {
+                const name = (item.product && (item.product.name || item.product.title)) || item.name || `Product ${item.productId || i + 1}`;
+                const unitPrice = Number((item.product && (item.product.price ?? item.product.unitPrice)) || item.price || 0);
+                const qty = Number(item.quantity || 0);
+                const subtotal = unitPrice * qty;
+                return (
+                  <React.Fragment key={i}>
+                    <ListItem alignItems="flex-start">
+                      <ListItemText
+                        primary={`${name}`}
+                        secondary={
+                          <>
+                            <Typography component="span" variant="body2">
+                              Unit: {unitPrice} — Qty: {qty} — Subtotal: {subtotal}
+                            </Typography>
+                          </>
+                        }
+                      />
+                    </ListItem>
+                    <Divider component="li" />
+                  </React.Fragment>
+                );
+              })
             )}
-            {computeItems(selectedOrder).map((item, i) => {
-              const name = (item.product && (item.product.name || item.product.title)) || item.name || `Product ${item.productId || i + 1}`;
-              const unitPrice = Number((item.product && (item.product.price ?? item.product.unitPrice)) || item.price || 0);
-              const qty = Number(item.quantity || 0);
-              const subtotal = unitPrice * qty;
-              return (
-                <React.Fragment key={i}>
-                  <ListItem alignItems="flex-start">
-                    <ListItemText
-                      primary={`${name}`}
-                      secondary={
-                        <>
-                          <Typography component="span" variant="body2">
-                            Unit: {unitPrice} — Qty: {qty} — Subtotal: {subtotal}
-                          </Typography>
-                        </>
-                      }
-                    />
-                  </ListItem>
-                  <Divider component="li" />
-                </React.Fragment>
-              );
-            })}
           </List>
 
           <Box sx={{ mt: 2, mb: 2 }}>

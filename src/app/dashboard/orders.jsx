@@ -175,16 +175,20 @@ export default function SalesDashboard() {
 
         // Build productInventoryKey: inventoryId -> productId (as in your original)
         // Also build nameMap: name -> productId (for fallback)
+        // And idToNameMap: productId -> name (for displaying items missing names)
         const productInventoryKey = new Map();
         const nameMap = new Map();
+        const idToNameMap = new Map();
         (productsRaw || []).forEach(p => {
           if (p.inventoryId && p.productId) {
             productInventoryKey.set(String(p.inventoryId), String(p.productId));
           }
           const name = (p.name || p.productName || p.title || '').trim().toLowerCase();
+          const displayName = (p.name || p.productName || p.title || '').trim();
           const pId = String(p.productId || p.id || '');
           if (name && pId) {
             nameMap.set(name, pId);
+            idToNameMap.set(pId, displayName);
           }
         });
 
@@ -222,10 +226,28 @@ export default function SalesDashboard() {
         }
 
         if (!isMountedRef.current) return;
-        setInventoryCostMap({ costMap, productInventoryKey, nameMap });
+        setInventoryCostMap({ costMap, productInventoryKey, nameMap, idToNameMap });
 
         // normalize orders to expected shape
-        const normalized = (ordersRaw || []).map(normalizeOrder).sort((a, b) => b.createdAt - a.createdAt);
+        const normalizedPromises = (ordersRaw || []).map(async (o) => {
+          const norm = normalizeOrder(o);
+          norm.items = await Promise.all(norm.items.map(async (it) => {
+            if ((!it.name || it.price == null) && (it.productId || it.id)) {
+              const pId = it.productId || it.id;
+              const prod = await indexedDb.getProductById(pId);
+              if (prod) {
+                return { 
+                  ...it, 
+                  name: it.name || prod.name || prod.productName || prod.title, 
+                  price: it.price ?? prod.price ?? prod.salePrice ?? prod.sellingPrice 
+                };
+              }
+            }
+            return it;
+          }));
+          return norm;
+        });
+        const normalized = (await Promise.all(normalizedPromises)).sort((a, b) => b.createdAt - a.createdAt);
         setOrders(normalized);
 
         const saved = num(localStorage.getItem(`capital:${today}`));
@@ -283,8 +305,8 @@ export default function SalesDashboard() {
                   }
                 }
               } catch (e) { }
-              // productInventoryKey preserved from prev
-              if (isMountedRef.current) setInventoryCostMap({ costMap: newCostMap, productInventoryKey: prev.productInventoryKey || new Map() });
+              // productInventoryKey and maps preserved from prev
+              if (isMountedRef.current) setInventoryCostMap({ costMap: newCostMap, productInventoryKey: prev.productInventoryKey || new Map(), nameMap: prev.nameMap, idToNameMap: prev.idToNameMap });
             } catch (e) {
               // swallow
             }
@@ -794,7 +816,7 @@ export default function SalesDashboard() {
                       const profit = (sell - cost) * qty;
                       return (
                         <tr key={idx}>
-                          <td className="item-name">{it.name ?? it.title ?? 'Item'}</td>
+                          <td className="item-name">{it.name ?? it.title ?? inventoryCostMap.idToNameMap?.get(String(it.productId || it.id)) ?? `Product ${it.productId || ''}`}</td>
                           <td>
                             <span className={`badge small ${String(it.priceType || 'Retail').toLowerCase() === 'retail' ? 'dark-brown' : 'orange'}`}>
                               {it.priceType || 'Retail'}

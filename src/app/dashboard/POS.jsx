@@ -31,6 +31,7 @@ import ProductsGrid from '../components/ProductsGrid';
 import CartItems from '../components/CartItems';
 import PaymentForm from '../components/PaymentForm';
 import HeldSales from '../components/HeldSales';
+import MpesaTransactions from '../components/MpesaTransactions';
 import { mapCartToReceiptItems } from '../../utils/orderUtils';
 
 const CTA = { background: '#FF7F50', color: '#fff' };
@@ -70,6 +71,7 @@ export default function POS() {
 
   const [showHeldSales, setShowHeldSales] = useState(false);
   const [heldSales, setHeldSales] = useState([]);
+  const [showMpesaTx, setShowMpesaTx] = useState(false);
 
   const [scannedProduct, setScannedProduct] = useState(null);
 
@@ -604,6 +606,53 @@ export default function POS() {
       }
     },
     [paymentType, paymentData, coords, cart, user, calculateCartTotal, handleOrderCompletion, buildOrderItemsResolved]
+  );
+
+  const handleC2BTransaction = useCallback(
+    async (tx) => {
+      if (!cart || cart.length === 0) {
+        toast.error('Cart is empty – add items before applying an M-Pesa transaction');
+        throw new Error('empty cart');
+      }
+
+      try {
+        setProcessingOrder(true);
+        toast.info('Submitting C2B order...');
+
+        const resolvedOrderItems = await buildOrderItemsResolved(cart);
+        if (!Array.isArray(resolvedOrderItems) || resolvedOrderItems.length === 0) {
+          toast.error('No valid order items to submit');
+          setProcessingOrder(false);
+          throw new Error('no valid items');
+        }
+
+        const txId = tx.transactionId || tx.TransID || tx.transaction_id || '';
+
+        const payload = {
+          userId: (user && (user.phone || user.userName)) || 'N/A',
+          phoneNumber: (user && user.phone) || 'N/A',
+          orderPaymentType: 'c2b',
+          transactionId: txId,
+          latitude: coords?.lat ?? 0,
+          longitude: coords?.lng ?? 0,
+          buyerPin: 'N/A',
+          orderSource: 'POS',
+          orderitems: resolvedOrderItems,
+        };
+
+        const cartSnapshot = JSON.parse(JSON.stringify(cart));
+
+        const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
+        await handleOrderCompletion(res.data, cartSnapshot, 'mpesa', {});
+      } catch (err) {
+        const msg = err?.response?.data?.message || err?.message || 'C2B order failed';
+        console.error('[POS][handleC2BTransaction] error', err);
+        toast.error(msg);
+        setProcessingOrder(false);
+        throw err;
+      }
+    },
+    [cart, user, coords, buildOrderItemsResolved, handleOrderCompletion]
   );
 
   const completeCheckout = useCallback(
@@ -1496,6 +1545,16 @@ export default function POS() {
 
               <div className="d-flex gap-2">
                 <button
+                  className="btn btn-outline-success btn-sm"
+                  onClick={() => setShowMpesaTx(true)}
+                  title="View M-Pesa transactions"
+                  aria-label="M-Pesa transactions"
+                >
+                  <i className="fas fa-mobile-alt me-1" />
+                  M-Pesa Txns
+                </button>
+
+                <button
                   className="btn btn-outline-warning btn-sm"
                   onClick={() => setShowHeldSales(true)}
                   title="View held sales"
@@ -1722,6 +1781,12 @@ export default function POS() {
           }
         }}
         onCheckoutSale={(saleId, opts) => handleCheckoutSale(saleId, opts)}
+      />
+
+      <MpesaTransactions
+        show={showMpesaTx}
+        onHide={() => setShowMpesaTx(false)}
+        onApply={handleC2BTransaction}
       />
 
       <style>{`

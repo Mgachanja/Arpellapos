@@ -147,6 +147,7 @@ const StockManagement = () => {
   const [restockProductPage, setRestockProductPage] = useState(1);
   const [hasMoreRestockProducts, setHasMoreRestockProducts] = useState(true);
   const [restockSearch, setRestockSearch] = useState("");
+  const [activeRestockIndex, setActiveRestockIndex] = useState(null);
   const [restockSearchResults, setRestockSearchResults] = useState([]);
   const [allRestockProducts, setAllRestockProducts] = useState([]);
   const restockSearchTimeout = useRef(null);
@@ -553,23 +554,22 @@ const StockManagement = () => {
     restockSearchTimeout.current = setTimeout(() => {
       const q = (restockSearch || "").trim().toLowerCase();
       if (!q) {
-        setRestockSearchResults(allRestockProducts.slice(0, 50));
+        setRestockSearchResults([]);
       } else {
         setRestockSearchResults(
-          allRestockProducts
-            .filter((inv) => {
-              const pid = (inv.productId || "").toString().toLowerCase();
-              const name = ((inv.productName || inv.name) || "").toString().toLowerCase();
-              return pid.includes(q) || name.includes(q);
+          allProducts
+            .filter((prod) => {
+              const name = (prod.name || "").toString().toLowerCase();
+              return name.includes(q);
             })
-            .slice(0, 200)
+            .slice(0, 50)
         );
       }
-    }, 200);
+    }, 100);
     return () => {
       if (restockSearchTimeout.current) clearTimeout(restockSearchTimeout.current);
     };
-  }, [restockSearch, allRestockProducts]);
+  }, [restockSearch, allProducts]);
 
   const pickRestockProduct = (entryIndex, productId) => {
     updateRestockEntry(entryIndex, "productId", productId);
@@ -3014,77 +3014,46 @@ const StockManagement = () => {
                 }}
               >
                 <Row className="mb-2">
-                  <Col md={6}>
+                  <Col md={6} style={{ position: "relative" }}>
                     <Form.Label>Find Product (Search)</Form.Label>
                     <Form.Control
-                      placeholder="Search SKU or name..."
+                      placeholder="Search product name..."
                       value={entry.productIdName ?? ""}
+                      onFocus={() => setActiveRestockIndex(index)}
                       onChange={(e) => {
                         updateRestockEntry(index, "productIdName", e.target.value);
                         setRestockSearch(e.target.value);
+                        setActiveRestockIndex(index);
                       }}
                       disabled={isLoading}
                     />
-                    <div className="restock-search-results mt-2" style={{ maxHeight: 200, overflowY: "auto" }}>
-                      {restockSearchResults.length === 0 ? (
-                        <div style={{ padding: 8 }} className="text-muted small">
-                          No results on cached pages. Try 'Load more' or change page.
-                        </div>
-                      ) : restockSearchResults.map((inv) => (
-                        <div
-                          key={inv.id ?? inv.productId ?? inv.inventoryId ?? inv._id}
-                          className="restock-search-item p-2"
-                          style={{ cursor: "pointer", borderBottom: "1px solid #eee" }}
-                          onClick={() => {
-                            pickRestockProduct(index, inv.id ?? inv.productId ?? inv.inventoryId ?? inv._id);
-                            updateRestockEntry(index, "productIdName", (inv.productName ?? inv.name ?? inv.productName ?? inv.id ?? inv.productId ?? inv.inventoryId));
-                            updateRestockEntry(index, "productId", inv.productId ?? inv.inventoryId ?? inv.id ?? inv._id);
-                          }}
-                          title={`Pick ${inv.productId ?? inv.inventoryId ?? inv.id}`}
-                        >
-                          <div style={{ fontSize: 13 }}>{inv.productName ?? inv.name ?? "(no name)"}</div>
-                          <div style={{ fontSize: 11, color: "#6c757d" }}>{inv.productId ?? inv.inventoryId ?? inv.id}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="d-flex gap-2 mt-2">
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          if (restockProductPage > 1) {
-                            const prev = restockProductPage - 1;
-                            setRestockProductPage(prev);
-                            fetchRestockProducts(prev, false);
-                          } else {
-                            showToastMessage("Already at first cached page", "info");
-                          }
-                        }}
-                        disabled={isLoading}
-                      >
-                        Prev Page
-                      </Button>
-
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          if (hasMoreRestockProducts) {
-                            loadMoreRestockProducts();
-                          } else {
-                            showToastMessage("No more pages to load", "info");
-                          }
-                        }}
-                        disabled={isLoading}
-                      >
-                        Load More
-                      </Button>
-
-                      <div className="ms-auto text-muted small align-self-center">
-                        Cached pages: {Math.max(1, Math.ceil((allRestockProducts || []).length / pageSize))}
+                    {activeRestockIndex === index && restockSearch && (
+                      <div className="restock-search-results mt-2" style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #ddd", borderRadius: 4, position: "absolute", zIndex: 10, backgroundColor: "white", width: "95%", top: "60px" }}>
+                        {restockSearchResults.length === 0 ? (
+                          <div style={{ padding: 8 }} className="text-muted small">
+                            No products found in local database.
+                          </div>
+                        ) : restockSearchResults.map((prod) => (
+                          <div
+                            key={prod.id ?? prod.inventoryId ?? prod._id}
+                            className="restock-search-item p-2"
+                            style={{ cursor: "pointer", borderBottom: "1px solid #eee" }}
+                            onClick={() => {
+                              updateRestockEntry(index, "productIdName", prod.name ?? "(no name)");
+                              updateRestockEntry(index, "productId", prod.id ?? prod.inventoryId ?? prod._id);
+                              setRestockSearch("");
+                              setActiveRestockIndex(null);
+                            }}
+                            title={`Pick ${prod.id}`}
+                          >
+                            <div style={{ fontSize: 13 }}>{prod.name ?? "(no name)"}</div>
+                            <div style={{ fontSize: 11, color: "#6c757d" }}>{prod.id ?? prod.inventoryId}</div>
+                          </div>
+                        ))}
                       </div>
-                    </div>
+                    )}
 
-                    <Form.Text className="text-muted">Click an item to populate product field below.</Form.Text>
+                    <Form.Text className="text-muted mt-1 d-block">Click an item to populate product field below.</Form.Text>
                   </Col>
 
                   <Col md={3}>

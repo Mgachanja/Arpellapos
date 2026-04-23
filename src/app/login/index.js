@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 import { Form, Button, Container, Row, Col, InputGroup, Spinner } from 'react-bootstrap';
 import { AiOutlineEye, AiOutlineEyeInvisible, AiOutlinePhone, AiOutlineLock, AiOutlineShop } from 'react-icons/ai';
 import logo from '../../assets/logo.jpeg';
+import ForgotPasswordModal from './ForgotPasswordModal';
 
 export default function LoginPage() {
   const dispatch = useDispatch();
@@ -16,6 +17,7 @@ export default function LoginPage() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showForgotModal, setShowForgotModal] = useState(false);
 
   const [loginApi, { isLoading: loading, error: apiError }] = useLoginMutation();
   const error = apiError ? (apiError.data?.message || apiError.error || 'Login failed') : null;
@@ -284,6 +286,12 @@ export default function LoginPage() {
                 </InputGroup>
               </Form.Group>
 
+              <div className="text-end mb-3">
+                <Button variant="link" className="text-decoration-none p-0" onClick={() => setShowForgotModal(true)}>
+                  Forgot password?
+                </Button>
+              </div>
+
               <div className="d-grid mb-3">
                 <Button 
                   type="submit" 
@@ -389,6 +397,8 @@ export default function LoginPage() {
           </div>
         </div>
       )}
+      
+      <ForgotPasswordModal show={showForgotModal} onHide={() => setShowForgotModal(false)} />
     </Container>
   );
 }

@@ -38,6 +38,19 @@ export const rtkApi = createApi({
         body: { userName: phoneNumber, passwordHash: password },
       }),
     }),
+    sendOtp: build.mutation({
+      query: (phoneNumber) => ({
+        url: `/send-otp?username=${phoneNumber}`,
+        method: 'GET',
+      }),
+    }),
+    resetPassword: build.mutation({
+      query: ({ otp, userId, newpassword, confirmPassword }) => ({
+        url: `/reset-password?otp=${otp}`,
+        method: 'POST',
+        body: { userId, newpassword, confirmPassword },
+      }),
+    }),
     getStaffs: build.query({
       query: () => '/special-users',
       providesTags: ['Staff'],
@@ -217,6 +230,8 @@ export const rtkApi = createApi({
 
 export const {
   useLoginMutation,
+  useSendOtpMutation,
+  useResetPasswordMutation,
   useGetStaffsQuery,
   useLazyGetStaffsQuery,
   useGetUsersQuery,

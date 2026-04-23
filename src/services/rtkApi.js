@@ -183,7 +183,7 @@ export const rtkApi = createApi({
       providesTags: ['Invoice'],
     }),
     createInvoice: build.mutation({
-      query: (data) => ({ url: '/invoices', method: 'POST', body: data }),
+      query: (data) => ({ url: '/invoice', method: 'POST', body: data }),
       invalidatesTags: ['Invoice'],
     }),
     updateInvoice: build.mutation({

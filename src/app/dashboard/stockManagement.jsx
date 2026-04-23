@@ -1198,7 +1198,7 @@ const StockManagement = () => {
         resetForms();
       } catch (error) {
         console.error("Update failed", error);
-        showToastMessage("Failed to update product: " + (error?.response?.data?.message || error?.message || "Error"), "danger");
+        showToastMessage("Failed to update product: " + (error?.data?.message || error?.response?.data?.message || error?.message || "Error"), "danger");
       } finally {
         setIsSubmitting(false);
         setIsLoading(false);
@@ -1279,7 +1279,7 @@ const StockManagement = () => {
 
     } catch (error) {
       console.error("Error in complete product creation:", error);
-      const backendMsg = error?.response?.data?.message || error?.message || JSON.stringify(error);
+      const backendMsg = error?.data?.message || error?.response?.data?.message || error?.message || JSON.stringify(error);
 
       if (productCreated && inventoryCreated) {
         showToastMessage(`Tax data creation failed: ${backendMsg}. Product and inventory were created successfully.`, "warning");
@@ -1756,12 +1756,12 @@ const StockManagement = () => {
             <Modal.Title>{isEditingCompleteProduct ? "Edit Complete Product" : "Add Complete Product"} (Inventory + Product + Tax)</Modal.Title>
           </Modal.Header>
           <Modal.Body style={{ maxHeight: "75vh", overflowY: "auto" }}>
-            {isSubmitting && Object.keys(formErrors).length > 0 && (
+            {Object.values(formErrors).some(msg => msg) && (
               <Alert variant="danger">
                 <strong>Please fix the following errors:</strong>
                 <ul className="mb-0 mt-2">
                   {Object.entries(formErrors).map(([key, msg]) => (
-                    <li key={key}>{msg}</li>
+                    msg ? <li key={key}>{msg}</li> : null
                   ))}
                 </ul>
               </Alert>

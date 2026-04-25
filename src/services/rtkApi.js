@@ -35,7 +35,7 @@ export const rtkApi = createApi({
       query: ({ phoneNumber, password }) => ({
         url: '/login?platform=pos',
         method: 'POST',
-        body: { userName: phoneNumber, passwordHash: password },
+        body: { userName: phoneNumber, password: password },
       }),
     }),
     sendOtp: build.mutation({

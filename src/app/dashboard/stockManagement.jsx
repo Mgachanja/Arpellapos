@@ -376,7 +376,7 @@ const StockManagement = () => {
         return String(pName).toLowerCase().includes(term) || String(pId).toLowerCase().includes(term);
       });
     }
-    
+
     // Calculate bounds keeping current page
     let startInv = (currentInventoryPage - 1) * pageSize;
     if (startInv >= filteredInvs.length && filteredInvs.length > 0) {
@@ -3039,8 +3039,12 @@ const StockManagement = () => {
                             className="restock-search-item p-2"
                             style={{ cursor: "pointer", borderBottom: "1px solid #eee" }}
                             onClick={() => {
+                              const matchedInv = allInventories.find(
+                                (inv) => String(inv.productId || inv.inventoryId) === String(prod.inventoryId || prod.id)
+                              );
+                              const sku = matchedInv?.productId ?? prod.inventoryId ?? prod.id ?? prod._id;
                               updateRestockEntry(index, "productIdName", prod.name ?? "(no name)");
-                              updateRestockEntry(index, "productId", prod.id ?? prod.inventoryId ?? prod._id);
+                              updateRestockEntry(index, "productId", sku);
                               setRestockSearch("");
                               setActiveRestockIndex(null);
                             }}

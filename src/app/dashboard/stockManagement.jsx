@@ -933,6 +933,8 @@ const StockManagement = () => {
     try {
       setIsLoading(true);
       for (const entry of restockEntries) {
+        if (!entry.productId) continue;
+
         const payload = {
           invoiceNumber: restockMeta.invoiceNumber,
           supplierId: restockMeta.supplierId,
@@ -941,11 +943,48 @@ const StockManagement = () => {
           purchasePrice: entry.purchasePrice,
         };
         await API.restockLog.create(payload);
+
+        // Update the buying price of the unit item on backend and indexedDB
+        const matchedInv = allInventories.find(i => String(i.productId || i.inventoryId) === String(entry.productId));
+        const newQty = (matchedInv ? Number(matchedInv.stockQuantity || 0) : 0) + Number(entry.restockQuantity || 0);
+
+        const invUpdatePayload = {
+          productId: entry.productId,
+          stockQuantity: newQty,
+          stockPrice: Number(entry.purchasePrice),
+          stockThreshold: matchedInv?.stockThreshold ?? 0,
+          invoiceNumber: restockMeta.invoiceNumber,
+          supplierId: restockMeta.supplierId,
+        };
+
+        // 1. Update backend inventory price
+        try {
+          if (typeof API.inventories?.update === "function") {
+            await API.inventories.update(entry.productId, invUpdatePayload);
+          }
+        } catch (err) {
+          console.error("Backend inventory price update failed:", err);
+        }
+
+        // 2. Update local IndexedDB
+        try {
+          await indexedDb.putInventories([{
+            ...invUpdatePayload,
+            inventoryId: entry.productId,
+            updatedAt: Date.now()
+          }]);
+        } catch (err) {
+          console.error("IndexedDB price update failed:", err);
+        }
       }
-      toast.success("All restock entries added.");
+
+      toast.success("All restock entries added and prices updated.");
       setShowRestockModal(false);
       resetRestockForm();
-      fetchStocks(currentInventoryPage, true);
+      
+      // Refresh local data to show updated prices/quantities
+      await loadDataFromIDB();
+      fetchStocks(currentInventoryPage);
     } catch (error) {
       console.error(error);
       toast.error("An error occurred while saving restocks.");

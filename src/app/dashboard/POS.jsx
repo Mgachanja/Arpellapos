@@ -1500,6 +1500,7 @@ export default function POS() {
                 cart={cart}
                 onQuantityChange={handleQuantityChange}
                 loadingProducts={loadingProducts}
+                isFetching={loading}
               />
             </div>
 

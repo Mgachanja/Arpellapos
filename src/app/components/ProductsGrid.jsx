@@ -17,7 +17,8 @@ const ProductsGrid = ({
   isLikelyBarcode,
   cart,
   onQuantityChange,
-  loadingProducts
+  loadingProducts,
+  isFetching
 }) => {
   const safeCart = Array.isArray(cart) ? cart : [];
 
@@ -33,6 +34,24 @@ const ProductsGrid = ({
 
   // outer wrapper provides horizontal breathing room so cards don't hug the viewport edge
   const outerClass = 'w-100 px-3';
+
+  if (isFetching) {
+    return (
+      <div className={outerClass}>
+        <div className="row">
+          <div className="col-12 px-2">
+            <div className="text-center py-5 d-flex flex-column align-items-center justify-content-center">
+              <div className="spinner-border text-primary" role="status" style={{ width: '3rem', height: '3rem' }}>
+                <span className="visually-hidden">Loading...</span>
+              </div>
+              <h5 className="text-muted mt-3 fw-bold">Loading products...</h5>
+              <p className="text-muted mb-0">Please wait while we fetch the inventory</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (Array.isArray(filteredProducts) && filteredProducts.length > 0) {
     return (

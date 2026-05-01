@@ -61,6 +61,14 @@ export const rtkApi = createApi({
         return Array.isArray(possible) ? possible : [];
       }
     }),
+    createStaff: build.mutation({
+      query: (data) => ({ url: '/users', method: 'POST', body: data }), // Assuming standard /users or /register endpoint
+      invalidatesTags: ['Staff', 'User'],
+    }),
+    deleteStaff: build.mutation({
+      query: (phoneNumber) => ({ url: `/users/${phoneNumber}`, method: 'DELETE' }), // Using phoneNumber as ID based on user snippet
+      invalidatesTags: ['Staff', 'User'],
+    }),
     getUsers: build.query({
       query: () => '/users',
       providesTags: ['User'],
@@ -234,6 +242,8 @@ export const {
   useResetPasswordMutation,
   useGetStaffsQuery,
   useLazyGetStaffsQuery,
+  useCreateStaffMutation,
+  useDeleteStaffMutation,
   useGetUsersQuery,
   useGetPendingOrdersQuery,
   useLazyGetPendingOrdersQuery,

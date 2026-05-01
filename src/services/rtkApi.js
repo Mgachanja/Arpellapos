@@ -62,11 +62,15 @@ export const rtkApi = createApi({
       }
     }),
     createStaff: build.mutation({
-      query: (data) => ({ url: '/users', method: 'POST', body: data }), // Assuming standard /users or /register endpoint
+      query: ({ role, ...userFields }) => ({
+        url: '/control',
+        method: 'POST',
+        body: { user: userFields, role },
+      }),
       invalidatesTags: ['Staff', 'User'],
     }),
     deleteStaff: build.mutation({
-      query: (phoneNumber) => ({ url: `/users/${phoneNumber}`, method: 'DELETE' }), // Using phoneNumber as ID based on user snippet
+      query: (phoneNumber) => ({ url: `/user/${phoneNumber}`, method: 'DELETE' }), // Using phoneNumber as ID based on user snippet
       invalidatesTags: ['Staff', 'User'],
     }),
     getUsers: build.query({
@@ -139,7 +143,7 @@ export const rtkApi = createApi({
       providesTags: ['Supplier'],
     }),
     createSupplier: build.mutation({
-      query: (data) => ({ url: '/suppliers', method: 'POST', body: data }),
+      query: (data) => ({ url: '/supplier', method: 'POST', body: data }),
       invalidatesTags: ['Supplier'],
     }),
     updateSupplier: build.mutation({

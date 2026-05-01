@@ -129,18 +129,18 @@ const Staff = () => {
                   label="First Name"
                   variant="outlined"
                   fullWidth
-                  {...register("FirstName", { required: "First name is required" })}
-                  error={!!errors.FirstName}
-                  helperText={errors.FirstName?.message}
+                  {...register("firstName", { required: "First name is required" })}
+                  error={!!errors.firstName}
+                  helperText={errors.firstName?.message}
                 />
                 
                 <TextField
                   label="Last Name"
                   variant="outlined"
                   fullWidth
-                  {...register("LastName", { required: "Last name is required" })}
-                  error={!!errors.LastName}
-                  helperText={errors.LastName?.message}
+                  {...register("lastName", { required: "Last name is required" })}
+                  error={!!errors.lastName}
+                  helperText={errors.lastName?.message}
                 />
 
                 <Select
@@ -173,12 +173,12 @@ const Staff = () => {
                 />
 
                 <TextField
-                  label="Phone Number"
+                  label="Username"
                   variant="outlined"
                   fullWidth
-                  {...register("phoneNumber", { required: "Phone Number is required" })}
-                  error={!!errors.phoneNumber}
-                  helperText={errors.phoneNumber?.message}
+                  {...register("userName", { required: "Username is required" })}
+                  error={!!errors.userName}
+                  helperText={errors.userName?.message}
                 />
                 
                 <TextField

@@ -14,6 +14,8 @@ const Reports = lazy(() => import('./app/dashboard/orders.jsx'));
 const LoginPage = lazy(() => import('./app/login'));
 const StockManagement = lazy(() => import('./app/dashboard/stockManagement'));
 const ThermalPrinterSettings = lazy(() => import('./app/thermalPrinter/index.jsx'));
+const Staff = lazy(() => import('./app/dashboard/staff.jsx'));
+const Settings = lazy(() => import('./app/dashboard/settings.jsx'));
 
 // Electron detection
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
@@ -200,6 +202,8 @@ function InnerRoutes({ authed }) {
             <Route path="orders" element={<Orders />} />
             <Route path="reports" element={<Reports />} />
             <Route path="stockManagement" element={<StockManagement />} />
+            <Route path="staff" element={<Staff />} />
+            <Route path="settings" element={<Settings />} />
             <Route path="thermal-settings" element={<ThermalPrinterSettings />} />
             <Route path="*" element={<RedirectWithTransition to="pos" replace />} />
           </Route>

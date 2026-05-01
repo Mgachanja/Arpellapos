@@ -9,7 +9,9 @@ import {
   MdPerson,
   MdMenu,
   MdPrint,
-  MdInventory
+  MdInventory,
+  MdPeople,
+  MdSettings
 } from 'react-icons/md';
 import logo from '../../assets/logo.jpeg';
 import { useSelector } from 'react-redux';
@@ -25,6 +27,11 @@ const COLORS = {
 export default function DashboardLayout() {
   const user = useSelector(selectUser);
   const location = useLocation();
+  const role = user?.roles?.[0] || user?.role || 'Customer';
+
+  const isAdmin = role === 'Admin';
+  const isOrderManager = role === 'Order_Manager' || isAdmin;
+  const isAccountant = role === 'Accountant' || isAdmin;
 
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 992);
   const [collapsed, setCollapsed] = useState(true);
@@ -84,11 +91,13 @@ export default function DashboardLayout() {
         </div>
 
         {/* NAV */}
-        <nav className="d-flex flex-column p-2 gap-2">
+        <nav className="d-flex flex-column p-2 gap-2" style={{ overflowY: 'auto', overflowX: 'hidden' }}>
           <NavItem to="/app/dashboard/pos" icon={MdPointOfSale} label="POS" collapsed={collapsed} />
           <NavItem to="/app/dashboard/orders" icon={MdListAlt} label="Orders" collapsed={collapsed} />
           <NavItem to="/app/dashboard/reports" icon={MdBarChart} label="Reports" collapsed={collapsed} />
           <NavItem to="/app/dashboard/stockManagement" icon={MdInventory} label="Stock Management" collapsed={collapsed} />
+          <NavItem to="/app/dashboard/staff" icon={MdPeople} label="Staff" collapsed={collapsed} />
+          <NavItem to="/app/dashboard/settings" icon={MdSettings} label="Settings" collapsed={collapsed} />
           <NavItem to="/app/dashboard/thermal-settings" icon={MdPrint} label="Thermal" collapsed={collapsed} />
         </nav>
 

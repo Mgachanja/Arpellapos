@@ -1,6 +1,8 @@
 // src/services/api.js
 import axios from 'axios';
 import { baseUrl, apiTimeout, STORAGE_KEYS } from '../app/constants/index';
+import { store } from '../redux/store/index';
+import { logout } from '../redux/slices/userSlice';
 
 // Create axios instance with default config
 const apiClient = axios.create({
@@ -28,10 +30,16 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      // Clear legacy storage
       localStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
       localStorage.removeItem(STORAGE_KEYS.USER_DATA);
-      // optional: keep user on same page or redirect
-      window.location.href = '/login';
+      
+      // Dispatch logout to update app state and trigger safe redirect via HashRouter
+      try {
+        store.dispatch(logout());
+      } catch (err) {
+        console.error('Failed to dispatch logout:', err);
+      }
     }
     return Promise.reject(error);
   }

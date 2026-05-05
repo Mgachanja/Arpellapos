@@ -17,9 +17,26 @@ const ThermalPrinterSettings = lazy(() => import('./app/thermalPrinter/index.jsx
 const Staff = lazy(() => import('./app/dashboard/staff.jsx'));
 const Settings = lazy(() => import('./app/dashboard/settings.jsx'));
 
-// Electron detection
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
+
+// Production Diagnostic Logging
+if (process.env.NODE_ENV === 'production') {
+  console.log('[App] Production mode initialized');
+  console.log('[App] Protocol:', window.location.protocol);
+  console.log('[App] Path:', window.location.pathname);
+  console.log('[App] Hash:', window.location.hash);
+  
+  window.addEventListener('error', (event) => {
+    console.error('[App] Global error:', event.error);
+    if (ipcRenderer) ipcRenderer.send('log', `Global error: ${event.error?.message}`);
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    console.error('[App] Unhandled promise rejection:', event.reason);
+    if (ipcRenderer) ipcRenderer.send('log', `Promise rejection: ${event.reason}`);
+  });
+}
 
 /* =========================
    Error Boundary Fallback

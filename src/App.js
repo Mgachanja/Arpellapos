@@ -16,6 +16,7 @@ const StockManagement = lazy(() => import('./app/dashboard/stockManagement'));
 const ThermalPrinterSettings = lazy(() => import('./app/thermalPrinter/index.jsx'));
 const Staff = lazy(() => import('./app/dashboard/staff.jsx'));
 const Settings = lazy(() => import('./app/dashboard/settings.jsx'));
+const SmsTemplate = lazy(() => import('./app/dashboard/SmsTemplate.jsx'));
 
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
@@ -148,6 +149,42 @@ function AutoUpdateStatus() {
 }
 
 /* =========================
+   Network Status UI
+========================= */
+function NetworkStatus() {
+  useEffect(() => {
+    const handleOnline = () => {
+      toast.dismiss('offline-toast');
+      toast.success('Connection restored. You are back online.', { toastId: 'online-toast' });
+      if (ipcRenderer) ipcRenderer.send('log', 'Network status: ONLINE');
+    };
+
+    const handleOffline = () => {
+      toast.error('You are offline. Please check your internet connection.', { 
+        autoClose: false,
+        toastId: 'offline-toast'
+      });
+      if (ipcRenderer) ipcRenderer.send('log', 'Network status: OFFLINE');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial check
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      handleOffline();
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  return null;
+}
+
+/* =========================
    Auth Helper
 ========================= */
 function isAuthorized(user) {
@@ -176,10 +213,17 @@ function RedirectWithTransition({ to, replace = true, when = true, state = undef
 ========================= */
 function InnerRoutes({ authed }) {
   const location = useLocation();
+  const user = useSelector(selectUser);
+  
+  const baseUser = Array.isArray(user) ? user[0] : user;
+  const actualUser = baseUser?.user || baseUser;
+  const role = actualUser?.roles?.[0] || actualUser?.role || 'Customer';
+  const isAdmin = String(role).toLowerCase() === 'admin';
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <AutoUpdateStatus />
+      <NetworkStatus />
 
       <Suspense
         fallback={
@@ -219,9 +263,10 @@ function InnerRoutes({ authed }) {
             <Route path="orders" element={<Orders />} />
             <Route path="reports" element={<Reports />} />
             <Route path="stockManagement" element={<StockManagement />} />
-            <Route path="staff" element={<Staff />} />
-            <Route path="settings" element={<Settings />} />
+            <Route path="staff" element={isAdmin ? <Staff /> : <RedirectWithTransition to="pos" replace />} />
+            <Route path="settings" element={isAdmin ? <Settings /> : <RedirectWithTransition to="pos" replace />} />
             <Route path="thermal-settings" element={<ThermalPrinterSettings />} />
+            <Route path="sms-template" element={isAdmin ? <SmsTemplate /> : <RedirectWithTransition to="pos" replace />} />
             <Route path="*" element={<RedirectWithTransition to="pos" replace />} />
           </Route>
 

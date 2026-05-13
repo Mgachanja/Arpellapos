@@ -1,6 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { baseUrl } from '../app/constants';
-import { logout } from '../redux/slices/userSlice';
 
 const baseQuery = fetchBaseQuery({
   baseUrl,
@@ -20,7 +19,7 @@ const baseQueryWithLogout = async (args, api, extraOptions) => {
   let result = await baseQuery(args, api, extraOptions);
   
   if (result.error && result.error.status === 401 && !(typeof args === 'string' && args.includes('login')) && !(args.url && args.url.includes('login'))) {
-    api.dispatch(logout());
+    api.dispatch({ type: 'user/logout' });
   }
   
   return result;

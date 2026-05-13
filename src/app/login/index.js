@@ -56,7 +56,12 @@ export default function LoginPage() {
         throw new Error('Access denied for role: Customer');
       }
 
-      toast.success(`Welcome ${Array.isArray(result) ? (result[0].firstName || result[0].userName || 'User') : (result.firstName || result.userName || 'User')}`);
+      // Extract user for toast
+      const baseUser = Array.isArray(result) ? result[0] : result;
+      const actualUser = baseUser?.user || baseUser;
+      const userName = [actualUser?.firstName, actualUser?.lastName].filter(Boolean).join(' ') || actualUser?.userName || actualUser?.name || 'User';
+
+      toast.success(`Welcome ${userName}`);
       navigate('/app/dashboard', { replace: true });
     } catch (err) {
       toast.error(err?.data?.message || err?.message || 'Login failed');

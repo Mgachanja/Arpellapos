@@ -11,7 +11,8 @@ import {
   MdPrint,
   MdInventory,
   MdPeople,
-  MdSettings
+  MdSettings,
+  MdSms
 } from 'react-icons/md';
 import logo from '../../assets/logo.jpeg';
 import { useSelector } from 'react-redux';
@@ -27,11 +28,13 @@ const COLORS = {
 export default function DashboardLayout() {
   const user = useSelector(selectUser);
   const location = useLocation();
-  const role = user?.roles?.[0] || user?.role || 'Customer';
+  const baseUser = Array.isArray(user) ? user[0] : user;
+  const actualUser = baseUser?.user || baseUser;
+  const role = actualUser?.roles?.[0] || actualUser?.role || 'Customer';
 
-  const isAdmin = role === 'Admin';
-  const isOrderManager = role === 'Order_Manager' || isAdmin;
-  const isAccountant = role === 'Accountant' || isAdmin;
+  const isAdmin = String(role).toLowerCase() === 'admin';
+  const isOrderManager = String(role).toLowerCase() === 'order_manager' || isAdmin;
+  const isAccountant = String(role).toLowerCase() === 'accountant' || isAdmin;
 
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 992);
   const [collapsed, setCollapsed] = useState(true);
@@ -96,8 +99,13 @@ export default function DashboardLayout() {
           <NavItem to="/app/dashboard/orders" icon={MdListAlt} label="Orders" collapsed={collapsed} />
           <NavItem to="/app/dashboard/reports" icon={MdBarChart} label="Reports" collapsed={collapsed} />
           <NavItem to="/app/dashboard/stockManagement" icon={MdInventory} label="Stock Management" collapsed={collapsed} />
-          <NavItem to="/app/dashboard/staff" icon={MdPeople} label="Staff" collapsed={collapsed} />
-          <NavItem to="/app/dashboard/settings" icon={MdSettings} label="Settings" collapsed={collapsed} />
+          {isAdmin && (
+            <>
+              <NavItem to="/app/dashboard/staff" icon={MdPeople} label="Staff" collapsed={collapsed} />
+              <NavItem to="/app/dashboard/settings" icon={MdSettings} label="Settings" collapsed={collapsed} />
+              <NavItem to="/app/dashboard/sms-template" icon={MdSms} label="SMS Template" collapsed={collapsed} />
+            </>
+          )}
           <NavItem to="/app/dashboard/thermal-settings" icon={MdPrint} label="Thermal" collapsed={collapsed} />
         </nav>
 
@@ -137,7 +145,7 @@ export default function DashboardLayout() {
             <strong>Arpella</strong>
             <div className="d-flex align-items-center gap-2">
               <MdPerson />
-              <span>{user?.userName || 'User'}</span>
+              <span>{[actualUser?.firstName, actualUser?.lastName].filter(Boolean).join(' ') || actualUser?.userName || actualUser?.name || 'User'}</span>
             </div>
           </div>
         </header>

@@ -2,7 +2,6 @@
 import axios from 'axios';
 import { baseUrl, apiTimeout, STORAGE_KEYS } from '../app/constants/index';
 import { store } from '../redux/store/index';
-import { logout } from '../redux/slices/userSlice';
 
 // Create axios instance with default config
 const apiClient = axios.create({
@@ -36,7 +35,7 @@ apiClient.interceptors.response.use(
       
       // Dispatch logout to update app state and trigger safe redirect via HashRouter
       try {
-        store.dispatch(logout());
+        store.dispatch({ type: 'user/logout' });
       } catch (err) {
         console.error('Failed to dispatch logout:', err);
       }
@@ -98,7 +97,13 @@ export const apiService = {
 
   // Stats/Analytics
   getDashboardStats: () => apiClient.get('/stats/dashboard'),
-  getSalesReport: (params) => apiClient.get('/reports/sales', { params })
+  getSalesReport: (params) => apiClient.get('/reports/sales', { params }),
+
+  // SMS
+  getSmsTemplates: () => apiClient.get('/sms-templates'),
+  sendSmsTemplate: (data) => apiClient.post('/sms-template', data),
+  sendMessage: (templateType) => apiClient.post('/send-message', null, { params: { templateType } }),
+  deleteSmsTemplate: (templateType) => apiClient.delete(`/sms-template/${templateType}`)
 };
 
 // Utility functions for common API patterns

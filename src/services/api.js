@@ -102,8 +102,14 @@ export const apiService = {
   // SMS
   getSmsTemplates: () => apiClient.get('/sms-templates'),
   sendSmsTemplate: (data) => apiClient.post('/sms-template', data),
+  updateSmsTemplate: (templateType, contentBody) => apiClient.put('/sms-template', contentBody, { params: { templateType } }),
   sendMessage: (templateType) => apiClient.post('/send-message', null, { params: { templateType } }),
-  deleteSmsTemplate: (templateType) => apiClient.delete(`/sms-template/${templateType}`)
+  deleteSmsTemplate: (templateType) => apiClient.delete(`/sms-template/${templateType}`),
+  
+  // Flash Sales / Offers
+  getFlashSales: () => apiClient.get('/flashsales'),
+  getOfferProducts: () => apiClient.get('/offer-products'),
+  createFlashSale: (data) => apiClient.post('/flashsale', data)
 };
 
 // Utility functions for common API patterns

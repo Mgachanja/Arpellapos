@@ -24,6 +24,7 @@ import {
 } from "../../redux/slices/productSlice";
 import { rtkApi } from "../../services/rtkApi";
 import indexedDb from "../../services/indexedDB";
+import apiService from "../../services/api";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -197,6 +198,7 @@ const StockManagement = () => {
     invoiceNumber: "",
     name: "",
     price: "",
+    wholesalePrice: "",
     priceAfterDiscount: "",
     barcodes: "",
     purchaseCap: "",
@@ -216,6 +218,62 @@ const StockManagement = () => {
   // Image upload
   const [imageData, setImageData] = useState({ isPrimary: false, image: null });
   const [uploadProductId, setUploadProductId] = useState(null);
+  
+  // Flash Sales / Offers
+  const [flashSales, setFlashSales] = useState([]);
+  const [showOfferModal, setShowOfferModal] = useState(false);
+  const [offerForm, setOfferForm] = useState({
+    productId: "",
+    priceAfterDiscount: "",
+    startTime: "",
+    endTime: "",
+    isActive: true
+  });
+  const [offerSearch, setOfferSearch] = useState("");
+  const [offerSearchResults, setOfferSearchResults] = useState([]);
+  const offerSearchTimeout = useRef(null);
+
+
+  const fetchFlashSales = async () => {
+    try {
+      setIsLoading(true);
+      const data = await apiService.getOfferProducts();
+      setFlashSales(Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
+    } catch (error) {
+      console.error("Error fetching offer products", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCreateOffer = async (e) => {
+    e.preventDefault();
+    try {
+      setIsSubmitting(true);
+      const payload = {
+        productId: Number(offerForm.productId),
+        priceAfterDiscount: Number(offerForm.priceAfterDiscount),
+        startTime: new Date(offerForm.startTime).toISOString(),
+        endTime: new Date(offerForm.endTime).toISOString(),
+        isActive: offerForm.isActive
+      };
+      await apiService.createFlashSale(payload);
+      showToastMessage("Offer created successfully", "success");
+      setShowOfferModal(false);
+      setOfferForm({
+        productId: "",
+        priceAfterDiscount: "",
+        startTime: "",
+        endTime: "",
+        isActive: true
+      });
+      fetchFlashSales();
+    } catch (error) {
+      showToastMessage("Failed to create offer", "danger");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const [editStockData, setEditStockData] = useState(null);
 
@@ -571,6 +629,28 @@ const StockManagement = () => {
     };
   }, [restockSearch, allProducts]);
 
+  useEffect(() => {
+    if (offerSearchTimeout.current) clearTimeout(offerSearchTimeout.current);
+    offerSearchTimeout.current = setTimeout(() => {
+      const q = (offerSearch || "").trim().toLowerCase();
+      if (!q) {
+        setOfferSearchResults([]);
+      } else {
+        setOfferSearchResults(
+          allProducts
+            .filter((prod) => {
+              const name = (prod.name || "").toString().toLowerCase();
+              return name.includes(q) || String(prod.id).includes(q);
+            })
+            .slice(0, 50)
+        );
+      }
+    }, 100);
+    return () => {
+      if (offerSearchTimeout.current) clearTimeout(offerSearchTimeout.current);
+    };
+  }, [offerSearch, allProducts]);
+
   const pickRestockProduct = (entryIndex, productId) => {
     updateRestockEntry(entryIndex, "productId", productId);
   };
@@ -765,6 +845,7 @@ const StockManagement = () => {
         inventoryId: source.inventoryId ?? product.inventoryId,
         name: source.name ?? product.name,
         price: source.price ?? product.price,
+        wholesalePrice: source.wholesalePrice ?? product.wholesalePrice,
         priceAfterDiscount: source.priceAfterDiscount ?? product.priceAfterDiscount,
         categoryId: source.category ?? product.category,
         subCategoryId: source.subcategory ?? product.subcategory,
@@ -829,6 +910,7 @@ const StockManagement = () => {
         price: editProductData.price,
         barcodes: editProductData.barcodes,
         showOnline: !!editProductData.showOnline,
+        wholesalePrice: Number(editProductData.wholesalePrice || 0),
         discountQuantity: editProductData.discountQuantity,
         priceAfterDiscount: editProductData.priceAfterDiscount,
       };
@@ -1102,15 +1184,13 @@ const StockManagement = () => {
       name: product.name,
       barcodes: product.barcodes,
       price: product.price,
+      wholesalePrice: product.wholesalePrice || 0,
       priceAfterDiscount: product.priceAfterDiscount || 0,
       discountQuantity: product.discountQuantity || 0,
       categoryId: product.category ? Number(product.category) : null,
       subCategoryId: product.subcategory ? Number(product.subcategory) : null,
       purchaseCap: product.purchaseCap || 1,
       showOnline: product.showOnline,
-
-      // Tax fields - try to map if present in product or separate list
-      // If product has tax fields directly (some backends do this):
       ItemCode: product.ItemCode || "",
       taxRate: product.taxRate || 0,
       ItemDescription: product.ItemDescription || "",
@@ -1164,9 +1244,10 @@ const StockManagement = () => {
 
         // 1. Update Product Details
         const productPayload = {
-          inventoryId: f.inventoryId, // SKU
+          inventoryId: f.inventoryId,
           name: f.name,
           price: Number(f.price),
+          wholesalePrice: Number(f.wholesalePrice || 0),
           priceAfterDiscount: Number(f.priceAfterDiscount || f.price),
           category: f.categoryId ? Number(f.categoryId) : null,
           subcategory: f.subCategoryId ? Number(f.subCategoryId) : null,
@@ -1281,6 +1362,7 @@ const StockManagement = () => {
         subcategory: f.subCategoryId,
         name: f.name,
         price: Number(f.price),
+        wholesalePrice: Number(f.wholesalePrice || 0),
         barcodes: f.barcodes,
         showOnline: !!f.showOnline,
         discountQuantity: f.discountQuantity,
@@ -1356,6 +1438,7 @@ const StockManagement = () => {
         inventoryId: f.inventoryId,
         name: f.name,
         price: Number(f.price),
+        wholesalePrice: Number(f.wholesalePrice || 0),
         priceAfterDiscount: Number(f.priceAfterDiscount || f.price),
         category: f.categoryId ? Number(f.categoryId) : null,
         subcategory: f.subCategoryId ? Number(f.subCategoryId) : null,
@@ -1440,20 +1523,28 @@ const StockManagement = () => {
       `}</style>
 
       {/* Top Navigation Bar */}
-      <Navbar bg="light" expand="lg" className="shadow-sm mb-4">
-        <Container>
-          <Navbar.Toggle />
-          <Navbar.Collapse>
-            <Nav className="justify-content-center" style={{ width: "100%" }}>
-              <Nav.Link active={activeView === "stocks"} onClick={() => { setActiveView("stocks"); fetchStocks(currentInventoryPage); }}>Stocks</Nav.Link>
-              <Nav.Link active={activeView === "products"} onClick={() => { setActiveView("products"); fetchProducts(currentProductPage); }}>Products</Nav.Link>
-              <Nav.Link active={activeView === "suppliers"} onClick={() => { fetchSuppliers(); }}>Suppliers</Nav.Link>
-              <Nav.Link active={activeView === "invoice"} onClick={() => { fetchInvoices(); fetchInvoicesPaged(currentInvoicePage); }}>Invoices</Nav.Link>
-              <Nav.Link active={activeView === "overview"} onClick={() => { setActiveView("overview"); fetchProducts(currentProductPage); fetchStocks(currentInventoryPage); }}>Overview</Nav.Link>
-            </Nav>
-          </Navbar.Collapse>
-        </Container>
-      </Navbar>
+      <Container className="mb-4 mt-2">
+        <Nav variant="pills" className="gap-2 justify-content-center bg-white p-3 rounded shadow-sm" style={{ border: '1px solid #eaeaea' }}>
+          <Nav.Item>
+            <Nav.Link active={activeView === "stocks"} onClick={() => { setActiveView("stocks"); fetchStocks(currentInventoryPage); }} className="rounded-pill px-4" style={activeView === "stocks" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Stocks</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link active={activeView === "products"} onClick={() => { setActiveView("products"); fetchProducts(currentProductPage); }} className="rounded-pill px-4" style={activeView === "products" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Products</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link active={activeView === "suppliers"} onClick={() => { fetchSuppliers(); }} className="rounded-pill px-4" style={activeView === "suppliers" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Suppliers</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link active={activeView === "invoice"} onClick={() => { fetchInvoices(); fetchInvoicesPaged(currentInvoicePage); }} className="rounded-pill px-4" style={activeView === "invoice" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Invoices</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link active={activeView === "overview"} onClick={() => { setActiveView("overview"); fetchProducts(currentProductPage); fetchStocks(currentInventoryPage); }} className="rounded-pill px-4" style={activeView === "overview" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Overview</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link active={activeView === "offers"} onClick={() => { setActiveView("offers"); fetchFlashSales(); }} className="rounded-pill px-4" style={activeView === "offers" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Offers / Flash Sales</Nav.Link>
+          </Nav.Item>
+        </Nav>
+      </Container>
 
       <Container className="mb-4">
         <div className="d-flex justify-content-between align-items-center">
@@ -1463,6 +1554,7 @@ const StockManagement = () => {
           {activeView === "products" && <h4 className="text-muted">Products</h4>}
           {activeView === "suppliers" && <h4 className="text-muted">Suppliers</h4>}
           {activeView === "invoice" && <h4 className="text-muted">Invoices</h4>}
+          {activeView === "offers" && <h4 className="text-muted">Offers / Flash Sales</h4>}
         </div>
       </Container>
 
@@ -1572,11 +1664,14 @@ const StockManagement = () => {
             </Form>
           </div>
 
-          <Table striped bordered hover className="mt-2">
+          <Table striped bordered hover className="mt-2" responsive>
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Price</th>
+                <th>Retail Price</th>
+                <th>Wholesale Price</th>
+                <th>Min. Qty (Wholesale)</th>
+                <th>Offer Price</th>
                 <th>Category</th>
                 <th>Subcategory</th>
                 <th>Show Online</th>
@@ -1585,17 +1680,30 @@ const StockManagement = () => {
             </thead>
             <tbody>
               {products.length === 0 ? (
-                <tr><td colSpan="6" className="text-center">No data available</td></tr>
+                <tr><td colSpan="9" className="text-center">No data available</td></tr>
               ) : (
                 products.map((prod, index) => (
                   <tr key={index}>
                     <td>{prod.name}</td>
-                    <td>{prod.price}</td>
+                    <td>KES {prod.price}</td>
+                    <td>
+                      {prod.wholesalePrice > 0
+                        ? <span className="text-info fw-semibold">KES {prod.wholesalePrice}</span>
+                        : <span className="text-muted">—</span>}
+                    </td>
+                    <td>
+                      {prod.discountQuantity > 0
+                        ? <span className="badge bg-secondary">{prod.discountQuantity} units</span>
+                        : <span className="text-muted">—</span>}
+                    </td>
+                    <td>
+                      {prod.priceAfterDiscount > 0
+                        ? <span className="text-danger fw-semibold">KES {prod.priceAfterDiscount}</span>
+                        : <span className="text-muted">—</span>}
+                    </td>
                     <td>{(categories.find(c => String(c.id) === String(prod.category))?.categoryName) || prod.category}</td>
                     <td>
-                      {
-                        (subCategories.find(s => String(s.id) === String(prod.subcategory))?.subcategoryName) || prod.subcategory
-                      }
+                      {(subCategories.find(s => String(s.id) === String(prod.subcategory))?.subcategoryName) || prod.subcategory}
                     </td>
                     <td>{prod.showOnline ? "Yes" : "No"}</td>
                     <td>
@@ -1778,6 +1886,175 @@ const StockManagement = () => {
           </Table>
         </Container>
       )}
+      {/* OFFERS / FLASH SALES VIEW */}
+      {activeView === "offers" && (
+        <Container>
+          <div className="d-flex justify-content-between mb-3">
+            <Button variant="primary" onClick={() => setShowOfferModal(true)}>
+              + Create Offer
+            </Button>
+            <Button variant="outline-secondary" onClick={() => fetchFlashSales()} disabled={isLoading}>
+              Refresh Offers
+            </Button>
+          </div>
+          <Table striped bordered hover responsive>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Original Price</th>
+                <th>Offer Price</th>
+                <th>Discount</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr><td colSpan="5" className="text-center">Loading offers...</td></tr>
+              ) : flashSales.length === 0 ? (
+                <tr><td colSpan="5" className="text-center">No offers found.</td></tr>
+              ) : (
+                flashSales.filter((fs) => Number(fs.priceAfterDiscount) > 0).map((fs, idx) => {
+                  const originalPrice = Number(fs.price) || 0;
+                  const offerPrice = Number(fs.priceAfterDiscount) || 0;
+                  const discountPct = originalPrice > 0 && offerPrice > 0 && offerPrice < originalPrice
+                    ? Math.round(((originalPrice - offerPrice) / originalPrice) * 100)
+                    : null;
+                  return (
+                    <tr key={fs.id ?? idx}>
+                      <td>{fs.name || allProducts.find(p => String(p.id) === String(fs.id))?.name || `Product #${fs.id}`}</td>
+                      <td>{originalPrice > 0 ? `KES ${originalPrice.toLocaleString()}` : '—'}</td>
+                      <td><span className="text-danger fw-semibold">KES {offerPrice.toLocaleString()}</span></td>
+                      <td>
+                        {discountPct != null
+                          ? <span className="badge bg-danger">{discountPct}% OFF</span>
+                          : '—'}
+                      </td>
+                      <td>
+                        {fs.isActive !== false
+                          ? <span className="badge bg-success">Active</span>
+                          : <span className="badge bg-secondary">Inactive</span>}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </Table>
+        </Container>
+      )}
+
+      {/* CREATE OFFER MODAL */}
+      <Modal show={showOfferModal} onHide={() => !isSubmitting && setShowOfferModal(false)}>
+        <Form onSubmit={handleCreateOffer}>
+          <Modal.Header closeButton>
+            <Modal.Title>Create New Offer / Flash Sale</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <Form.Group className="mb-3">
+              <Form.Label>Product</Form.Label>
+              {offerForm.productId ? (
+                <div className="d-flex align-items-center gap-2 mb-2 p-2 border rounded">
+                  <strong>Selected: </strong> {allProducts.find(p => String(p.id) === String(offerForm.productId))?.name || offerForm.productId}
+                  <Button variant="outline-danger" size="sm" onClick={() => setOfferForm({ ...offerForm, productId: "" })}>Change</Button>
+                </div>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <Form.Control 
+                    type="text" 
+                    placeholder="Search product by name or ID..."
+                    value={offerSearch}
+                    onChange={(e) => setOfferSearch(e.target.value)}
+                    required
+                  />
+                  {offerSearch && offerSearchResults.length > 0 && (
+                    <div className="restock-search-results mt-2" style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #ddd", borderRadius: 4, position: "absolute", zIndex: 10, backgroundColor: "white", width: "100%", top: "40px" }}>
+                      {offerSearchResults.map((prod) => (
+                        <div 
+                          key={prod.id} 
+                          className="restock-search-item" 
+                          onClick={() => {
+                            setOfferForm({ ...offerForm, productId: prod.id });
+                            setOfferSearch("");
+                          }}
+                        >
+                          <strong>{prod.name}</strong> <span className="text-muted" style={{ fontSize: 12 }}>({prod.id})</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {offerSearch && offerSearchResults.length === 0 && (
+                    <div className="restock-search-results mt-2 p-2 text-muted" style={{ position: "absolute", zIndex: 10, backgroundColor: "white", width: "100%", top: "40px", border: "1px solid #ddd" }}>
+                      No products found.
+                    </div>
+                  )}
+                </div>
+              )}
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Offer Price (KES)</Form.Label>
+              <Form.Control
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                placeholder="Enter the discounted selling price"
+                value={offerForm.priceAfterDiscount}
+                onChange={(e) => setOfferForm({ ...offerForm, priceAfterDiscount: e.target.value })}
+              />
+              {offerForm.priceAfterDiscount && offerForm.productId && (() => {
+                const orig = Number(allProducts.find(p => String(p.id) === String(offerForm.productId))?.price) || 0;
+                const offer = Number(offerForm.priceAfterDiscount) || 0;
+                const pct = orig > 0 && offer > 0 && offer < orig
+                  ? Math.round(((orig - offer) / orig) * 100)
+                  : null;
+                return pct != null
+                  ? <small className="text-danger fw-semibold">≈ {pct}% discount (from KES {orig.toLocaleString()})</small>
+                  : null;
+              })()}
+            </Form.Group>
+            <Row>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Start Time</Form.Label>
+                  <Form.Control 
+                    type="datetime-local" 
+                    required
+                    value={offerForm.startTime}
+                    onChange={(e) => setOfferForm({ ...offerForm, startTime: e.target.value })}
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>End Time</Form.Label>
+                  <Form.Control 
+                    type="datetime-local" 
+                    required
+                    value={offerForm.endTime}
+                    onChange={(e) => setOfferForm({ ...offerForm, endTime: e.target.value })}
+                  />
+                </Form.Group>
+              </Col>
+            </Row>
+            <Form.Group className="mb-3">
+              <Form.Check 
+                type="switch" 
+                id="is-active-switch"
+                label="Is Active?" 
+                checked={offerForm.isActive}
+                onChange={(e) => setOfferForm({ ...offerForm, isActive: e.target.checked })}
+              />
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowOfferModal(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="primary" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Creating..." : "Save Offer"}
+            </Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
+
       {/* ============ MODAL 1: ADD / EDIT COMPLETE PRODUCT (Inventory + Product + Tax) ============ */}
       <Modal
         show={showAddCompleteProductModal}
@@ -2036,7 +2313,7 @@ const StockManagement = () => {
 
                 <Col md={4}>
                   <Form.Group className="mb-3">
-                    <Form.Label>Price After Discount <span className="text-danger">*</span></Form.Label>
+                    <Form.Label>Price After Discount <span className="text-muted">(Flash Sale only)</span></Form.Label>
                     <Form.Control
                       type="number"
                       value={completeProductForm.priceAfterDiscount}
@@ -2047,10 +2324,29 @@ const StockManagement = () => {
                       min="0"
                       step="0.01"
                       isInvalid={!!formErrors.priceAfterDiscount}
-                      required
                       placeholder="0.00"
                     />
                     <Form.Control.Feedback type="invalid">{formErrors.priceAfterDiscount}</Form.Control.Feedback>
+                  </Form.Group>
+                </Col>
+
+                <Col md={4}>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Wholesale Price <span className="text-danger">*</span></Form.Label>
+                    <Form.Control
+                      type="number"
+                      value={completeProductForm.wholesalePrice}
+                      onChange={(e) => {
+                        setCompleteProductForm({ ...completeProductForm, wholesalePrice: e.target.value });
+                        setFormErrors(prev => ({ ...prev, wholesalePrice: undefined }));
+                      }}
+                      min="0"
+                      step="0.01"
+                      isInvalid={!!formErrors.wholesalePrice}
+                      required
+                      placeholder="0.00"
+                    />
+                    <Form.Control.Feedback type="invalid">{formErrors.wholesalePrice}</Form.Control.Feedback>
                   </Form.Group>
                 </Col>
 
@@ -2726,13 +3022,26 @@ const StockManagement = () => {
                     />
                   </Form.Group>
                 </Col>
-                <Col md={6}>
+                <Col md={4}>
                   <Form.Group className="mb-3">
-                    <Form.Label>Price After Discount</Form.Label>
+                    <Form.Label>Price After Discount <span className="text-muted">(Flash Sale)</span></Form.Label>
                     <Form.Control
                       type="number"
                       value={editProductData.priceAfterDiscount ?? ""}
                       onChange={(e) => setEditProductData({ ...editProductData, priceAfterDiscount: e.target.value })}
+                      min="0"
+                      step="0.01"
+                    />
+                  </Form.Group>
+                </Col>
+                <Col md={4}>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Wholesale Price</Form.Label>
+                    <Form.Control
+                      type="number"
+                      value={editProductData.wholesalePrice ?? ""}
+                      onChange={(e) => setEditProductData({ ...editProductData, wholesalePrice: e.target.value })}
+                      required
                       min="0"
                       step="0.01"
                     />

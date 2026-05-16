@@ -22,7 +22,9 @@ export function ProductCard({
         'Unnamed product',
       barcode: p.barcode ?? p.sku ?? '',
       price: Number(p.price ?? p.retailPrice ?? 0),
-      priceAfterDiscount: Number(p.priceAfterDiscount ?? p.wholesalePrice ?? 0)
+      wholesalePrice: Number(p.wholesalePrice ?? 0),
+      discountQuantity: Number(p.discountQuantity ?? 0),
+      priceAfterDiscount: Number(p.priceAfterDiscount ?? 0)
     };
   };
 
@@ -180,9 +182,11 @@ export function ProductCard({
           {/* WHOLESALE */}
           <div className="control-col">
             <div>
-              <div className="text-muted" style={{ fontSize: '0.7rem' }}>Wholesale</div>
+              <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                Wholesale{safe.discountQuantity > 0 ? ` (min ${safe.discountQuantity})` : ''}
+              </div>
               <div className="price-top text-info" style={{ fontSize: '0.93rem' }}>
-                {KSH(safe.priceAfterDiscount || safe.price)}
+                {safe.wholesalePrice > 0 ? KSH(safe.wholesalePrice) : KSH(safe.price)}
               </div>
             </div>
 
@@ -239,9 +243,11 @@ export function ProductCard({
 
         <div>
           <div className="d-flex justify-content-between">
-            <span className="text-info">Wholesale</span>
+            <span className="text-info">
+              Wholesale{safe.discountQuantity > 0 ? ` (min ${safe.discountQuantity})` : ''}
+            </span>
             <span className="fw-bold">
-              {KSH(safe.priceAfterDiscount || safe.price)}
+              {safe.wholesalePrice > 0 ? KSH(safe.wholesalePrice) : KSH(safe.price)}
             </span>
           </div>
           <div className="qty-row mt-1">

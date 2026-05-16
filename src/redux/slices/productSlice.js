@@ -424,7 +424,9 @@ export const selectCartItemCount = (state) => {
 export const selectCartTotal = (state) => {
   const items = Array.isArray(state.products.cart) ? state.products.cart : [];
   return items.reduce((total, item) => {
-    const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
+    const price = item.priceType === 'Retail'
+      ? (Number(item.price) || 0)
+      : (Number(item.wholesalePrice) || Number(item.priceAfterDiscount) || Number(item.price) || 0);
     return total + (price * (item.quantity || 1));
   }, 0);
 };

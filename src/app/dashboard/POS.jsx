@@ -100,11 +100,13 @@ export default function POS() {
 
   const calculateCartTotal = useCallback(() => {
     return cart.reduce((total, item) => {
-      const price =
-        item && item.priceType === 'Retail'
-          ? Number(item.price) || 0
-          : Number(item.priceAfterDiscount) || Number(item.price) || 0;
-
+      let price;
+      if (item?.priceType === 'Retail') {
+        price = Number(item.price) || 0;
+      } else {
+        // Wholesale: use wholesalePrice if available, fall back to priceAfterDiscount then price
+        price = Number(item.wholesalePrice) || Number(item.priceAfterDiscount) || Number(item.price) || 0;
+      }
       const qty = Number(item?.quantity) || 1;
       return total + price * qty;
     }, 0);

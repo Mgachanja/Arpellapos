@@ -124,13 +124,7 @@ const SmsTemplate = () => {
     try {
       const now = new Date().toISOString();
       // First put the template
-      const payload = {
-        templateType: template.templateType,
-        content: editingContent,
-        createdAt: template.createdAt || now,
-        updatedAt: now
-      };
-      await apiService.sendSmsTemplate(payload);
+      await apiService.updateSmsTemplate(template.templateType, { content: editingContent });
 
       // Then hit endpoint send
       await apiService.sendMessage(template.templateType);
@@ -231,7 +225,7 @@ const SmsTemplate = () => {
                 const isEditing = editingId === id;
                 
                 return (
-                  <Grid item xs={12} md={6} key={id}>
+                  <Grid item xs={12} md={isEditing ? 12 : 6} key={id} sx={{ transition: 'all 0.3s ease' }}>
                     <Card sx={{ 
                       borderRadius: 3, 
                       boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
@@ -267,7 +261,7 @@ const SmsTemplate = () => {
                           <TextField
                             fullWidth
                             multiline
-                            rows={4}
+                            minRows={4}
                             variant="outlined"
                             value={editingContent}
                             onChange={(e) => setEditingContent(e.target.value)}
@@ -375,7 +369,7 @@ const SmsTemplate = () => {
                   variant="outlined"
                   fullWidth
                   multiline
-                  rows={6}
+                  minRows={6}
                   value={newContent}
                   onChange={(e) => setNewContent(e.target.value)}
                   placeholder="Enter the SMS content here. Line breaks are supported."

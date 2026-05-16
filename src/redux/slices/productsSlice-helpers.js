@@ -425,8 +425,13 @@ export const updateCartItemQuantity = (cartItemsInput, identifier, newQuantity) 
  */
 export const calculateCartTotal = (cartItems = []) => {
   return cartItems.reduce((total, item) => {
-    // Use priceType to determine which price to use
-    const price = item.priceType === 'Retail' ? (item.price || 0) : (item.priceAfterDiscount || item.price || 0);
+    let price;
+    if (item.priceType === 'Retail') {
+      price = item.price || 0;
+    } else {
+      // Wholesale: wholesalePrice is the correct field; priceAfterDiscount is for flash sale offers only
+      price = Number(item.wholesalePrice) || Number(item.priceAfterDiscount) || Number(item.price) || 0;
+    }
     const quantity = item.quantity || 1;
     return total + (price * quantity);
   }, 0);

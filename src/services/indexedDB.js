@@ -507,7 +507,9 @@ async function clearOrders() {
 function computeCartTotal(cart = []) {
   if (!Array.isArray(cart)) return 0;
   return cart.reduce((s, it) => {
-    const price = it.priceType === 'Retail' ? (Number(it.price ?? it.priceAfterDiscount ?? 0)) : (Number(it.priceAfterDiscount ?? it.price ?? 0));
+    const price = it.priceType === 'Retail'
+      ? (Number(it.price ?? 0))
+      : (Number(it.wholesalePrice) || Number(it.priceAfterDiscount) || Number(it.price ?? 0));
     const qty = Number(it.quantity ?? it.qty ?? 1);
     return s + (price * qty);
   }, 0);
@@ -567,7 +569,7 @@ async function calculateOrderProfit(order = {}) {
     if (toNumber(it.sellingPrice) > 0) {
       salePrice = toNumber(it.sellingPrice);
     } else if (isWholesale) {
-      salePrice = toNumber(it.priceAfterDiscount) || toNumber(it.price);
+      salePrice = toNumber(it.wholesalePrice) || toNumber(it.priceAfterDiscount) || toNumber(it.price);
     } else {
       salePrice = toNumber(it.salePrice ?? it.price ?? it.unitPrice ?? 0, 0);
     }

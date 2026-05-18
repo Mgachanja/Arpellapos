@@ -28,7 +28,6 @@ import { rtkApi } from "../../services/rtkApi";
 import indexedDb from "../../services/indexedDB";
 import apiService from "../../services/api";
 
-const Swal = require("sweetalert2");
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -315,17 +314,6 @@ const StockManagement = () => {
   };
 
   const handleDeleteOffer = async (id) => {
-    const result = await Swal.fire({
-      title: 'Are you sure?',
-      text: "You won't be able to revert this!",
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#d33',
-      cancelButtonColor: '#3085d6',
-      confirmButtonText: 'Yes, delete it!'
-    });
-    
-    if (!result.isConfirmed) return;
     try {
       setIsSubmitting(true);
       await apiService.deleteFlashSale(id);

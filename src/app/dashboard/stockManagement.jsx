@@ -15,6 +15,8 @@ import {
   Alert,
 } from "react-bootstrap";
 import { toast } from "react-toastify";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -25,6 +27,8 @@ import {
 import { rtkApi } from "../../services/rtkApi";
 import indexedDb from "../../services/indexedDB";
 import apiService from "../../services/api";
+
+const Swal = require("sweetalert2");
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -223,12 +227,17 @@ const StockManagement = () => {
   const [flashSales, setFlashSales] = useState([]);
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [offerForm, setOfferForm] = useState({
-    productId: "",
-    priceAfterDiscount: "",
+    items: [], // Array of { productId, priceAfterDiscount }
     startTime: "",
     endTime: "",
     isActive: true
   });
+  const [currentOfferItem, setCurrentOfferItem] = useState({
+    productId: "",
+    priceAfterDiscount: ""
+  });
+  const [isEditingOffer, setIsEditingOffer] = useState(false);
+  const [editOfferId, setEditOfferId] = useState(null);
   const [offerSearch, setOfferSearch] = useState("");
   const [offerSearchResults, setOfferSearchResults] = useState([]);
   const offerSearchTimeout = useRef(null);
@@ -237,10 +246,10 @@ const StockManagement = () => {
   const fetchFlashSales = async () => {
     try {
       setIsLoading(true);
-      const data = await apiService.getOfferProducts();
+      const data = await apiService.getFlashSales();
       setFlashSales(Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
     } catch (error) {
-      console.error("Error fetching offer products", error);
+      console.error("Error fetching flash sales", error);
     } finally {
       setIsLoading(false);
     }
@@ -248,31 +257,100 @@ const StockManagement = () => {
 
   const handleCreateOffer = async (e) => {
     e.preventDefault();
+    if (!isEditingOffer && offerForm.items.length === 0) {
+      showToastMessage("Please add at least one product to the offer", "warning");
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
-      const payload = {
-        productId: Number(offerForm.productId),
-        priceAfterDiscount: Number(offerForm.priceAfterDiscount),
-        startTime: new Date(offerForm.startTime).toISOString(),
-        endTime: new Date(offerForm.endTime).toISOString(),
-        isActive: offerForm.isActive
-      };
-      await apiService.createFlashSale(payload);
-      showToastMessage("Offer created successfully", "success");
+      const startTimeISO = new Date(offerForm.startTime).toISOString();
+      const endTimeISO = new Date(offerForm.endTime).toISOString();
+
+      if (isEditingOffer) {
+        if (offerForm.items.length === 0) {
+          showToastMessage("Offer must have a product", "warning");
+          return;
+        }
+        const item = offerForm.items[0];
+        const payload = {
+          productId: Number(item.productId),
+          discountValue: Number(item.priceAfterDiscount),
+          startTime: startTimeISO,
+          endTime: endTimeISO,
+          isActive: offerForm.isActive
+        };
+        await apiService.updateFlashSale(editOfferId, payload);
+        showToastMessage("Offer updated successfully", "success");
+      } else {
+        const payload = {
+          items: offerForm.items.map(item => ({
+            productId: Number(item.productId),
+            discountValue: Number(item.priceAfterDiscount)
+          })),
+          startTime: startTimeISO,
+          endTime: endTimeISO,
+          isActive: offerForm.isActive
+        };
+        await apiService.createFlashSale(payload);
+        showToastMessage("Offer created successfully", "success");
+      }
+      
       setShowOfferModal(false);
+      setIsEditingOffer(false);
+      setEditOfferId(null);
       setOfferForm({
-        productId: "",
-        priceAfterDiscount: "",
+        items: [],
         startTime: "",
         endTime: "",
         isActive: true
       });
+      setCurrentOfferItem({ productId: "", priceAfterDiscount: "" });
       fetchFlashSales();
     } catch (error) {
-      showToastMessage("Failed to create offer", "danger");
+      showToastMessage(isEditingOffer ? "Failed to update offer" : "Failed to create offer", "danger");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleDeleteOffer = async (id) => {
+    const result = await Swal.fire({
+      title: 'Are you sure?',
+      text: "You won't be able to revert this!",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Yes, delete it!'
+    });
+    
+    if (!result.isConfirmed) return;
+    try {
+      setIsSubmitting(true);
+      await apiService.deleteFlashSale(id);
+      showToastMessage("Offer deleted successfully", "success");
+      fetchFlashSales();
+    } catch (error) {
+      showToastMessage("Failed to delete offer", "danger");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEditOfferClick = (fs) => {
+    setEditOfferId(fs.id || fs.storeId || fs.flashSaleId || fs.offerId);
+    setIsEditingOffer(true);
+    setOfferForm({
+      items: [{
+        productId: fs.productId,
+        priceAfterDiscount: fs.priceAfterDiscount || fs.discountValue
+      }],
+      startTime: fs.startTime ? new Date(fs.startTime).toISOString().slice(0, 16) : "",
+      endTime: fs.endTime ? new Date(fs.endTime).toISOString().slice(0, 16) : "",
+      isActive: fs.isActive !== false
+    });
+    setShowOfferModal(true);
   };
 
   const [editStockData, setEditStockData] = useState(null);
@@ -1905,23 +1983,24 @@ const StockManagement = () => {
                 <th>Offer Price</th>
                 <th>Discount</th>
                 <th>Active</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan="5" className="text-center">Loading offers...</td></tr>
+                <tr><td colSpan="6" className="text-center">Loading offers...</td></tr>
               ) : flashSales.length === 0 ? (
-                <tr><td colSpan="5" className="text-center">No offers found.</td></tr>
+                <tr><td colSpan="6" className="text-center">No offers found.</td></tr>
               ) : (
-                flashSales.filter((fs) => Number(fs.priceAfterDiscount) > 0).map((fs, idx) => {
-                  const originalPrice = Number(fs.price) || 0;
-                  const offerPrice = Number(fs.priceAfterDiscount) || 0;
+                flashSales.filter((fs) => Number(fs.priceAfterDiscount || fs.discountValue) > 0).map((fs, idx) => {
+                  const originalPrice = Number(fs.price || allProducts.find(p => String(p.id) === String(fs.productId))?.price) || 0;
+                  const offerPrice = Number(fs.priceAfterDiscount || fs.discountValue) || 0;
                   const discountPct = originalPrice > 0 && offerPrice > 0 && offerPrice < originalPrice
                     ? Math.round(((originalPrice - offerPrice) / originalPrice) * 100)
                     : null;
                   return (
                     <tr key={fs.id ?? idx}>
-                      <td>{fs.name || allProducts.find(p => String(p.id) === String(fs.id))?.name || `Product #${fs.id}`}</td>
+                      <td>{fs.name || allProducts.find(p => String(p.id) === String(fs.productId))?.name || `Product #${fs.productId}`}</td>
                       <td>{originalPrice > 0 ? `KES ${originalPrice.toLocaleString()}` : '—'}</td>
                       <td><span className="text-danger fw-semibold">KES {offerPrice.toLocaleString()}</span></td>
                       <td>
@@ -1934,6 +2013,10 @@ const StockManagement = () => {
                           ? <span className="badge bg-success">Active</span>
                           : <span className="badge bg-secondary">Inactive</span>}
                       </td>
+                      <td>
+                        <Button variant="outline-primary" size="sm" className="me-2" onClick={() => handleEditOfferClick(fs)}>Edit</Button>
+                        <Button variant="outline-danger" size="sm" onClick={() => handleDeleteOffer(fs.id || fs.storeId || fs.flashSaleId || fs.offerId)}>Delete</Button>
+                      </td>
                     </tr>
                   );
                 })
@@ -1943,95 +2026,184 @@ const StockManagement = () => {
         </Container>
       )}
 
-      {/* CREATE OFFER MODAL */}
-      <Modal show={showOfferModal} onHide={() => !isSubmitting && setShowOfferModal(false)}>
+      {/* CREATE / EDIT OFFER MODAL */}
+      <Modal show={showOfferModal} onHide={() => {
+        if (!isSubmitting) {
+          setShowOfferModal(false);
+          setIsEditingOffer(false);
+          setEditOfferId(null);
+          setOfferForm({
+            items: [],
+            startTime: "",
+            endTime: "",
+            isActive: true
+          });
+          setCurrentOfferItem({ productId: "", priceAfterDiscount: "" });
+        }
+      }}>
         <Form onSubmit={handleCreateOffer}>
           <Modal.Header closeButton>
-            <Modal.Title>Create New Offer / Flash Sale</Modal.Title>
+            <Modal.Title>{isEditingOffer ? "Edit Offer / Flash Sale" : "Create New Offer / Flash Sale"}</Modal.Title>
           </Modal.Header>
           <Modal.Body>
-            <Form.Group className="mb-3">
-              <Form.Label>Product</Form.Label>
-              {offerForm.productId ? (
-                <div className="d-flex align-items-center gap-2 mb-2 p-2 border rounded">
-                  <strong>Selected: </strong> {allProducts.find(p => String(p.id) === String(offerForm.productId))?.name || offerForm.productId}
-                  <Button variant="outline-danger" size="sm" onClick={() => setOfferForm({ ...offerForm, productId: "" })}>Change</Button>
-                </div>
-              ) : (
-                <div style={{ position: "relative" }}>
-                  <Form.Control 
-                    type="text" 
-                    placeholder="Search product by name or ID..."
-                    value={offerSearch}
-                    onChange={(e) => setOfferSearch(e.target.value)}
-                    required
-                  />
-                  {offerSearch && offerSearchResults.length > 0 && (
-                    <div className="restock-search-results mt-2" style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #ddd", borderRadius: 4, position: "absolute", zIndex: 10, backgroundColor: "white", width: "100%", top: "40px" }}>
-                      {offerSearchResults.map((prod) => (
-                        <div 
-                          key={prod.id} 
-                          className="restock-search-item" 
-                          onClick={() => {
-                            setOfferForm({ ...offerForm, productId: prod.id });
-                            setOfferSearch("");
+            {isEditingOffer ? (
+              <div className="mb-3 p-3 border rounded">
+                <h6>Editing Product Offer</h6>
+                {offerForm.items.length > 0 && (() => {
+                  const item = offerForm.items[0];
+                  const prod = allProducts.find(p => String(p.id) === String(item.productId));
+                  return (
+                    <>
+                      <div className="mb-3">
+                        <strong>Product: </strong> {prod?.name || item.productId}
+                      </div>
+                      <Form.Group className="mb-3">
+                        <Form.Label>Offer Price (KES)</Form.Label>
+                        <Form.Control
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          required
+                          value={item.priceAfterDiscount}
+                          onChange={(e) => {
+                            const newItems = [...offerForm.items];
+                            newItems[0].priceAfterDiscount = e.target.value;
+                            setOfferForm({ ...offerForm, items: newItems });
                           }}
-                        >
-                          <strong>{prod.name}</strong> <span className="text-muted" style={{ fontSize: 12 }}>({prod.id})</span>
-                        </div>
+                        />
+                      </Form.Group>
+                    </>
+                  )
+                })()}
+              </div>
+            ) : (
+              <>
+                <div className="mb-3 p-3 border rounded bg-light">
+                  <h6>Selected Products ({offerForm.items.length})</h6>
+                  {offerForm.items.length > 0 ? (
+                    <ul className="list-group mb-2">
+                      {offerForm.items.map((item, idx) => (
+                        <li key={idx} className="list-group-item d-flex justify-content-between align-items-center">
+                          <div>
+                            <strong>{allProducts.find(p => String(p.id) === String(item.productId))?.name || item.productId}</strong>
+                            <span className="ms-2 text-danger">KES {Number(item.priceAfterDiscount).toLocaleString()}</span>
+                          </div>
+                          <Button variant="outline-danger" size="sm" onClick={() => {
+                            const newItems = [...offerForm.items];
+                            newItems.splice(idx, 1);
+                            setOfferForm({ ...offerForm, items: newItems });
+                          }}>Remove</Button>
+                        </li>
                       ))}
-                    </div>
-                  )}
-                  {offerSearch && offerSearchResults.length === 0 && (
-                    <div className="restock-search-results mt-2 p-2 text-muted" style={{ position: "absolute", zIndex: 10, backgroundColor: "white", width: "100%", top: "40px", border: "1px solid #ddd" }}>
-                      No products found.
-                    </div>
+                    </ul>
+                  ) : (
+                    <p className="text-muted small mb-2">No products added yet.</p>
                   )}
                 </div>
-              )}
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Offer Price (KES)</Form.Label>
-              <Form.Control
-                type="number"
-                min="0"
-                step="0.01"
-                required
-                placeholder="Enter the discounted selling price"
-                value={offerForm.priceAfterDiscount}
-                onChange={(e) => setOfferForm({ ...offerForm, priceAfterDiscount: e.target.value })}
-              />
-              {offerForm.priceAfterDiscount && offerForm.productId && (() => {
-                const orig = Number(allProducts.find(p => String(p.id) === String(offerForm.productId))?.price) || 0;
-                const offer = Number(offerForm.priceAfterDiscount) || 0;
-                const pct = orig > 0 && offer > 0 && offer < orig
-                  ? Math.round(((orig - offer) / orig) * 100)
-                  : null;
-                return pct != null
-                  ? <small className="text-danger fw-semibold">≈ {pct}% discount (from KES {orig.toLocaleString()})</small>
-                  : null;
-              })()}
-            </Form.Group>
+                
+                <div className="mb-3 p-3 border rounded">
+                  <h6>Add Product to Offer</h6>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Product</Form.Label>
+                    {currentOfferItem.productId ? (
+                      <div className="d-flex align-items-center gap-2 p-2 border rounded">
+                        <strong>Selected: </strong> {allProducts.find(p => String(p.id) === String(currentOfferItem.productId))?.name || currentOfferItem.productId}
+                        <Button variant="outline-danger" size="sm" onClick={() => setCurrentOfferItem({ ...currentOfferItem, productId: "" })}>Change</Button>
+                      </div>
+                    ) : (
+                      <div style={{ position: "relative" }}>
+                        <Form.Control 
+                          type="text" 
+                          placeholder="Search product by name or ID..."
+                          value={offerSearch}
+                          onChange={(e) => setOfferSearch(e.target.value)}
+                        />
+                        {offerSearch && offerSearchResults.length > 0 && (
+                          <div className="restock-search-results mt-2" style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #ddd", borderRadius: 4, position: "absolute", zIndex: 10, backgroundColor: "white", width: "100%", top: "40px" }}>
+                            {offerSearchResults.map((prod) => (
+                              <div 
+                                key={prod.id} 
+                                className="restock-search-item" 
+                                onClick={() => {
+                                  setCurrentOfferItem({ ...currentOfferItem, productId: prod.id });
+                                  setOfferSearch("");
+                                }}
+                              >
+                                <strong>{prod.name}</strong> <span className="text-muted" style={{ fontSize: 12 }}>({prod.id})</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Form.Group>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Offer Price (KES)</Form.Label>
+                    <Form.Control
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter the discounted selling price"
+                      value={currentOfferItem.priceAfterDiscount}
+                      onChange={(e) => setCurrentOfferItem({ ...currentOfferItem, priceAfterDiscount: e.target.value })}
+                    />
+                    {currentOfferItem.priceAfterDiscount && currentOfferItem.productId && (() => {
+                      const orig = Number(allProducts.find(p => String(p.id) === String(currentOfferItem.productId))?.price) || 0;
+                      const offer = Number(currentOfferItem.priceAfterDiscount) || 0;
+                      const pct = orig > 0 && offer > 0 && offer < orig
+                        ? Math.round(((orig - offer) / orig) * 100)
+                        : null;
+                      return pct != null
+                        ? <small className="text-danger fw-semibold d-block mt-1">≈ {pct}% discount (from KES {orig.toLocaleString()})</small>
+                        : null;
+                    })()}
+                  </Form.Group>
+                  <Button 
+                    variant="secondary" 
+                    size="sm"
+                    disabled={!currentOfferItem.productId || !currentOfferItem.priceAfterDiscount}
+                    onClick={() => {
+                      setOfferForm({
+                        ...offerForm,
+                        items: [...offerForm.items, { ...currentOfferItem }]
+                      });
+                      setCurrentOfferItem({ productId: "", priceAfterDiscount: "" });
+                    }}
+                  >
+                    Add to Offer
+                  </Button>
+                </div>
+              </>
+            )}
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
                   <Form.Label>Start Time</Form.Label>
-                  <Form.Control 
-                    type="datetime-local" 
-                    required
-                    value={offerForm.startTime}
-                    onChange={(e) => setOfferForm({ ...offerForm, startTime: e.target.value })}
+                  <DatePicker
+                    selected={offerForm.startTime ? new Date(offerForm.startTime) : null}
+                    onChange={(date) => setOfferForm({ ...offerForm, startTime: date ? date.toISOString() : '' })}
+                    showTimeSelect
+                    timeFormat="HH:mm"
+                    timeIntervals={15}
+                    dateFormat="MMMM d, yyyy h:mm aa"
+                    className="form-control"
+                    placeholderText="Select start time"
                   />
                 </Form.Group>
               </Col>
               <Col md={6}>
                 <Form.Group className="mb-3">
                   <Form.Label>End Time</Form.Label>
-                  <Form.Control 
-                    type="datetime-local" 
-                    required
-                    value={offerForm.endTime}
-                    onChange={(e) => setOfferForm({ ...offerForm, endTime: e.target.value })}
+                  <DatePicker
+                    selected={offerForm.endTime ? new Date(offerForm.endTime) : null}
+                    onChange={(date) => setOfferForm({ ...offerForm, endTime: date ? date.toISOString() : '' })}
+                    showTimeSelect
+                    timeFormat="HH:mm"
+                    timeIntervals={15}
+                    dateFormat="MMMM d, yyyy h:mm aa"
+                    className="form-control"
+                    placeholderText="Select end time"
+                    minDate={offerForm.startTime ? new Date(offerForm.startTime) : null}
                   />
                 </Form.Group>
               </Col>

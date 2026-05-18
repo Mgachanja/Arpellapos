@@ -24,22 +24,29 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+const dispatchLogout = () => {
+  localStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+  localStorage.removeItem(STORAGE_KEYS.USER_DATA);
+  try {
+    store.dispatch({ type: 'user/logout' });
+  } catch (err) {
+    console.error('Failed to dispatch logout:', err);
+  }
+};
+
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Clear legacy storage
-      localStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.USER_DATA);
-      
-      // Dispatch logout to update app state and trigger safe redirect via HashRouter
-      try {
-        store.dispatch({ type: 'user/logout' });
-      } catch (err) {
-        console.error('Failed to dispatch logout:', err);
-      }
+    const status = error.response?.status;
+
+    if (status === 401 || status === 500) {
+      dispatchLogout();
+    } else if (!error.response) {
+      // No response = network failure or CORS block
+      dispatchLogout();
     }
+
     return Promise.reject(error);
   }
 );
@@ -109,7 +116,9 @@ export const apiService = {
   // Flash Sales / Offers
   getFlashSales: () => apiClient.get('/flashsales'),
   getOfferProducts: () => apiClient.get('/offer-products'),
-  createFlashSale: (data) => apiClient.post('/flashsale', data)
+  createFlashSale: (data) => apiClient.post('/Flashsale', data),
+  updateFlashSale: (id, data) => apiClient.put(`/Flashsale/${id}`, data),
+  deleteFlashSale: (id) => apiClient.delete(`/Flashsale/${id}`)
 };
 
 // Utility functions for common API patterns

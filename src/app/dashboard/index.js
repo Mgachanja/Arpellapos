@@ -15,8 +15,9 @@ import {
   MdSms
 } from 'react-icons/md';
 import logo from '../../assets/logo.jpeg';
-import { useSelector } from 'react-redux';
-import { selectUser } from '../../redux/slices/userSlice';
+import { useSelector, useDispatch } from 'react-redux';
+import { selectUser, logout } from '../../redux/slices/userSlice';
+import apiService from '../../services/api';
 
 const COLORS = {
   tea: '#EAE2D4',
@@ -27,6 +28,7 @@ const COLORS = {
 
 export default function DashboardLayout() {
   const user = useSelector(selectUser);
+  const dispatch = useDispatch();
   const location = useLocation();
   const baseUser = Array.isArray(user) ? user[0] : user;
   const actualUser = baseUser?.user || baseUser;
@@ -35,6 +37,15 @@ export default function DashboardLayout() {
   const isAdmin = String(role).toLowerCase() === 'admin';
   const isOrderManager = String(role).toLowerCase() === 'order_manager' || isAdmin;
   const isAccountant = String(role).toLowerCase() === 'accountant' || isAdmin;
+
+  const handleLogout = async () => {
+    try {
+      await apiService.logout();
+    } catch {
+      // proceed regardless
+    }
+    dispatch(logout());
+  };
 
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 992);
   const [collapsed, setCollapsed] = useState(true);
@@ -143,9 +154,24 @@ export default function DashboardLayout() {
         >
           <div className="d-flex justify-content-between align-items-center">
             <strong>Arpella</strong>
-            <div className="d-flex align-items-center gap-2">
+          <div className="d-flex align-items-center gap-2">
               <MdPerson />
               <span>{[actualUser?.firstName, actualUser?.lastName].filter(Boolean).join(' ') || actualUser?.userName || actualUser?.name || 'User'}</span>
+              <button
+                onClick={handleLogout}
+                style={{
+                  marginLeft: 8,
+                  padding: '4px 12px',
+                  borderRadius: 8,
+                  border: '1px solid rgba(0,0,0,.15)',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  color: COLORS.text
+                }}
+              >
+                Log out
+              </button>
             </div>
           </div>
         </header>

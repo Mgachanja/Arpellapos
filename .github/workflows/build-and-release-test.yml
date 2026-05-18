@@ -1,23 +1,18 @@
-name: Build and Release Arpella POS
+name: Build and Release Test Arpella POS
 
-# Triggers: push to main/master and any tag that starts with 'v'
 on:
   push:
-    branches: [ main, master ]
-    tags:
-      - 'v*'
-      - '!v*.*.*.*'
+    branches: [ development ]
+    tags: [ 'v*.*.*.*' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ development ]
 
-# Ensure the GITHUB_TOKEN has the rights to create releases and upload assets
 permissions:
   contents: write
   packages: write
   actions: read
 
 env:
-  # keep GH_TOKEN env for any tools that expect it; points to the built-in token
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
@@ -76,6 +71,37 @@ jobs:
             }
           }
 
+      - name: Inject Test Configuration
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('fs');
+          
+          // 1. Modify package.json
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.name = 'arpellapos-test';
+          pkg.productName = 'Arpella POS test';
+          if (!pkg.build) pkg.build = {};
+          pkg.build.appId = 'com.arpella.pos.test';
+          pkg.build.productName = 'Arpella POS test';
+          
+          const refName = process.env.GITHUB_REF_NAME || '';
+          const refType = process.env.GITHUB_REF_TYPE || '';
+          
+          if (refType === 'tag' && refName.startsWith('v')) {
+            pkg.version = refName.substring(1);
+          } else {
+            pkg.version = pkg.version + '-test';
+          }
+          
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          
+          // 2. Modify API Base URL
+          let constants = fs.readFileSync('src/app/constants/index.jsx', 'utf8');
+          constants = constants.replace('https://api.arpellastore.com', 'https://api2.arpellastore.com');
+          fs.writeFileSync('src/app/constants/index.jsx', constants);
+          "
+
       - name: Generate icons
         run: npm run make-icons
 
@@ -133,6 +159,23 @@ jobs:
             exit 1
           fi
 
+      - name: Inject Test Configuration for Version Check
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const refName = process.env.GITHUB_REF_NAME || '';
+          const refType = process.env.GITHUB_REF_TYPE || '';
+          
+          if (refType === 'tag' && refName.startsWith('v')) {
+            pkg.version = refName.substring(1);
+          } else {
+            pkg.version = pkg.version + '-test';
+          }
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+
       - name: Test auto-updater configuration
         run: |
           if npm list electron-updater >/dev/null 2>&1; then
@@ -152,10 +195,11 @@ jobs:
             echo "electron-updater integration not found in main.js"
           fi
           VERSION=$(node -p "require('./package.json').version")
-          if [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ $VERSION =~ ^[0-9]+(\.[0-9]+){2,3}(-[a-zA-Z0-9]+)?$ ]]; then
             echo "Version format is valid: $VERSION"
           else
-            echo "Version format should be semantic (x.y.z): $VERSION"
+            echo "Version format should be semantic (x.y.z or x.y.z.w): $VERSION"
+            exit 1
           fi
 
   release:
@@ -177,7 +221,15 @@ jobs:
       - name: Prepare release files
         run: |
           set -e
-          VERSION=$(node -p "require('./package.json').version")
+          
+          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == v* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            VERSION="${VERSION}-test"
+          fi
+          
           mkdir -p release-files
           # Copy relevant artifacts
           find artifacts/ -type f \( -iname "*.exe" -o -iname "*.zip" -o -iname "latest*.yml" -o -iname "*.nsis.*" \) -exec cp {} release-files/ \;
@@ -207,29 +259,17 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
+          name: Test Release ${{ github.ref_name }}
           files: release-files/*
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: true
           body: |
-            ## Changes in this Release
-
-            ### Auto-Update Support
-            This release includes auto-update functionality. The app will automatically check for updates and notify users when new versions are available.
-
+            ## Test Release
+            
+            This is an automated test build. It points to `api2.arpellastore.com`.
+            
             ### Installation Notes
-            - **Windows**: Run the `.exe` installer
-
-            ### Files
-            - Setup installer with auto-update capability
-            - Portable version available
-            - Auto-update metadata included
-
-            ### What's New
-            - Enhanced printer support
-            - Improved receipt formatting
-            - Background auto-update functionality
-            - Better error handling and logging
+            - **Windows**: Run the `.exe` installer. It will be installed as **Arpella POS test**.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

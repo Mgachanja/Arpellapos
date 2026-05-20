@@ -490,7 +490,7 @@ export default function POS() {
             productId: pid,
             quantity: Number(ci.quantity) || 1,
             priceType: ci.priceType === 'Discounted' || ci.priceType === 'Wholesale' ? 'Discounted' : 'Retail',
-            applyDiscount: ci.applyDiscount ? 1 : 0,
+            applyDiscount: !!ci.applyDiscount,
           };
         })
       );
@@ -553,7 +553,7 @@ export default function POS() {
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
           orderSource: 'POS',
-          applyDiscount: cart.some(item => !!item.applyDiscount) ? 1 : 0,
+          applyDiscount: cart.some(item => !!item.applyDiscount),
           orderitems: resolvedOrderItems,
         };
 
@@ -644,7 +644,7 @@ export default function POS() {
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
           orderSource: 'POS',
-          applyDiscount: cart.some(item => !!item.applyDiscount) ? 1 : 0,
+          applyDiscount: cart.some(item => !!item.applyDiscount),
           orderitems: resolvedOrderItems,
         };
 
@@ -711,7 +711,7 @@ export default function POS() {
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
           orderSource: 'POS',
-          applyDiscount: cart.some(item => !!item.applyDiscount) ? 1 : 0,
+          applyDiscount: cart.some(item => !!item.applyDiscount),
           orderitems: resolvedOrderItems,
         };
 

@@ -240,7 +240,8 @@ const StockManagement = () => {
   const [offerSearch, setOfferSearch] = useState("");
   const [offerSearchResults, setOfferSearchResults] = useState([]);
   const offerSearchTimeout = useRef(null);
-
+  const [offerProducts, setOfferProducts] = useState([]);
+  const [offerProductsLoading, setOfferProductsLoading] = useState(false);
 
   const fetchFlashSales = async () => {
     try {
@@ -251,6 +252,18 @@ const StockManagement = () => {
       console.error("Error fetching flash sales", error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchOfferProducts = async () => {
+    try {
+      setOfferProductsLoading(true);
+      const data = await apiService.getOfferProducts();
+      setOfferProducts(Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
+    } catch (error) {
+      console.error("Error fetching offer products", error);
+    } finally {
+      setOfferProductsLoading(false);
     }
   };
 
@@ -1607,7 +1620,7 @@ const StockManagement = () => {
             <Nav.Link active={activeView === "overview"} onClick={() => { setActiveView("overview"); fetchProducts(currentProductPage); fetchStocks(currentInventoryPage); }} className="rounded-pill px-4" style={activeView === "overview" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Overview</Nav.Link>
           </Nav.Item>
           <Nav.Item>
-            <Nav.Link active={activeView === "offers"} onClick={() => { setActiveView("offers"); fetchFlashSales(); }} className="rounded-pill px-4" style={activeView === "offers" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Offers / Flash Sales</Nav.Link>
+            <Nav.Link active={activeView === "offers"} onClick={() => { setActiveView("offers"); fetchFlashSales(); fetchOfferProducts(); }} className="rounded-pill px-4" style={activeView === "offers" ? { backgroundColor: '#1976d2', color: 'white' } : { color: '#555' }}>Offers / Flash Sales</Nav.Link>
           </Nav.Item>
         </Nav>
       </Container>
@@ -2004,6 +2017,52 @@ const StockManagement = () => {
                       <td>
                         <Button variant="outline-primary" size="sm" className="me-2" onClick={() => handleEditOfferClick(fs)}>Edit</Button>
                         <Button variant="outline-danger" size="sm" onClick={() => handleDeleteOffer(fs.id || fs.storeId || fs.flashSaleId || fs.offerId)}>Delete</Button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </Table>
+
+          <hr className="my-4" />
+          <h5 className="mb-3 text-muted fw-semibold">Other Offers</h5>
+          <Table striped bordered hover responsive>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Original Price</th>
+                <th>Offer Price</th>
+                <th>Discount</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              {offerProductsLoading ? (
+                <tr><td colSpan="5" className="text-center">Loading...</td></tr>
+              ) : offerProducts.length === 0 ? (
+                <tr><td colSpan="5" className="text-center">No other offers found.</td></tr>
+              ) : (
+                offerProducts.map((op, idx) => {
+                  const originalPrice = Number(op.price || op.originalPrice) || 0;
+                  const offerPrice = Number(op.priceAfterDiscount || op.offerPrice || op.discountValue) || 0;
+                  const discountPct = originalPrice > 0 && offerPrice > 0 && offerPrice < originalPrice
+                    ? Math.round(((originalPrice - offerPrice) / originalPrice) * 100)
+                    : null;
+                  return (
+                    <tr key={op.id ?? idx}>
+                      <td>{op.name || op.productName || `Product #${op.productId ?? op.id}`}</td>
+                      <td>{originalPrice > 0 ? `KES ${originalPrice.toLocaleString()}` : '—'}</td>
+                      <td><span className="text-danger fw-semibold">{offerPrice > 0 ? `KES ${offerPrice.toLocaleString()}` : '—'}</span></td>
+                      <td>
+                        {discountPct != null
+                          ? <span className="badge bg-danger">{discountPct}% OFF</span>
+                          : '—'}
+                      </td>
+                      <td>
+                        {op.isActive !== false
+                          ? <span className="badge bg-success">Active</span>
+                          : <span className="badge bg-secondary">Inactive</span>}
                       </td>
                     </tr>
                   );

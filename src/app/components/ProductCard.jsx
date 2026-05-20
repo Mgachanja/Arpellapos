@@ -40,8 +40,26 @@ export function ProductCard({
   useEffect(() => setRetailQty(retailItem?.quantity || ''), [retailItem]);
   useEffect(() => setWholesaleQty(wholesaleItem?.quantity || ''), [wholesaleItem]);
 
-  const apply = (type, qty) => {
-    onQuantityChange(pid, type, Number(qty || 0), safe);
+  const apply = (type, qtyStr) => {
+    let finalQty = Number(qtyStr || 0);
+    // If user clicks Add with empty input and item is not in cart, default to 1
+    if (finalQty === 0 && String(qtyStr).trim() === '') {
+      const currentItem = cartItems.find(i => i.priceType === type);
+      if (!currentItem || Number(currentItem.quantity) === 0) {
+        finalQty = 1;
+        // Update local state so the input shows '1'
+        if (type === 'Retail') setRetailQty('1');
+        if (type === 'Discounted') setWholesaleQty('1');
+      }
+    }
+    onQuantityChange(pid, type, finalQty, safe);
+  };
+
+  const handleKeyDown = (e, type, qty) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      apply(type, qty);
+    }
   };
 
   return (
@@ -166,6 +184,7 @@ export function ProductCard({
                 className="form-control form-control-sm qty-input"
                 value={retailQty}
                 onChange={e => setRetailQty(e.target.value)}
+                onKeyDown={e => handleKeyDown(e, 'Retail', retailQty)}
                 aria-label={`Retail quantity for ${safe.name}`}
               />
               <button
@@ -196,6 +215,7 @@ export function ProductCard({
                 className="form-control form-control-sm qty-input"
                 value={wholesaleQty}
                 onChange={e => setWholesaleQty(e.target.value)}
+                onKeyDown={e => handleKeyDown(e, 'Discounted', wholesaleQty)}
                 aria-label={`Wholesale quantity for ${safe.name}`}
               />
               <button
@@ -229,6 +249,7 @@ export function ProductCard({
               className="form-control form-control-sm qty-input"
               value={retailQty}
               onChange={e => setRetailQty(e.target.value)}
+              onKeyDown={e => handleKeyDown(e, 'Retail', retailQty)}
               aria-label={`Retail quantity for ${safe.name}`}
             />
             <button
@@ -256,6 +277,7 @@ export function ProductCard({
               className="form-control form-control-sm qty-input"
               value={wholesaleQty}
               onChange={e => setWholesaleQty(e.target.value)}
+              onKeyDown={e => handleKeyDown(e, 'Discounted', wholesaleQty)}
               aria-label={`Wholesale quantity for ${safe.name}`}
             />
             <button

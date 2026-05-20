@@ -373,15 +373,16 @@ export default function SalesDashboard() {
     (order.items || []).reduce((sum, it) => {
       const pType = String(it.priceType || 'Retail').toLowerCase();
       const isWholesale = pType.includes('wholesale') || pType.includes('discount');
+      const discountApplied = it.applyDiscount === 1 || it.applyDiscount === true;
 
       let sell = 0;
       if (num(it.sellingPrice) > 0) {
         sell = num(it.sellingPrice);
+      } else if (discountApplied && num(it.priceAfterDiscount) > 0) {
+        sell = num(it.priceAfterDiscount);
       } else if (isWholesale) {
-        // If wholesale/discounted, prefer explicit discounted price
-        sell = num(it.priceAfterDiscount) || num(it.price);
+        sell = num(it.wholesalePrice) || num(it.price);
       } else {
-        // Default to retail price
         sell = num(it.price);
       }
 
@@ -416,12 +417,15 @@ export default function SalesDashboard() {
       (o.items || []).forEach(it => {
         const pType = String(it.priceType || '').toLowerCase();
         const isWholesale = pType.includes('wholesale') || pType.includes('discount');
-        
+        const discountApplied = it.applyDiscount === 1 || it.applyDiscount === true;
+
         let itSell = 0;
         if (num(it.sellingPrice) > 0) {
           itSell = num(it.sellingPrice);
+        } else if (discountApplied && num(it.priceAfterDiscount) > 0) {
+          itSell = num(it.priceAfterDiscount);
         } else if (isWholesale) {
-          itSell = num(it.priceAfterDiscount) || num(it.price);
+          itSell = num(it.wholesalePrice) || num(it.price);
         } else {
           itSell = num(it.price);
         }
@@ -801,12 +805,15 @@ export default function SalesDashboard() {
                     {selectedOrder.items.map((it, idx) => {
                       const pType = String(it.priceType || 'Retail').toLowerCase();
                       const isWholesale = pType.includes('wholesale') || pType.includes('discount');
+                      const discountApplied = it.applyDiscount === 1 || it.applyDiscount === true;
 
                       let sell = 0;
                       if (num(it.sellingPrice) > 0) {
                         sell = num(it.sellingPrice);
+                      } else if (discountApplied && num(it.priceAfterDiscount) > 0) {
+                        sell = num(it.priceAfterDiscount);
                       } else if (isWholesale) {
-                        sell = num(it.priceAfterDiscount) || num(it.price);
+                        sell = num(it.wholesalePrice) || num(it.price);
                       } else {
                         sell = num(it.price ?? it.unitPrice ?? it.salePrice);
                       }
@@ -815,14 +822,24 @@ export default function SalesDashboard() {
                       const cost = getUnitCost(it);
                       const profit = (sell - cost) * qty;
                       return (
-                        <tr key={idx}>
-                          <td className="item-name">{it.name ?? it.title ?? inventoryCostMap.idToNameMap?.get(String(it.productId || it.id)) ?? `Product ${it.productId || ''}`}</td>
+                        <tr key={idx} style={discountApplied ? { backgroundColor: '#fffbe6' } : {}}>
+                          <td className="item-name">
+                            {it.name ?? it.title ?? inventoryCostMap.idToNameMap?.get(String(it.productId || it.id)) ?? `Product ${it.productId || ''}`}
+                            {discountApplied && (
+                              <span style={{ marginLeft: 6, fontSize: '0.68rem', background: '#f59e0b', color: '#fff', borderRadius: 4, padding: '1px 6px', fontWeight: 600 }}>Disc</span>
+                            )}
+                          </td>
                           <td>
                             <span className={`badge small ${String(it.priceType || 'Retail').toLowerCase() === 'retail' ? 'dark-brown' : 'orange'}`}>
                               {it.priceType || 'Retail'}
                             </span>
                           </td>
-                          <td className="text-right">{formatKsh(sell)}</td>
+                          <td className="text-right">
+                            {formatKsh(sell)}
+                            {discountApplied && num(it.priceAfterDiscount) > 0 && (
+                              <span style={{ marginLeft: 4, fontSize: '0.68rem', color: '#9ca3af', textDecoration: 'line-through' }}>{formatKsh(num(it.wholesalePrice) || num(it.price))}</span>
+                            )}
+                          </td>
                           <td className="text-center">{qty}</td>
                           <td className="text-right">{formatKsh(cost)}</td>
                           <td className={`text-right ${profit >= 0 ? 'profit-positive' : 'profit-negative'}`}>{formatKsh(profit)}</td>

@@ -429,8 +429,8 @@ export const calculateCartTotal = (cartItems = []) => {
     if (item.priceType === 'Retail') {
       price = item.price || 0;
     } else {
-      // Wholesale: wholesalePrice is the correct field; priceAfterDiscount is for flash sale offers only
-      price = Number(item.wholesalePrice) || Number(item.priceAfterDiscount) || Number(item.price) || 0;
+      // Wholesale: strictly wholesalePrice, fallback to price
+      price = Number(item.wholesalePrice) || Number(item.price) || 0;
     }
     const quantity = item.quantity || 1;
     return total + (price * quantity);

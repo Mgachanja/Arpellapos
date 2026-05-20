@@ -104,8 +104,11 @@ export default function POS() {
       if (item?.priceType === 'Retail') {
         price = Number(item.price) || 0;
       } else {
-        // Wholesale: use wholesalePrice if available, fall back to priceAfterDiscount then price
-        price = Number(item.wholesalePrice) || Number(item.priceAfterDiscount) || Number(item.price) || 0;
+        // Wholesale strictly uses wholesalePrice, falls back to retail price
+        price = Number(item.wholesalePrice) || Number(item.price) || 0;
+      }
+      if (item?.applyDiscount && item?.priceAfterDiscount && Number(item.priceAfterDiscount) > 0) {
+        price = Number(item.priceAfterDiscount);
       }
       const qty = Number(item?.quantity) || 1;
       return total + price * qty;
@@ -487,6 +490,7 @@ export default function POS() {
             productId: pid,
             quantity: Number(ci.quantity) || 1,
             priceType: ci.priceType === 'Discounted' || ci.priceType === 'Wholesale' ? 'Discounted' : 'Retail',
+            applyDiscount: ci.applyDiscount ? 1 : 0,
           };
         })
       );
@@ -549,6 +553,7 @@ export default function POS() {
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
           orderSource: 'POS',
+          applyDiscount: cart.some(item => !!item.applyDiscount) ? 1 : 0,
           orderitems: resolvedOrderItems,
         };
 
@@ -639,6 +644,7 @@ export default function POS() {
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
           orderSource: 'POS',
+          applyDiscount: cart.some(item => !!item.applyDiscount) ? 1 : 0,
           orderitems: resolvedOrderItems,
         };
 
@@ -705,6 +711,7 @@ export default function POS() {
           longitude: coords?.lng ?? 0,
           buyerPin: 'N/A',
           orderSource: 'POS',
+          applyDiscount: cart.some(item => !!item.applyDiscount) ? 1 : 0,
           orderitems: resolvedOrderItems,
         };
 
@@ -982,7 +989,6 @@ export default function POS() {
             Number(
               raw.priceAfterDiscount ??
                 raw.discountedPrice ??
-                raw.wholesalePrice ??
                 raw.price_after_discount ??
                 raw.discountPrice ??
                 0

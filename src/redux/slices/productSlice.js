@@ -315,6 +315,37 @@ const productsSlice = createSlice({
       state.cart = updateCartItemQuantityHelper(state.cart, productId, quantity);
     },
 
+    toggleApplyDiscount: (state, action) => {
+      const identifier = action.payload;
+      const { extractId } = require('./productsSlice-helpers');
+      let targetId = identifier;
+      let targetPriceType = null;
+      if (typeof identifier === 'object' && identifier !== null) {
+        targetId = extractId(identifier);
+        targetPriceType = identifier.priceType;
+      } else if (typeof identifier === 'string' && identifier.includes('_')) {
+        const parts = identifier.split('_');
+        targetPriceType = parts.pop();
+        targetId = parts.join('_');
+      }
+      state.cart = state.cart.map(item => {
+        if (extractId(item) === String(targetId) && (!targetPriceType || item.priceType === targetPriceType)) {
+          return { ...item, applyDiscount: !item.applyDiscount };
+        }
+        return item;
+      });
+    },
+
+    toggleApplyDiscountAll: (state, action) => {
+      const { apply } = action.payload; // boolean
+      state.cart = state.cart.map(item => {
+        if (item.priceAfterDiscount && Number(item.priceAfterDiscount) > 0) {
+          return { ...item, applyDiscount: apply };
+        }
+        return item;
+      });
+    },
+
     clearCart: (state) => {
       state.cart = [];
     },
@@ -398,6 +429,8 @@ export const {
   addItemToCart,
   removeItemFromCart,
   updateCartItemQuantity,
+  toggleApplyDiscount,
+  toggleApplyDiscountAll,
   clearCart,
   setFilter,
   clearFilters,
@@ -424,9 +457,12 @@ export const selectCartItemCount = (state) => {
 export const selectCartTotal = (state) => {
   const items = Array.isArray(state.products.cart) ? state.products.cart : [];
   return items.reduce((total, item) => {
-    const price = item.priceType === 'Retail'
+    let price = item.priceType === 'Retail'
       ? (Number(item.price) || 0)
-      : (Number(item.wholesalePrice) || Number(item.priceAfterDiscount) || Number(item.price) || 0);
+      : (Number(item.wholesalePrice) || Number(item.price) || 0);
+    if (item.applyDiscount && item.priceAfterDiscount && Number(item.priceAfterDiscount) > 0) {
+      price = Number(item.priceAfterDiscount);
+    }
     return total + (price * (item.quantity || 1));
   }, 0);
 };

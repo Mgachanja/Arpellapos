@@ -5,11 +5,12 @@ import api from '../../services/api';
 
 const KSH = (v) => `Ksh ${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function MpesaTransactions({ show = false, onHide = () => {}, onApply = () => {} }) {
+export default function MpesaTransactions({ show = false, onHide = () => {}, onApply = () => {}, defaultBuyerPin = '' }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [applying, setApplying] = useState(null);
+  const [buyerPin, setBuyerPin] = useState(defaultBuyerPin);
 
   const fetchTransactions = useCallback(async () => {
     setLoading(true);
@@ -27,18 +28,21 @@ export default function MpesaTransactions({ show = false, onHide = () => {}, onA
   }, []);
 
   useEffect(() => {
-    if (show) fetchTransactions();
-    else {
+    if (show) {
+      fetchTransactions();
+      setBuyerPin(defaultBuyerPin || '');
+    } else {
       setTransactions([]);
       setError(null);
       setApplying(null);
+      setBuyerPin('');
     }
-  }, [show, fetchTransactions]);
+  }, [show, fetchTransactions, defaultBuyerPin]);
 
   const handleApply = async (tx) => {
     setApplying(tx.transactionId);
     try {
-      await onApply(tx);
+      await onApply(tx, buyerPin);
       onHide();
     } catch (err) {
       // error toasted by parent
@@ -57,6 +61,22 @@ export default function MpesaTransactions({ show = false, onHide = () => {}, onA
       </Modal.Header>
 
       <Modal.Body style={{ maxHeight: '65vh', overflowY: 'auto' }}>
+        <div className="mb-3">
+          <label className="form-label fw-semibold">KRA PIN (Optional)</label>
+          <div className="input-group">
+            <span className="input-group-text"><i className="fas fa-file-invoice-dollar" /></span>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Enter customer KRA PIN for this order"
+              value={buyerPin}
+              onChange={(e) => setBuyerPin(e.target.value.toUpperCase())}
+              style={{ fontSize: '1rem', textTransform: 'uppercase' }}
+            />
+          </div>
+        </div>
+        <hr />
+
         {loading && (
           <div className="text-center py-4">
             <Spinner animation="border" size="sm" className="me-2" />
@@ -97,7 +117,12 @@ export default function MpesaTransactions({ show = false, onHide = () => {}, onA
                   <div className="flex-grow-1">
                     <div className="fw-semibold">{name || 'Unknown'}</div>
                     <div className="text-muted small mt-1">
-                      <span className="me-2">
+                      <span
+                        className="me-2 text-primary fw-semibold"
+                        style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                        onClick={() => handleApply(tx)}
+                        title="Apply this transaction to checkout"
+                      >
                         <i className="fas fa-receipt me-1" />
                         {txId}
                       </span>

@@ -111,6 +111,22 @@ export default function PaymentForm({ paymentType, setPaymentType, paymentData, 
           </Form.Group>
         </>
       )}
+
+      {paymentType && (
+        <Form.Group className="mb-3">
+          <Form.Label className="fw-semibold">KRA PIN (Optional)</Form.Label>
+          <div className="input-group input-group-lg">
+            <span className="input-group-text"><i className="fas fa-file-invoice-dollar" /></span>
+            <Form.Control
+              type="text"
+              placeholder="Enter customer KRA PIN"
+              value={paymentData.buyerPin || ''}
+              onChange={(e) => setPaymentData({ ...paymentData, buyerPin: e.target.value.toUpperCase() })}
+              style={{ fontSize: '1.1rem' }}
+            />
+          </div>
+        </Form.Group>
+      )}
     </>
   );
 }

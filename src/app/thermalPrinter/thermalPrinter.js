@@ -171,6 +171,7 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
       user = {},
       orderNumber = '',
       customerPhone = '',
+      buyerPin = '',
       storeSettings: incomingStoreSettings = {}
     } = receiptData || {};
 
@@ -229,6 +230,7 @@ export const printOrderReceipt = async (receiptData, printerName = null, storeSe
       user: normalizedUser,
       orderNumber: String(orderNumber || 'N/A'),
       customerPhone: String(customerPhone || 'Walk-in').trim(),
+      buyerPin: String(buyerPin || '').trim(),
       storeSettings: finalStoreSettings
     };
 

@@ -341,7 +341,8 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       orderNumber = '',
       customerPhone = '',
       user: orderUser = {},
-      cashier: orderCashier = {}
+      cashier: orderCashier = {},
+      buyerPin = ''
     } = orderData || {};
 
     const userObj = orderUser && Object.keys(orderUser).length > 0 ? orderUser : orderCashier;
@@ -418,7 +419,24 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     data.push({ type: 'text', value: `Date: ${timestamp.toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}`, style: { fontSize: 10, textAlign: 'left' } });
     data.push({ type: 'text', value: `Receipt #: ${orderIdFinal}`, style: { fontSize: 11, textAlign: 'left', fontWeight: '700' } });
     data.push({ type: 'text', value: `Served by: ${cashierName}`, style: { fontSize: 11, textAlign: 'left' } });
-    data.push({ type: 'text', value: `Customer: ${maskPhoneForReceipt((paymentType === 'mpesa' || paymentType === 'both') ? (paymentData.mpesaPhone || '').trim() || '' : customerPhone || '')}`, style: { fontSize: 11, textAlign: 'left', marginBottom: '6px' } });
+    const customerPhoneVal = (paymentType === 'mpesa' || paymentType === 'both')
+      ? (paymentData.mpesaPhone || '').trim() || ''
+      : customerPhone || '';
+    const hasBuyerPin = buyerPin && buyerPin !== 'N/A' && buyerPin.trim() !== '';
+
+    data.push({
+      type: 'text',
+      value: `Customer: ${maskPhoneForReceipt(customerPhoneVal)}`,
+      style: { fontSize: 11, textAlign: 'left', marginBottom: hasBuyerPin ? '0px' : '6px' }
+    });
+
+    if (hasBuyerPin) {
+      data.push({
+        type: 'text',
+        value: `Customer PIN: ${buyerPin.trim()}`,
+        style: { fontSize: 11, textAlign: 'left', marginBottom: '6px' }
+      });
+    }
 
     // Items table header and body
     const tableHeader = [

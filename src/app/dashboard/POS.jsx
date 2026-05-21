@@ -61,6 +61,7 @@ export default function POS() {
     mpesaPhone: '',
     mpesaAmount: '',
     mpesaCode: '',
+    buyerPin: '',
   });
   const [loadingProducts, setLoadingProducts] = useState(new Set());
   const [processingOrder, setProcessingOrder] = useState(false);
@@ -319,6 +320,7 @@ export default function POS() {
           orderData?.id ||
           `ORD-${Date.now().toString().slice(-6)}`,
         customerPhone: maskedCustomerPhone,
+        buyerPin: orderData?.buyerPin || usedPaymentData?.buyerPin || paymentData?.buyerPin || '',
         storeSettings,
       };
 
@@ -345,7 +347,9 @@ export default function POS() {
             mpesaPhone: usedPaymentData.mpesaPhone || '',
             mpesaCode: usedPaymentData.mpesaCode || '',
             change: paymentDetails.change || 0,
+            buyerPin: usedPaymentData.buyerPin || '',
           },
+          buyerPin: orderData?.buyerPin || usedPaymentData.buyerPin || '',
           status,
           createdAt: Date.now(),
         };
@@ -360,7 +364,7 @@ export default function POS() {
       if (!cartSnapshot) {
         dispatch(clearCart());
         setPaymentType('');
-        setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' });
+        setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '', buyerPin: '' });
         setCurrentOrderId(null);
         setProcessingOrder(false);
         setPendingOrderData(null);
@@ -382,7 +386,7 @@ export default function POS() {
       if (cartSnapshot) {
         dispatch(clearCart());
         setPaymentType('');
-        setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '' });
+        setPaymentData({ cashAmount: '', mpesaPhone: '', mpesaAmount: '', mpesaCode: '', buyerPin: '' });
         setCurrentOrderId(null);
         setPendingOrderData(null);
         setProcessingOrder(false);
@@ -551,7 +555,7 @@ export default function POS() {
           orderPaymentType: pt === 'cash' ? 'Cash' : pt === 'mpesa' ? 'Mpesa' : 'Hybrid',
           latitude: coords?.lat ?? 0,
           longitude: coords?.lng ?? 0,
-          buyerPin: 'N/A',
+          buyerPin: pd.buyerPin || 'N/A',
           orderSource: 'POS',
           applyDiscount: cart.some(item => !!item.applyDiscount),
           orderitems: resolvedOrderItems,
@@ -616,7 +620,7 @@ export default function POS() {
   );
 
   const handleC2BTransaction = useCallback(
-    async (tx) => {
+    async (tx, customBuyerPin = null) => {
       if (!cart || cart.length === 0) {
         toast.error('Cart is empty – add items before applying an M-Pesa transaction');
         throw new Error('empty cart');
@@ -634,6 +638,9 @@ export default function POS() {
         }
 
         const txId = tx.transactionId || tx.TransID || tx.transaction_id || '';
+        const chosenBuyerPin = (customBuyerPin !== null && customBuyerPin !== undefined)
+          ? customBuyerPin
+          : (paymentData.buyerPin || '');
 
         const payload = {
           userId: (user && (user.phone || user.userName)) || 'N/A',
@@ -642,7 +649,7 @@ export default function POS() {
           transactionId: txId,
           latitude: coords?.lat ?? 0,
           longitude: coords?.lng ?? 0,
-          buyerPin: 'N/A',
+          buyerPin: chosenBuyerPin || 'N/A',
           orderSource: 'POS',
           applyDiscount: cart.some(item => !!item.applyDiscount),
           orderitems: resolvedOrderItems,
@@ -651,7 +658,7 @@ export default function POS() {
         const cartSnapshot = JSON.parse(JSON.stringify(cart));
 
         const res = await api.post('/order', payload, { headers: { 'Content-Type': 'application/json' } });
-        await handleOrderCompletion(res.data, cartSnapshot, 'mpesa', {});
+        await handleOrderCompletion(res.data, cartSnapshot, 'mpesa', { buyerPin: chosenBuyerPin });
       } catch (err) {
         const msg = err?.response?.data?.message || err?.message || 'C2B order failed';
         console.error('[POS][handleC2BTransaction] error', err);
@@ -660,7 +667,7 @@ export default function POS() {
         throw err;
       }
     },
-    [cart, user, coords, buildOrderItemsResolved, handleOrderCompletion]
+    [cart, user, coords, buildOrderItemsResolved, handleOrderCompletion, paymentData]
   );
 
   const completeCheckout = useCallback(
@@ -709,7 +716,7 @@ export default function POS() {
           orderPaymentType: pt === 'cash' ? 'Cash' : 'Mpesa',
           latitude: coords?.lat ?? 0,
           longitude: coords?.lng ?? 0,
-          buyerPin: 'N/A',
+          buyerPin: pd.buyerPin || 'N/A',
           orderSource: 'POS',
           applyDiscount: cart.some(item => !!item.applyDiscount),
           orderitems: resolvedOrderItems,
@@ -1796,6 +1803,7 @@ export default function POS() {
         show={showMpesaTx}
         onHide={() => setShowMpesaTx(false)}
         onApply={handleC2BTransaction}
+        defaultBuyerPin={paymentData.buyerPin}
       />
 
       <style>{`

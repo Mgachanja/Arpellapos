@@ -243,6 +243,13 @@ const StockManagement = () => {
   const [offerProducts, setOfferProducts] = useState([]);
   const [offerProductsLoading, setOfferProductsLoading] = useState(false);
 
+  // Other Offers specific state
+  const [showOtherOfferModal, setShowOtherOfferModal] = useState(false);
+  const [otherOfferForm, setOtherOfferForm] = useState({ productId: "", priceAfterDiscount: "" });
+  const [otherOfferSearch, setOtherOfferSearch] = useState("");
+  const [otherOfferSearchResults, setOtherOfferSearchResults] = useState([]);
+  const otherOfferSearchTimeout = useRef(null);
+
   const fetchFlashSales = async () => {
     try {
       setIsLoading(true);
@@ -334,6 +341,43 @@ const StockManagement = () => {
       fetchFlashSales();
     } catch (error) {
       showToastMessage("Failed to delete offer", "danger");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRemoveOtherOffer = async (id) => {
+    try {
+      setIsSubmitting(true);
+      await apiService.updateProductPrice(id, { priceAfterDiscount: 0 });
+      showToastMessage("Other offer removed successfully", "success");
+      fetchOfferProducts();
+    } catch (error) {
+      showToastMessage("Failed to remove other offer", "danger");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateOtherOffer = async (e) => {
+    e.preventDefault();
+    if (!otherOfferForm.productId || !otherOfferForm.priceAfterDiscount) {
+      showToastMessage("Please select a product and enter the offer price", "warning");
+      return;
+    }
+    
+    try {
+      setIsSubmitting(true);
+      await apiService.updateProductPrice(otherOfferForm.productId, { 
+        priceAfterDiscount: Number(otherOfferForm.priceAfterDiscount) 
+      });
+      showToastMessage("Other offer added successfully", "success");
+      setShowOtherOfferModal(false);
+      setOtherOfferForm({ productId: "", priceAfterDiscount: "" });
+      setOtherOfferSearch("");
+      fetchOfferProducts();
+    } catch (error) {
+      showToastMessage("Failed to add other offer", "danger");
     } finally {
       setIsSubmitting(false);
     }
@@ -729,6 +773,28 @@ const StockManagement = () => {
       if (offerSearchTimeout.current) clearTimeout(offerSearchTimeout.current);
     };
   }, [offerSearch, allProducts]);
+
+  useEffect(() => {
+    if (otherOfferSearchTimeout.current) clearTimeout(otherOfferSearchTimeout.current);
+    otherOfferSearchTimeout.current = setTimeout(() => {
+      const q = (otherOfferSearch || "").trim().toLowerCase();
+      if (!q) {
+        setOtherOfferSearchResults([]);
+      } else {
+        setOtherOfferSearchResults(
+          allProducts
+            .filter((prod) => {
+              const name = (prod.name || "").toString().toLowerCase();
+              return name.includes(q) || String(prod.id).includes(q);
+            })
+            .slice(0, 50)
+        );
+      }
+    }, 100);
+    return () => {
+      if (otherOfferSearchTimeout.current) clearTimeout(otherOfferSearchTimeout.current);
+    };
+  }, [otherOfferSearch, allProducts]);
 
   const pickRestockProduct = (entryIndex, productId) => {
     updateRestockEntry(entryIndex, "productId", productId);
@@ -2026,7 +2092,12 @@ const StockManagement = () => {
           </Table>
 
           <hr className="my-4" />
-          <h5 className="mb-3 text-muted fw-semibold">Other Offers</h5>
+          <div className="d-flex justify-content-between mb-3 align-items-center">
+            <h5 className="mb-0 text-muted fw-semibold">Other Offers</h5>
+            <Button variant="primary" size="sm" onClick={() => setShowOtherOfferModal(true)}>
+              + Add Other Offer
+            </Button>
+          </div>
           <Table striped bordered hover responsive>
             <thead>
               <tr>
@@ -2035,6 +2106,7 @@ const StockManagement = () => {
                 <th>Offer Price</th>
                 <th>Discount</th>
                 <th>Active</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -2063,6 +2135,11 @@ const StockManagement = () => {
                         {op.isActive !== false
                           ? <span className="badge bg-success">Active</span>
                           : <span className="badge bg-secondary">Inactive</span>}
+                      </td>
+                      <td>
+                        <Button variant="outline-danger" size="sm" onClick={() => handleRemoveOtherOffer(op.productId ?? op.id)}>
+                          Remove
+                        </Button>
                       </td>
                     </tr>
                   );
@@ -2269,6 +2346,88 @@ const StockManagement = () => {
             <Button variant="secondary" onClick={() => setShowOfferModal(false)} disabled={isSubmitting}>Cancel</Button>
             <Button variant="primary" type="submit" disabled={isSubmitting}>
               {isSubmitting ? "Creating..." : "Save Offer"}
+            </Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
+
+      {/* CREATE / EDIT OTHER OFFER MODAL */}
+      <Modal show={showOtherOfferModal} onHide={() => {
+        if (!isSubmitting) {
+          setShowOtherOfferModal(false);
+          setOtherOfferForm({ productId: "", priceAfterDiscount: "" });
+          setOtherOfferSearch("");
+        }
+      }}>
+        <Form onSubmit={handleCreateOtherOffer}>
+          <Modal.Header closeButton>
+            <Modal.Title>Add Other Offer</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <div className="mb-3 p-3 border rounded">
+              <h6>Select Product</h6>
+              <Form.Group className="mb-3">
+                <Form.Label>Product</Form.Label>
+                {otherOfferForm.productId ? (
+                  <div className="d-flex align-items-center gap-2 p-2 border rounded">
+                    <strong>Selected: </strong> {allProducts.find(p => String(p.id) === String(otherOfferForm.productId))?.name || otherOfferForm.productId}
+                    <Button variant="outline-danger" size="sm" onClick={() => setOtherOfferForm({ ...otherOfferForm, productId: "" })}>Change</Button>
+                  </div>
+                ) : (
+                  <div style={{ position: "relative" }}>
+                    <Form.Control 
+                      type="text" 
+                      placeholder="Search product by name or ID..."
+                      value={otherOfferSearch}
+                      onChange={(e) => setOtherOfferSearch(e.target.value)}
+                    />
+                    {otherOfferSearch && otherOfferSearchResults.length > 0 && (
+                      <div className="restock-search-results mt-2" style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #ddd", borderRadius: 4, position: "absolute", zIndex: 10, backgroundColor: "white", width: "100%", top: "40px" }}>
+                        {otherOfferSearchResults.map((prod) => (
+                          <div 
+                            key={prod.id} 
+                            className="restock-search-item" 
+                            onClick={() => {
+                              setOtherOfferForm({ ...otherOfferForm, productId: prod.id });
+                              setOtherOfferSearch("");
+                            }}
+                          >
+                            <strong>{prod.name}</strong> <span className="text-muted" style={{ fontSize: 12 }}>({prod.id})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label>Offer Price (KES)</Form.Label>
+                <Form.Control
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  placeholder="Enter the discounted selling price"
+                  value={otherOfferForm.priceAfterDiscount}
+                  onChange={(e) => setOtherOfferForm({ ...otherOfferForm, priceAfterDiscount: e.target.value })}
+                />
+                {otherOfferForm.priceAfterDiscount && otherOfferForm.productId && (() => {
+                  const orig = Number(allProducts.find(p => String(p.id) === String(otherOfferForm.productId))?.price) || 0;
+                  const offer = Number(otherOfferForm.priceAfterDiscount) || 0;
+                  const pct = orig > 0 && offer > 0 && offer < orig
+                    ? Math.round(((orig - offer) / orig) * 100)
+                    : null;
+                  return pct != null
+                    ? <small className="text-danger fw-semibold d-block mt-1">≈ {pct}% discount (from KES {orig.toLocaleString()})</small>
+                    : null;
+                })()}
+              </Form.Group>
+            </div>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowOtherOfferModal(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="primary" type="submit" disabled={isSubmitting || !otherOfferForm.productId || !otherOfferForm.priceAfterDiscount}>
+              {isSubmitting ? "Adding..." : "Add Offer"}
             </Button>
           </Modal.Footer>
         </Form>

@@ -72,6 +72,7 @@ export const apiService = {
   createProduct: (productData) => apiClient.post('/products', productData),
   updateProduct: (id, productData) => apiClient.put(`/products/${id}`, productData),
   deleteProduct: (id) => apiClient.delete(`/products/${id}`),
+  updateProductPrice: (id, data) => apiClient.put(`/product-price/${id}`, data),
 
   // Inventories (new)
   // - endpoint returns paginated inventories similar to products

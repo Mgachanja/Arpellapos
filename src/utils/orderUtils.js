@@ -9,9 +9,18 @@ export const mapCartToReceiptItems = (cartItems) => {
     if (!Array.isArray(cartItems)) return [];
 
     return cartItems.map(ci => {
-        const sellingPrice = ci.priceType === 'Retail'
-            ? (Number(ci.price) || 0)
-            : (Number(ci.priceAfterDiscount) || Number(ci.price) || 0);
+        let sellingPrice = 0;
+        if (ci.priceType === 'Retail') {
+            sellingPrice = Number(ci.price) || 0;
+        } else if (ci.priceType === 'Wholesale') {
+            sellingPrice = Number(ci.wholesalePrice) || Number(ci.price) || 0;
+        } else {
+            sellingPrice = Number(ci.priceAfterDiscount) || Number(ci.price) || 0;
+        }
+        
+        if (ci.applyDiscount && ci.priceAfterDiscount && Number(ci.priceAfterDiscount) > 0) {
+            sellingPrice = Number(ci.priceAfterDiscount);
+        }
 
         const quantity = Number(ci.quantity) || 1;
         const lineTotal = sellingPrice * quantity;

@@ -17,6 +17,7 @@ const ThermalPrinterSettings = lazy(() => import('./app/thermalPrinter/index.jsx
 const Staff = lazy(() => import('./app/dashboard/staff.jsx'));
 const Settings = lazy(() => import('./app/dashboard/settings.jsx'));
 const SmsTemplate = lazy(() => import('./app/dashboard/SmsTemplate.jsx'));
+const CustomerServices = lazy(() => import('./app/dashboard/CustomerServices.jsx'));
 
 const isElectron = !!(typeof window !== 'undefined' && window.require && window.require('electron'));
 const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
@@ -267,6 +268,7 @@ function InnerRoutes({ authed }) {
             <Route path="settings" element={isAdmin ? <Settings /> : <RedirectWithTransition to="pos" replace />} />
             <Route path="thermal-settings" element={<ThermalPrinterSettings />} />
             <Route path="sms-template" element={isAdmin ? <SmsTemplate /> : <RedirectWithTransition to="pos" replace />} />
+            <Route path="customer-services" element={<CustomerServices />} />
             <Route path="*" element={<RedirectWithTransition to="pos" replace />} />
           </Route>
 

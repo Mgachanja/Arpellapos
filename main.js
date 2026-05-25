@@ -450,7 +450,10 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     let subtotalCalc = 0;
 
     for (const item of cart) {
-      const nameRaw = String(item.name || item.productName || 'Item');
+      let nameRaw = String(item.name || item.productName || 'Item');
+      if (item.priceType && item.priceType !== 'Retail') {
+        nameRaw += ` (${item.priceType})`;
+      }
       const qty = Number(item.quantity || item.qty || 1);
       const unit = Number(item.salePrice || item.price || 0);
       const lineTotal = +(qty * unit);
@@ -478,7 +481,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     if (discountAmount && discountAmount > 0) tableFooter.push([{ type: 'text', value: 'Discount' }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}` }]);
     tableFooter.push([{ type: 'text', value: 'TOTAL' }, { type: 'text', value: formatCurrency(grandTotal) }]);
 
-    data.push({ type: 'table', tableHeader, tableBody, tableFooter, tableHeaderStyle: { backgroundColor: '#000', color: '#fff' }, tableBodyStyle: { border: '0.5px solid #ddd' }, tableFooterStyle: { fontWeight: '700' } });
+    data.push({ type: 'table', tableHeader, tableBody, tableFooter, tableHeaderStyle: { color: '#000', borderBottom: '1px dashed #000', paddingBottom: '4px' }, tableBodyStyle: { border: 'none', paddingTop: '4px' }, tableFooterStyle: { fontWeight: '700', borderTop: '1px dashed #000', paddingTop: '4px' } });
 
     data.push({ type: 'divider' });
 
@@ -530,12 +533,14 @@ data.push({
   style: { fontSize: 9, textAlign: 'center' }
 });
 
-// Play Store QR (smaller than the receipt QR)
+// Barcode for Order ID
 data.push({
-  type: 'qrCode',
-  value: playStoreUrl,
-  height: 60,
-  width: 60,
+  type: 'barCode',
+  value: orderIdFinal,
+  height: 40,
+  width: 2,
+  displayValue: true,
+  fontsize: 12,
   position: 'center'
 });
 

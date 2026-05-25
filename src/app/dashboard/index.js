@@ -12,7 +12,8 @@ import {
   MdInventory,
   MdPeople,
   MdSettings,
-  MdSms
+  MdSms,
+  MdSupportAgent
 } from 'react-icons/md';
 import logo from '../../assets/logo.jpeg';
 import { useSelector, useDispatch } from 'react-redux';
@@ -110,6 +111,7 @@ export default function DashboardLayout() {
           <NavItem to="/app/dashboard/orders" icon={MdListAlt} label="Orders" collapsed={collapsed} />
           <NavItem to="/app/dashboard/reports" icon={MdBarChart} label="Reports" collapsed={collapsed} />
           <NavItem to="/app/dashboard/stockManagement" icon={MdInventory} label="Stock Management" collapsed={collapsed} />
+          <NavItem to="/app/dashboard/customer-services" icon={MdSupportAgent} label="Customer Service" collapsed={collapsed} />
           {isAdmin && (
             <>
               <NavItem to="/app/dashboard/staff" icon={MdPeople} label="Staff" collapsed={collapsed} />

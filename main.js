@@ -315,7 +315,7 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
 });
 
 // Helper utilities used by print-receipt
-const formatCurrency = (amount) => `Ksh ${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatCurrency = (amount) => `${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const maskPhoneForReceipt = (rawPhone) => {
   if (!rawPhone) return 'Walk-in Customer';
   const s = String(rawPhone).trim();
@@ -373,7 +373,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
         userObj.email
       ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
       const chosen = candidates.length > 0 ? candidates[0] : 'Staff';
-      return (chosen.split(/\s+/)[0] || chosen).trim();
+      return chosen.trim();
     };
 
     const cashierName = getCashierName();
@@ -418,6 +418,17 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
 
     data.push({ type: 'text', value: `Date: ${timestamp.toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}`, style: { fontSize: 10, textAlign: 'left' } });
     data.push({ type: 'text', value: `Receipt #: ${orderIdFinal}`, style: { fontSize: 11, textAlign: 'left', fontWeight: '700' } });
+    
+    // Barcode for Order ID at the top below receipt #
+    data.push({
+      type: 'barCode',
+      value: orderIdFinal,
+      height: 40,
+      width: 2,
+      displayValue: true,
+      fontsize: 12,
+      position: 'left'
+    });
     data.push({ type: 'text', value: `Served by: ${cashierName}`, style: { fontSize: 11, textAlign: 'left' } });
     const customerPhoneVal = (paymentType === 'mpesa' || paymentType === 'both')
       ? (paymentData.mpesaPhone || '').trim() || ''
@@ -440,7 +451,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
 
     // Items table header and body
     const tableHeader = [
-      { type: 'text', value: 'Item' },
+      { type: 'text', value: 'Item', style: { textAlign: 'left' } },
       { type: 'text', value: 'Qty' },
       { type: 'text', value: 'Unit' },
       { type: 'text', value: 'Total' }
@@ -460,7 +471,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       subtotalCalc += lineTotal;
 
       tableBody.push([
-        { type: 'text', value: (nameRaw.length > 28 ? nameRaw.slice(0, 25) + '...' : nameRaw), style: { fontSize: 10 } },
+        { type: 'text', value: (nameRaw.length > 28 ? nameRaw.slice(0, 25) + '...' : nameRaw), style: { fontSize: 10, textAlign: 'left' } },
         { type: 'text', value: String(qty), style: { fontSize: 10 } },
         { type: 'text', value: formatCurrency(unit), style: { fontSize: 10 } },
         { type: 'text', value: formatCurrency(lineTotal), style: { fontSize: 10, textAlign: 'right' } }
@@ -474,15 +485,19 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     const discountAmount = typeof ss.discountAmount === 'number' ? ss.discountAmount : (typeof ss.discount_amount === 'number' ? ss.discount_amount : 0);
     const grandTotal = Math.max(0, totalAfterTax - (discountAmount || 0));
 
-    const tableFooter = [
-      [{ type: 'text', value: 'Subtotal' }, { type: 'text', value: formatCurrency(subtotalCalc) }],
+    // Print the items table without footers to avoid column misalignment
+    data.push({ type: 'table', tableHeader, tableBody, tableFooter: [], tableHeaderStyle: { color: '#000', borderBottom: '1px dashed #000', paddingBottom: '4px' }, tableBodyStyle: { border: 'none', paddingTop: '4px' } });
+
+    // Print a new 2-column table for totals to align left and right perfectly
+    const totalsBody = [
+      [{ type: 'text', value: 'Subtotal', style: { textAlign: 'left', fontWeight: '700' } }, { type: 'text', value: formatCurrency(subtotalCalc), style: { textAlign: 'right', fontWeight: '700' } }]
     ];
-    if (TAX_RATE && taxAmount > 0) tableFooter.push([{ type: 'text', value: `VAT (${(TAX_RATE * 100).toFixed(0)}%)` }, { type: 'text', value: formatCurrency(taxAmount) }]);
-    if (discountAmount && discountAmount > 0) tableFooter.push([{ type: 'text', value: 'Discount' }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}` }]);
-    tableFooter.push([{ type: 'text', value: 'TOTAL' }, { type: 'text', value: formatCurrency(grandTotal) }]);
+    if (TAX_RATE && taxAmount > 0) totalsBody.push([{ type: 'text', value: `VAT (${(TAX_RATE * 100).toFixed(0)}%)`, style: { textAlign: 'left' } }, { type: 'text', value: formatCurrency(taxAmount), style: { textAlign: 'right' } }]);
+    if (discountAmount && discountAmount > 0) totalsBody.push([{ type: 'text', value: 'Discount', style: { textAlign: 'left' } }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}`, style: { textAlign: 'right' } }]);
+    totalsBody.push([{ type: 'text', value: 'TOTAL', style: { textAlign: 'left', fontWeight: '700', fontSize: 12 } }, { type: 'text', value: formatCurrency(grandTotal), style: { textAlign: 'right', fontWeight: '700', fontSize: 12 } }]);
 
-    data.push({ type: 'table', tableHeader, tableBody, tableFooter, tableHeaderStyle: { color: '#000', borderBottom: '1px dashed #000', paddingBottom: '4px' }, tableBodyStyle: { border: 'none', paddingTop: '4px' }, tableFooterStyle: { fontWeight: '700', borderTop: '1px dashed #000', paddingTop: '4px' } });
-
+    data.push({ type: 'table', tableBody: totalsBody, tableBodyStyle: { borderTop: '1px dashed #000', paddingTop: '4px' } });
+    
     data.push({ type: 'divider' });
 
     // Payment lines
@@ -524,23 +539,21 @@ if (storeSettingsObj.receiptFooter) {
 // Call to action — short, bold, clear
 data.push({
   type: 'text',
-  value: 'Join our Beta Testers — Shop from home, get goods delivered to your door',
+  value: 'Download our app from the play store and enjoy huge discounts and delivery straight from our mobile app',
   style: { fontSize: 11, textAlign: 'center', fontWeight: '700' }
 });
 data.push({
   type: 'text',
-  value: 'Scan the code or search "Arpella" on Google Play',
+  value: 'Or just search arpella store on the play store',
   style: { fontSize: 9, textAlign: 'center' }
 });
 
-// Barcode for Order ID
+// Play Store QR
 data.push({
-  type: 'barCode',
-  value: orderIdFinal,
-  height: 40,
-  width: 2,
-  displayValue: true,
-  fontsize: 12,
+  type: 'qrCode',
+  value: playStoreUrl,
+  height: 60,
+  width: 60,
   position: 'center'
 });
 

@@ -412,25 +412,30 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
       data.push({ type: 'image', path: logoPath, position: 'center', width: '160px', height: '60px' });
     }
 
-    data.push({ type: 'text', value: storeSettingsObj.storeName.toUpperCase(), style: { fontWeight: '700', textAlign: 'center', fontSize: '18px' } });
-    data.push({ type: 'text', value: storeSettingsObj.storeAddress, style: { fontSize: '11px', textAlign: 'center', marginBottom: '4px' } });
-    data.push({ type: 'text', value: `Tel: ${storeSettingsObj.storePhone}   PIN: ${storeSettingsObj.pin}`, style: { fontSize: '11px', textAlign: 'center', marginBottom: '4px' } });
+    data.push({ type: 'text', value: 'Receipt', style: { fontWeight: '700', textAlign: 'center', fontSize: '24px', fontStyle: 'italic', marginBottom: '10px' } });
+    data.push({ type: 'text', value: `Address: ${storeSettingsObj.storeAddress}`, style: { fontSize: '11px', textAlign: 'left' } });
+    data.push({ type: 'text', value: `Tel: ${storeSettingsObj.storePhone}`, style: { fontSize: '11px', textAlign: 'left', marginBottom: '4px' } });
+    
     data.push({ type: 'divider' });
 
-    data.push({ type: 'text', value: `Date: ${timestamp.toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}`, style: { fontSize: 10, textAlign: 'left' } });
-    data.push({ type: 'text', value: `Receipt #: ${orderIdFinal}`, style: { fontSize: 11, textAlign: 'left', fontWeight: '700' } });
-    
-    // Barcode for Order ID at the top below receipt #
+    const formattedDate = timestamp.toLocaleDateString('en-GB'); // DD/MM/YYYY
+    const formattedTime = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     data.push({
-      type: 'barCode',
-      value: orderIdFinal,
-      height: 40,
-      width: 2,
-      displayValue: true,
-      fontsize: 12,
-      position: 'left'
+      type: 'table',
+      tableHeader: [{type: 'text', value: ''}, {type: 'text', value: ''}],
+      tableHeaderStyle: { display: 'none' },
+      tableBody: [
+        [
+          { type: 'text', value: `Date: ${formattedDate}`, style: { textAlign: 'left', fontSize: 11 } },
+          { type: 'text', value: formattedTime, style: { textAlign: 'right', fontSize: 11 } }
+        ]
+      ],
+      tableBodyStyle: { border: 'none' }
     });
+    
+    data.push({ type: 'text', value: `Receipt #: ${orderIdFinal}`, style: { fontSize: 11, textAlign: 'left' } });
     data.push({ type: 'text', value: `Served by: ${cashierName}`, style: { fontSize: 11, textAlign: 'left' } });
+    
     const customerPhoneVal = (paymentType === 'mpesa' || paymentType === 'both')
       ? (paymentData.mpesaPhone || '').trim() || ''
       : customerPhone || '';
@@ -439,43 +444,37 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     data.push({
       type: 'text',
       value: `Customer: ${maskPhoneForReceipt(customerPhoneVal)}`,
-      style: { fontSize: 11, textAlign: 'left', marginBottom: hasBuyerPin ? '0px' : '6px' }
+      style: { fontSize: 11, textAlign: 'left', marginBottom: hasBuyerPin ? '0px' : '4px' }
     });
 
     if (hasBuyerPin) {
       data.push({
         type: 'text',
         value: `Customer PIN: ${buyerPin.trim()}`,
-        style: { fontSize: 11, textAlign: 'left', marginBottom: '6px' }
+        style: { fontSize: 11, textAlign: 'left', marginBottom: '4px' }
       });
     }
 
-    // Items table header and body
-    const tableHeader = [
-      { type: 'text', value: 'Item', style: { textAlign: 'left' } },
-      { type: 'text', value: 'Qty' },
-      { type: 'text', value: 'Unit' },
-      { type: 'text', value: 'Total' }
-    ];
+    data.push({ type: 'divider' });
 
     const tableBody = [];
     let subtotalCalc = 0;
 
     for (const item of cart) {
       let nameRaw = String(item.name || item.productName || 'Item');
-      if (item.priceType && item.priceType !== 'Retail') {
-        nameRaw += ` (${item.priceType})`;
-      }
       const qty = Number(item.quantity || item.qty || 1);
       const unit = Number(item.salePrice || item.price || 0);
       const lineTotal = +(qty * unit);
       subtotalCalc += lineTotal;
 
+      let nameStr = nameRaw.length > 28 ? nameRaw.slice(0, 25) + '...' : nameRaw;
+      if (qty > 1) {
+        nameStr += ` (x${qty})`;
+      }
+
       tableBody.push([
-        { type: 'text', value: (nameRaw.length > 28 ? nameRaw.slice(0, 25) + '...' : nameRaw), style: { fontSize: 10, textAlign: 'left' } },
-        { type: 'text', value: String(qty), style: { fontSize: 10 } },
-        { type: 'text', value: formatCurrency(unit), style: { fontSize: 10 } },
-        { type: 'text', value: formatCurrency(lineTotal), style: { fontSize: 10, textAlign: 'right' } }
+        { type: 'text', value: nameStr, style: { fontSize: 11, textAlign: 'left' } },
+        { type: 'text', value: formatCurrency(lineTotal), style: { fontSize: 11, textAlign: 'right' } }
       ]);
     }
 
@@ -486,41 +485,66 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     const discountAmount = typeof ss.discountAmount === 'number' ? ss.discountAmount : (typeof ss.discount_amount === 'number' ? ss.discount_amount : 0);
     const grandTotal = Math.max(0, totalAfterTax - (discountAmount || 0));
 
-    // Print the items table without footers to avoid column misalignment
-    data.push({ type: 'table', tableHeader, tableBody, tableHeaderStyle: { color: '#000', borderBottom: '1px dashed #000', paddingBottom: '4px' }, tableBodyStyle: { border: 'none', paddingTop: '4px' } });
+    data.push({
+      type: 'table',
+      tableHeader: [' ', ' '],
+      tableHeaderStyle: { display: 'none' },
+      tableBody,
+      tableBodyStyle: { border: 'none', paddingBottom: '4px' }
+    });
 
-    // Print a new 2-column table for totals to align left and right perfectly
-    const totalsBody = [
-      [{ type: 'text', value: 'Subtotal', style: { textAlign: 'left', fontWeight: '700' } }, { type: 'text', value: formatCurrency(subtotalCalc), style: { textAlign: 'right', fontWeight: '700' } }]
-    ];
-    if (TAX_RATE && taxAmount > 0) totalsBody.push([{ type: 'text', value: `VAT (${(TAX_RATE * 100).toFixed(0)}%)`, style: { textAlign: 'left' } }, { type: 'text', value: formatCurrency(taxAmount), style: { textAlign: 'right' } }]);
-    if (discountAmount && discountAmount > 0) totalsBody.push([{ type: 'text', value: 'Discount', style: { textAlign: 'left' } }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}`, style: { textAlign: 'right' } }]);
-    totalsBody.push([{ type: 'text', value: 'TOTAL', style: { textAlign: 'left', fontWeight: '700', fontSize: 12 } }, { type: 'text', value: formatCurrency(grandTotal), style: { textAlign: 'right', fontWeight: '700', fontSize: 12 } }]);
-
-    data.push({ type: 'table', tableHeader: [{type: 'text', value: ''}, {type: 'text', value: ''}], tableBody: totalsBody, tableHeaderStyle: { display: 'none' }, tableBodyStyle: { borderTop: '1px dashed #000', paddingTop: '4px' } });
-    
     data.push({ type: 'divider' });
 
-    // Payment lines
-    const paymentLower = String(paymentType || '').toLowerCase();
-    if (paymentLower === 'cash') {
-      const cash = Number(paymentData.cashAmount || 0);
-      const change = Math.max(0, cash - grandTotal);
-      data.push({ type: 'text', value: `Paid (Cash): ${formatCurrency(cash)}`, style: { fontSize: 11 } });
-      if (change > 0) data.push({ type: 'text', value: `Change: ${formatCurrency(change)}`, style: { fontSize: 11, fontWeight: '700' } });
-    } else if (paymentLower === 'mpesa') {
-      const mpesa = Number(paymentData.mpesaAmount || grandTotal);
-      data.push({ type: 'text', value: `Paid (M-Pesa): ${formatCurrency(mpesa)}`, style: { fontSize: 11 } });
-    } else if (paymentLower === 'both' || paymentLower === 'hybrid') {
-      const cash = Number(paymentData.cashAmount || 0);
-      const mpesa = Number(paymentData.mpesaAmount || 0);
-      const change = Math.max(0, (cash + mpesa) - grandTotal);
-      data.push({ type: 'text', value: `Paid (Cash): ${formatCurrency(cash)}`, style: { fontSize: 11 } });
-      data.push({ type: 'text', value: `Paid (M-Pesa): ${formatCurrency(mpesa)}`, style: { fontSize: 11 } });
-      if (change > 0) data.push({ type: 'text', value: `Change: ${formatCurrency(change)}`, style: { fontSize: 11, fontWeight: '700' } });
-    } else {
-      data.push({ type: 'text', value: `Paid: ${formatCurrency(grandTotal)}`, style: { fontSize: 11 } });
+    const totalsBody = [
+      [
+        { type: 'text', value: 'AMOUNT', style: { textAlign: 'left', fontWeight: '700', fontSize: 14 } },
+        { type: 'text', value: formatCurrency(grandTotal), style: { textAlign: 'right', fontWeight: '700', fontSize: 14 } }
+      ],
+      [
+        { type: 'text', value: ' ', style: { fontSize: 8 } },
+        { type: 'text', value: ' ', style: { fontSize: 8 } }
+      ],
+      [
+        { type: 'text', value: 'Sub-total', style: { textAlign: 'left', fontSize: 11 } },
+        { type: 'text', value: formatCurrency(subtotalCalc), style: { textAlign: 'right', fontSize: 11 } }
+      ]
+    ];
+
+    if (TAX_RATE && taxAmount > 0) {
+      totalsBody.push([
+        { type: 'text', value: 'Sales Tax', style: { textAlign: 'left', fontSize: 11 } },
+        { type: 'text', value: formatCurrency(taxAmount), style: { textAlign: 'right', fontSize: 11 } }
+      ]);
     }
+    
+    if (discountAmount && discountAmount > 0) {
+      totalsBody.push([
+        { type: 'text', value: 'Discount', style: { textAlign: 'left', fontSize: 11 } },
+        { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}`, style: { textAlign: 'right', fontSize: 11 } }
+      ]);
+    }
+
+    totalsBody.push([
+      { type: 'text', value: 'Balance', style: { textAlign: 'left', fontSize: 11 } },
+      { type: 'text', value: formatCurrency(grandTotal), style: { textAlign: 'right', fontSize: 11 } }
+    ]);
+
+    data.push({
+      type: 'table',
+      tableHeader: [' ', ' '],
+      tableHeaderStyle: { display: 'none' },
+      tableBody: totalsBody,
+      tableBodyStyle: { border: 'none', paddingBottom: '10px' }
+    });
+
+    data.push({
+      type: 'barCode',
+      value: orderIdFinal,
+      height: 40,
+      width: 2,
+      displayValue: false,
+      position: 'center'
+    });
 
     // Footer, QR code with receipt reference
    const playStoreUrl = storeSettingsObj.playStoreUrl ||

@@ -317,8 +317,9 @@ ipcMain.handle('test-thermal-printer', async (event, printerName) => {
 // Helper utilities used by print-receipt
 const formatCurrency = (amount) => `${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const maskPhoneForReceipt = (rawPhone) => {
-  if (!rawPhone) return 'Walk-in Customer';
+  if (!rawPhone) return 'Walk-in';
   const s = String(rawPhone).trim();
+  if (s.toLowerCase() === 'walk-in' || s.toLowerCase() === 'walk-in customer') return 'Walk-in';
   if (s.length < 6) return s;
   const idx = s.length - 6;
   return s.substring(0, idx) + '***' + s.substring(s.length - 3);
@@ -486,7 +487,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     const grandTotal = Math.max(0, totalAfterTax - (discountAmount || 0));
 
     // Print the items table without footers to avoid column misalignment
-    data.push({ type: 'table', tableHeader, tableBody, tableFooter: [], tableHeaderStyle: { color: '#000', borderBottom: '1px dashed #000', paddingBottom: '4px' }, tableBodyStyle: { border: 'none', paddingTop: '4px' } });
+    data.push({ type: 'table', tableHeader, tableBody, tableHeaderStyle: { color: '#000', borderBottom: '1px dashed #000', paddingBottom: '4px' }, tableBodyStyle: { border: 'none', paddingTop: '4px' } });
 
     // Print a new 2-column table for totals to align left and right perfectly
     const totalsBody = [
@@ -496,7 +497,7 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
     if (discountAmount && discountAmount > 0) totalsBody.push([{ type: 'text', value: 'Discount', style: { textAlign: 'left' } }, { type: 'text', value: `- ${formatCurrency(Math.abs(discountAmount))}`, style: { textAlign: 'right' } }]);
     totalsBody.push([{ type: 'text', value: 'TOTAL', style: { textAlign: 'left', fontWeight: '700', fontSize: 12 } }, { type: 'text', value: formatCurrency(grandTotal), style: { textAlign: 'right', fontWeight: '700', fontSize: 12 } }]);
 
-    data.push({ type: 'table', tableBody: totalsBody, tableBodyStyle: { borderTop: '1px dashed #000', paddingTop: '4px' } });
+    data.push({ type: 'table', tableHeader: [{type: 'text', value: ''}, {type: 'text', value: ''}], tableBody: totalsBody, tableHeaderStyle: { display: 'none' }, tableBodyStyle: { borderTop: '1px dashed #000', paddingTop: '4px' } });
     
     data.push({ type: 'divider' });
 
@@ -539,7 +540,17 @@ if (storeSettingsObj.receiptFooter) {
 // Call to action — short, bold, clear
 data.push({
   type: 'text',
-  value: 'Download our app from the play store and enjoy huge discounts and delivery straight from our mobile app',
+  value: 'Download our app from the play store',
+  style: { fontSize: 11, textAlign: 'center', fontWeight: '700' }
+});
+data.push({
+  type: 'text',
+  value: 'and enjoy huge discounts and delivery',
+  style: { fontSize: 11, textAlign: 'center', fontWeight: '700' }
+});
+data.push({
+  type: 'text',
+  value: 'straight from our mobile app',
   style: { fontSize: 11, textAlign: 'center', fontWeight: '700' }
 });
 data.push({

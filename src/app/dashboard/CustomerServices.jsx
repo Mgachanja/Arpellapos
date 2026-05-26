@@ -35,10 +35,8 @@ export default function CustomerServices() {
       let price = 0;
       if (item.priceType === 'Retail') {
         price = Number(product.price) || 0;
-      } else if (item.priceType === 'Wholesale') {
-        price = Number(product.wholesalePrice) || Number(product.price) || 0;
       } else {
-        price = Number(product.priceAfterDiscount) || Number(product.price) || 0;
+        price = Number(product.wholesalePrice) || Number(product.price) || 0;
       }
       
       return {

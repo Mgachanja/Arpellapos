@@ -12,10 +12,9 @@ export const mapCartToReceiptItems = (cartItems) => {
         let sellingPrice = 0;
         if (ci.priceType === 'Retail') {
             sellingPrice = Number(ci.price) || 0;
-        } else if (ci.priceType === 'Wholesale') {
-            sellingPrice = Number(ci.wholesalePrice) || Number(ci.price) || 0;
         } else {
-            sellingPrice = Number(ci.priceAfterDiscount) || Number(ci.price) || 0;
+            // For 'Wholesale', 'Discounted', or any other non-Retail type, use wholesalePrice.
+            sellingPrice = Number(ci.wholesalePrice) || Number(ci.price) || 0;
         }
         
         if (ci.applyDiscount && ci.priceAfterDiscount && Number(ci.priceAfterDiscount) > 0) {

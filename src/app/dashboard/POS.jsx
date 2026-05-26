@@ -376,10 +376,18 @@ export default function POS() {
       }
 
       try {
+        console.group('====== RECEIPT DATA SENT TO PRINTER ======');
+        console.log('Order ID:', receiptData.orderId || receiptData.orderNumber);
+        console.log('Cart Total:', receiptData.cartTotal);
+        console.log('Payment Type:', receiptData.paymentType);
+        console.log('Receipt Items payload:', JSON.stringify(receiptData.cart, null, 2));
+        console.groupEnd();
+
         const res = await printOrderReceipt(receiptData, null, storeSettings);
         if (res?.success) toast.success('Receipt printed successfully');
         else toast.warning(`Receipt printing: ${res?.message || 'failed'}`);
       } catch (err) {
+        console.error('Receipt printing failed:', err);
         toast.error('Receipt printing failed - check printer');
       }
 

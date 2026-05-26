@@ -487,9 +487,12 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
 
     data.push({
       type: 'table',
-      tableHeader: [' ', ' '],
-      tableHeaderStyle: { display: 'none' },
+      tableHeader: [
+        { type: 'text', value: 'Item', style: { textAlign: 'left', fontWeight: 'bold' } },
+        { type: 'text', value: 'Amount', style: { textAlign: 'right', fontWeight: 'bold' } }
+      ],
       tableBody,
+      tableHeaderStyle: { borderBottom: '1px dashed #000', paddingBottom: '4px' },
       tableBodyStyle: { border: 'none', paddingBottom: '4px' }
     });
 
@@ -531,8 +534,10 @@ ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, store
 
     data.push({
       type: 'table',
-      tableHeader: [' ', ' '],
-      tableHeaderStyle: { display: 'none' },
+      tableHeader: [
+        { type: 'text', value: ' ', style: { color: 'white' } },
+        { type: 'text', value: ' ', style: { color: 'white' } }
+      ],
       tableBody: totalsBody,
       tableBodyStyle: { border: 'none', paddingBottom: '10px' }
     });

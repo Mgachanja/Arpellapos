@@ -1,46 +1,50 @@
 // main-electron-printing-enhanced.js
-// Fixed + Professional thermal receipt printing for 80mm POS printers
+// Modern thermal receipt printing for 80mm POS printers
+// Uses @plick/electron-pos-printer ^1.3.0 — table + divider types throughout
+
+'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const fs = require('fs');
-const log = require('electron-log');
+const fs   = require('fs');
+const log  = require('electron-log');
 const { autoUpdater } = require('electron-updater');
 
+// ─── POS Printer loader ──────────────────────────────────────────────────────
 let PosPrinter = null;
-let usingPlick = false;
+let usingPlick  = false;
+
 try {
   const plick = require('@plick/electron-pos-printer');
-  PosPrinter = plick.PosPrinter || plick;
-  usingPlick = true;
+  PosPrinter  = plick.PosPrinter || plick;
+  usingPlick  = true;
   log.info('@plick/electron-pos-printer loaded successfully');
-} catch (err) {
+} catch {
   try {
-    const electronPosPrinter = require('electron-pos-printer');
-    PosPrinter = electronPosPrinter.PosPrinter || electronPosPrinter;
+    const fallback = require('electron-pos-printer');
+    PosPrinter     = fallback.PosPrinter || fallback;
     log.info('electron-pos-printer loaded as fallback');
-  } catch (error) {
+  } catch (err) {
     PosPrinter = null;
-    log.error('No POS printer library available:', error);
+    log.error('No POS printer library available:', err);
   }
 }
 
+// ─── App setup ───────────────────────────────────────────────────────────────
 const APP_ID = 'com.arpella.pos';
 if (process.platform === 'win32') {
   try { app.setAppUserModelId(APP_ID); } catch (e) { log.warn('setAppUserModelId failed', e); }
 }
 
-const electron = require('electron');
-const window = electron.BrowserWindow;
-
-let mainWindow;
-let updateDownloaded = false;
+let mainWindow      = null;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); process.exit(0); }
 
+// ─── Auto-updater ────────────────────────────────────────────────────────────
 function sendUpdateMessage(message) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-message', message);
+  if (mainWindow && !mainWindow.isDestroyed())
+    mainWindow.webContents.send('update-message', message);
   log.info('Update message:', message);
 }
 
@@ -51,15 +55,13 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
 
   autoUpdater.on('checking-for-update', () => {
-    log.info('Checking for update...');
     sendUpdateMessage({ type: 'checking', message: 'Checking for updates...' });
   });
 
   autoUpdater.on('update-available', (info) => {
     log.info('Update available:', info);
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed())
       mainWindow.webContents.send('update-available', info);
-    }
   });
 
   autoUpdater.on('update-not-available', (info) => {
@@ -67,687 +69,180 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('error', (err) => {
-    log.error('Error in auto-updater:', err);
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    log.error('Auto-updater error:', err);
+    if (mainWindow && !mainWindow.isDestroyed())
       mainWindow.webContents.send('update-error', { message: err.message });
-    }
   });
 
-  autoUpdater.on('download-progress', (progressObj) => {
-    let logMessage = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
-    log.info(logMessage);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('download-progress', progressObj);
-    }
+  autoUpdater.on('download-progress', (progress) => {
+    log.info(`Download: ${progress.percent.toFixed(1)}% (${progress.transferred}/${progress.total})`);
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send('download-progress', progress);
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     log.info('Update downloaded:', info);
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed())
       mainWindow.webContents.send('update-downloaded', info);
-    }
   });
 
-  ipcMain.handle('quit-and-install', () => {
-    autoUpdater.quitAndInstall();
-  });
+  ipcMain.handle('quit-and-install', () => autoUpdater.quitAndInstall());
 
-  autoUpdater.checkForUpdatesAndNotify().catch(err => {
-    log.error('Failed initial check:', err);
-  });
+  autoUpdater.checkForUpdatesAndNotify().catch(err => log.error('Initial update check failed:', err));
 
   setInterval(() => {
-    log.info('Performing hourly update check...');
-    autoUpdater.checkForUpdatesAndNotify().catch(err => {
-      log.error('Failed hourly check:', err);
-    });
-  }, 3600000);
+    log.info('Hourly update check...');
+    autoUpdater.checkForUpdatesAndNotify().catch(err => log.error('Hourly update check failed:', err));
+  }, 3_600_000);
 }
 
+// ─── Window helpers ──────────────────────────────────────────────────────────
 function resolveIconPath() {
   if (!app.isPackaged) {
-    const devIcons = [
+    const candidates = [
       path.join(__dirname, 'public', 'favicon.ico'),
       path.join(__dirname, 'buildResources', 'icons', 'win', 'icon.ico'),
       path.join(__dirname, 'src', 'assets', 'logo.png'),
-      path.join(__dirname, 'src', 'assets', 'logo.jpeg')
+      path.join(__dirname, 'src', 'assets', 'logo.jpeg'),
     ];
-    for (const p of devIcons) if (fs.existsSync(p)) return p;
+    for (const p of candidates) if (fs.existsSync(p)) return p;
     return path.join(__dirname, 'public', 'favicon.ico');
   }
   if (process.platform === 'darwin') return path.join(process.resourcesPath, 'icon.icns');
   return path.join(process.resourcesPath, 'icon.ico');
 }
 
-function findIndexHtmlCandidates() {
+function findIndexHtml() {
   const candidates = [
     path.join(__dirname, 'build', 'index.html'),
-    path.join(__dirname, 'index.html')
+    path.join(__dirname, 'index.html'),
+    ...(process.resourcesPath ? [
+      path.join(process.resourcesPath, 'app.asar', 'build', 'index.html'),
+      path.join(process.resourcesPath, 'app.asar', 'index.html'),
+      path.join(process.resourcesPath, 'build', 'index.html'),
+      path.join(process.resourcesPath, 'index.html'),
+    ] : []),
   ];
-  if (process.resourcesPath) {
-    candidates.push(path.join(process.resourcesPath, 'app.asar', 'build', 'index.html'));
-    candidates.push(path.join(process.resourcesPath, 'app.asar', 'index.html'));
-    candidates.push(path.join(process.resourcesPath, 'build', 'index.html'));
-    candidates.push(path.join(process.resourcesPath, 'index.html'));
-  }
-  const existing = candidates.filter(c => {
-    try { return c && fs.existsSync(c); } catch (e) { return false; }
-  });
-  log.info('Index.html candidates found:', existing);
-  return existing;
+  const found = candidates.filter(c => { try { return fs.existsSync(c); } catch { return false; } });
+  log.info('index.html candidates:', found);
+  return found;
 }
 
 function createMainWindow() {
   const iconPath = resolveIconPath();
-  log.info('Resolved icon path:', iconPath, 'packaged:', app.isPackaged);
+  log.info('Icon path:', iconPath, '| packaged:', app.isPackaged);
 
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width:  1200,
     height: 820,
-    minWidth: 1024,
+    minWidth:  1024,
     minHeight: 720,
     title: app.name || 'Arpella POS',
-    icon: iconPath,
-    show: false,
+    icon:  iconPath,
+    show:  false,
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: false,
-      nodeIntegration: true
-    }
+      nodeIntegration:  true,
+    },
   });
 
   const isDev = !app.isPackaged;
+
   if (isDev) {
     const devUrl = process.env.ELECTRON_START_URL || 'http://localhost:4000';
-    log.info('Dev mode: loading URL', devUrl);
+    log.info('Dev mode: loading', devUrl);
     mainWindow.loadURL(devUrl).catch(err => {
-      log.error('Failed to load dev URL', devUrl, err);
-      mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Dev server failed to load</h1><pre>${String(err)}</pre>`));
+      log.error('Dev URL failed:', err);
+      mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Dev server failed</h1><pre>${err}</pre>`));
     });
   } else {
-    const found = findIndexHtmlCandidates();
+    const found = findIndexHtml();
     if (found.length > 0) {
-      const indexFile = found[0];
-      log.info('Loading index from:', indexFile);
-      mainWindow.loadFile(indexFile).catch(err => {
-        log.error('loadFile failed for', indexFile, err);
-        mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Failed to load app</h1><pre>${String(err)}</pre>`));
+      log.info('Loading:', found[0]);
+      mainWindow.loadFile(found[0]).catch(err => {
+        log.error('loadFile failed:', err);
+        mainWindow.loadURL('data:text/html,' + encodeURIComponent(`<h1>Failed to load app</h1><pre>${err}</pre>`));
       });
     } else {
-      const diagnosticHtml = `
-        <h1>No index.html found</h1>
-        <p>Your packaged application did not contain build/index.html in any expected location.</p>
-        <pre>${JSON.stringify({ __dirname, resourcesPath: process.resourcesPath }, null, 2)}</pre>
-      `;
-      mainWindow.loadURL('data:text/html,' + encodeURIComponent(diagnosticHtml));
-      log.error('No index.html found. See packaged files and electron-builder config.');
+      const html = `<h1>No index.html found</h1><pre>${JSON.stringify({ __dirname, resourcesPath: process.resourcesPath }, null, 2)}</pre>`;
+      mainWindow.loadURL('data:text/html,' + encodeURIComponent(html));
+      log.error('No index.html found.');
     }
   }
 
   if (process.env.ELECTRON_DEBUG === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
-    log.info('ELECTRON_DEBUG detected — DevTools opened');
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    if (!isDev) {
-      log.info('Initializing auto-updater...');
-      setTimeout(() => { setupAutoUpdater(); }, 3000);
-    } else {
-      log.info('Development mode - skipping auto-updater');
-    }
+    if (!isDev) setTimeout(setupAutoUpdater, 3000);
+    else log.info('Dev mode — auto-updater skipped');
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+// ─── Printer helpers ─────────────────────────────────────────────────────────
 async function getAllAvailablePrinters() {
   try {
-    let printWindow = window.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    if (!printWindow) {
-      log.warn('No active window available for printer detection');
-      return [];
-    }
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    if (!win) { log.warn('No window for printer detection'); return []; }
 
-    const electronPrinters = await printWindow.webContents.getPrintersAsync();
-    log.info('Electron detected printers:', electronPrinters.map(p => ({ name: p.name, status: p.status })));
+    const electronPrinters = await win.webContents.getPrintersAsync();
+    log.info('Electron printers:', electronPrinters.map(p => p.name));
 
-    let allPrinters = [...electronPrinters];
+    let all = [...electronPrinters];
 
     if (process.platform === 'win32') {
       try {
-        const { exec } = require('child_process');
+        const { exec }    = require('child_process');
         const { promisify } = require('util');
-        const execAsync = promisify(exec);
-        const { stdout } = await execAsync('powershell "Get-Printer | Select-Object Name, PrinterStatus, Type | ConvertTo-Json"');
-        const windowsPrinters = JSON.parse(stdout);
-        if (Array.isArray(windowsPrinters)) {
-          windowsPrinters.forEach(winPrinter => {
-            if (!allPrinters.find(p => p.name === winPrinter.Name)) {
-              allPrinters.push({
-                name: winPrinter.Name,
-                displayName: winPrinter.Name,
-                status: winPrinter.PrinterStatus === 'Normal' ? 'idle' : 'unknown',
-                isDefault: false,
-                options: {}
+        const execAsync   = promisify(exec);
+        const { stdout }  = await execAsync(
+          'powershell "Get-Printer | Select-Object Name, PrinterStatus | ConvertTo-Json"'
+        );
+        const winPrinters = JSON.parse(stdout);
+        if (Array.isArray(winPrinters)) {
+          for (const wp of winPrinters) {
+            if (!all.find(p => p.name === wp.Name)) {
+              all.push({
+                name:        wp.Name,
+                displayName: wp.Name,
+                status:      wp.PrinterStatus === 'Normal' ? 'idle' : 'unknown',
+                isDefault:   false,
+                options:     {},
               });
             }
-          });
+          }
+          log.info('PowerShell found', winPrinters.length, 'printers');
         }
-        log.info('Windows PowerShell detected additional printers:', windowsPrinters?.length || 0);
-      } catch (winError) {
-        log.warn('Windows printer detection failed:', winError.message);
+      } catch (e) {
+        log.warn('PowerShell printer detection failed:', e.message);
       }
     }
 
-    return allPrinters;
-  } catch (error) {
-    log.error('Failed to get printers:', error);
+    return all;
+  } catch (err) {
+    log.error('getAllAvailablePrinters failed:', err);
     return [];
   }
 }
 
+// ─── IPC: printers ───────────────────────────────────────────────────────────
 ipcMain.handle('get-printers', async () => {
   try {
     const printers = await getAllAvailablePrinters();
-    log.info('Total printers found:', printers.length);
+    log.info('Total printers:', printers.length);
     return printers;
-  } catch (error) {
-    log.error('Failed to get printers:', error);
+  } catch (err) {
+    log.error('get-printers failed:', err);
     return [];
   }
 });
 
-ipcMain.handle('test-thermal-printer', async (event, printerName) => {
-  if (!PosPrinter) {
-    log.error('POS printer library not available');
-    return { success: false, message: 'Thermal printer library not available' };
-  }
-
-  try {
-    const options = {
-      preview: false,
-      silent: true,
-      margin: '0 5 0 5',
-      timeOutPerLine: 400,
-      pageSize: '80mm',
-      copies: 1
-    };
-    if (printerName && printerName !== '') options.printerName = printerName;
-
-    const printData = [
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: { textAlign: 'center', fontSize: '11px' }
-      },
-      {
-        type: 'text',
-        value: 'PRINTER TEST',
-        style: { fontWeight: '700', textAlign: 'center', fontSize: '16px', margin: '4px 0' }
-      },
-      {
-        type: 'text',
-        value: 'Arpella POS - OK',
-        style: { textAlign: 'center', fontSize: '12px' }
-      },
-      {
-        type: 'text',
-        value: '--------------------------------',
-        style: { textAlign: 'center', fontSize: '11px' }
-      }
-    ];
-
-    await PosPrinter.print(printData, options);
-    log.info('Test print completed successfully for printer:', printerName || 'default');
-    return { success: true, message: 'Test print successful' };
-  } catch (error) {
-    log.error('Test print failed:', error);
-    return { success: false, message: `Print failed: ${error.message}` };
-  }
-});
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-const formatCurrency = (amount) =>
-  Number(amount || 0).toLocaleString('en-KE', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-
-const maskPhone = (rawPhone) => {
-  if (!rawPhone) return 'Walk-in';
-  const s = String(rawPhone).trim();
-  if (s.toLowerCase().startsWith('walk-in')) return 'Walk-in';
-  if (s.length < 6) return s;
-  return s.substring(0, s.length - 6) + '***' + s.substring(s.length - 3);
-};
-
-// Build a two-column text line padded to fill ~32 chars (80mm ~32 chars at 12px)
-const twoCol = (left, right, width = 32) => {
-  const leftStr = String(left);
-  const rightStr = String(right);
-  const spaces = Math.max(1, width - leftStr.length - rightStr.length);
-  return leftStr + ' '.repeat(spaces) + rightStr;
-};
-
-// Divider line
-const DIVIDER = '--------------------------------';
-
-// ─── Main print-receipt handler ─────────────────────────────────────────────
-
-ipcMain.handle('print-receipt', async (event, orderData = {}, printerName, storeSettingsArg) => {
-  log.info('PRINT RECEIPT called');
-
-  if (!PosPrinter) {
-    log.error('POS printer library not available');
-    return { success: false, message: 'Thermal printer library not available' };
-  }
-
-  try {
-    const {
-      cart = [],
-      cartTotal = 0,
-      paymentType = '',
-      paymentData = {},
-      orderNumber = '',
-      customerPhone = '',
-      user: orderUser = {},
-      cashier: orderCashier = {},
-      buyerPin = ''
-    } = orderData || {};
-
-    const userObj =
-      orderUser && Object.keys(orderUser).length > 0 ? orderUser : orderCashier;
-
-    // Resolve store settings
-    const ss =
-      typeof storeSettingsArg === 'object' && storeSettingsArg !== null
-        ? storeSettingsArg
-        : orderData?.storeSettings && typeof orderData.storeSettings === 'object'
-        ? orderData.storeSettings
-        : {};
-
-    const store = {
-      name:    String(ss.storeName    || ss.store_name    || 'ARPELLA STORE LIMITED').trim(),
-      address: String(ss.storeAddress || ss.store_address || 'Ngong, Matasia').trim(),
-      phone:   String(ss.storePhone   || ss.store_phone   || '+254 704 288 802').trim(),
-      pin:     String(ss.pin          || ss.taxPin        || ss.tax_pin || 'P052336649L').trim(),
-      footer:  String(ss.receiptFooter || ss.receipt_footer || 'Thank you for shopping with us!').trim(),
-      taxRate: typeof ss.taxRate === 'number' ? ss.taxRate : (typeof ss.tax_rate === 'number' ? ss.tax_rate : 0),
-      discount: typeof ss.discountAmount === 'number' ? ss.discountAmount : (typeof ss.discount_amount === 'number' ? ss.discount_amount : 0),
-      playStore: String(ss.playStoreUrl || 'https://play.google.com/store/apps/details?id=com.mgachanja.Arpella').trim(),
-      pageSize: ss.pageSize || ss.page_size || '80mm',
-      copies:  ss.copies || 1,
-      timeout: ss.timeOutPerLine || 400
-    };
-
-    // Resolve cashier name
-    const getCashierName = () => {
-      if (!userObj || Object.keys(userObj).length === 0) return 'Staff';
-      const candidates = [
-        userObj.fullName,
-        userObj.full_name,
-        userObj.name,
-        userObj.firstName
-          ? `${userObj.firstName || userObj.first_name} ${userObj.lastName || userObj.last_name || ''}`.trim()
-          : null,
-        userObj.userName,
-        userObj.username,
-        userObj.email
-      ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
-      return candidates[0] || 'Staff';
-    };
-    const cashierName = getCashierName();
-
-    if (!Array.isArray(cart) || cart.length === 0) {
-      log.error('Invalid or empty cart');
-      return { success: false, message: 'Cart is empty or invalid' };
-    }
-
-    const now = new Date();
-    const orderId = orderNumber || `ORD-${String(Date.now()).slice(-8)}`;
-    const dateStr = now.toLocaleDateString('en-GB');
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    const customerPhoneVal =
-      paymentType === 'mpesa' || paymentType === 'both'
-        ? (paymentData?.mpesaPhone || '').trim() || customerPhone || ''
-        : customerPhone || '';
-
-    // ── Logo ──────────────────────────────────────────────────────────────
-    const logoCandidates = [
-      path.join(__dirname, 'src', 'assets', 'logo.png'),
-      path.join(__dirname, 'src', 'assets', 'logo.jpeg'),
-      path.join(__dirname, 'public', 'logo.png')
-    ];
-    let logoPath = null;
-    for (const p of logoCandidates) if (fs.existsSync(p)) { logoPath = p; break; }
-
-    // ── Build receipt data ────────────────────────────────────────────────
-    // Strategy: use plain `text` elements for ALL content.
-    // Tables in some library versions silently drop rows — avoid them.
-    // Two-column rows are built as monospace-padded strings.
-
-    const data = [];
-
-    // Logo
-    if (logoPath) {
-      data.push({
-        type: 'image',
-        path: logoPath,
-        position: 'center',
-        width: '140px',
-        height: '55px'
-      });
-    }
-
-    // Store name (big)
-    data.push({
-      type: 'text',
-      value: store.name.toUpperCase(),
-      style: { fontWeight: '700', textAlign: 'center', fontSize: '15px', marginBottom: '2px' }
-    });
-
-    data.push({
-      type: 'text',
-      value: store.address,
-      style: { textAlign: 'center', fontSize: '10px' }
-    });
-    data.push({
-      type: 'text',
-      value: `Tel: ${store.phone}`,
-      style: { textAlign: 'center', fontSize: '10px' }
-    });
-    data.push({
-      type: 'text',
-      value: `PIN: ${store.pin}`,
-      style: { textAlign: 'center', fontSize: '10px', marginBottom: '4px' }
-    });
-
-    // Divider
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    // Receipt header label
-    data.push({
-      type: 'text',
-      value: 'SALES RECEIPT',
-      style: { fontWeight: '700', textAlign: 'center', fontSize: '14px', margin: '3px 0' }
-    });
-
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    // Order meta
-    data.push({
-      type: 'text',
-      value: twoCol(`Date: ${dateStr}`, timeStr),
-      style: { fontSize: '11px', fontFamily: 'monospace' }
-    });
-    data.push({
-      type: 'text',
-      value: `Receipt #: ${orderId}`,
-      style: { fontSize: '11px', fontFamily: 'monospace' }
-    });
-    data.push({
-      type: 'text',
-      value: `Cashier:   ${cashierName}`,
-      style: { fontSize: '11px', fontFamily: 'monospace' }
-    });
-    data.push({
-      type: 'text',
-      value: `Customer:  ${maskPhone(customerPhoneVal)}`,
-      style: { fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    if (buyerPin && buyerPin.trim() && buyerPin.trim() !== 'N/A') {
-      data.push({
-        type: 'text',
-        value: `Cust. PIN: ${buyerPin.trim()}`,
-        style: { fontSize: '11px', fontFamily: 'monospace' }
-      });
-    }
-
-    // Items header
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-    data.push({
-      type: 'text',
-      value: twoCol('ITEM', 'AMOUNT'),
-      style: { fontWeight: '700', fontSize: '11px', fontFamily: 'monospace' }
-    });
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    // ── Line items ─────────────────────────────────────────────────────────
-    let subtotal = 0;
-
-    for (const item of cart) {
-      const nameRaw = String(item.name || item.productName || 'Item');
-      const qty     = Number(item.quantity || item.qty || 1);
-      const unit    = Number(item.salePrice || item.unitPrice || item.price || 0);
-      const line    = +(qty * unit);
-      subtotal      += line;
-
-      // Name truncated to fit; qty shown on same line if space allows
-      const maxName = 20;
-      let displayName = nameRaw.length > maxName ? nameRaw.slice(0, maxName - 1) + '…' : nameRaw;
-      const amountStr = `KES ${formatCurrency(line)}`;
-
-      // First row: item name + total amount
-      data.push({
-        type: 'text',
-        value: twoCol(displayName, amountStr),
-        style: { fontSize: '11px', fontFamily: 'monospace' }
-      });
-
-      // Second row: qty x unit price (indent)
-      if (qty > 1 || unit > 0) {
-        const qtyLine = `  ${qty} x ${formatCurrency(unit)}`;
-        data.push({
-          type: 'text',
-          value: qtyLine,
-          style: { fontSize: '10px', fontFamily: 'monospace', color: '#444' }
-        });
-      }
-    }
-
-    // ── Totals ─────────────────────────────────────────────────────────────
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    const taxAmount    = +(subtotal * (store.taxRate || 0));
-    const afterTax     = subtotal + taxAmount;
-    const grandTotal   = Math.max(0, afterTax - (store.discount || 0));
-
-    data.push({
-      type: 'text',
-      value: twoCol('Sub-total', `KES ${formatCurrency(subtotal)}`),
-      style: { fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    if (store.taxRate && taxAmount > 0) {
-      const taxLabel = `Tax (${(store.taxRate * 100).toFixed(0)}%)`;
-      data.push({
-        type: 'text',
-        value: twoCol(taxLabel, `KES ${formatCurrency(taxAmount)}`),
-        style: { fontSize: '11px', fontFamily: 'monospace' }
-      });
-    }
-
-    if (store.discount && store.discount > 0) {
-      data.push({
-        type: 'text',
-        value: twoCol('Discount', `- KES ${formatCurrency(store.discount)}`),
-        style: { fontSize: '11px', fontFamily: 'monospace' }
-      });
-    }
-
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    // Grand total — large and bold
-    data.push({
-      type: 'text',
-      value: twoCol('TOTAL', `KES ${formatCurrency(grandTotal)}`),
-      style: { fontWeight: '700', fontSize: '14px', fontFamily: 'monospace' }
-    });
-
-    // Payment method
-    if (paymentType) {
-      const pmLabel = paymentType === 'mpesa'
-        ? 'M-Pesa'
-        : paymentType === 'cash'
-        ? 'Cash'
-        : paymentType === 'both'
-        ? 'Cash + M-Pesa'
-        : paymentType.charAt(0).toUpperCase() + paymentType.slice(1);
-
-      data.push({
-        type: 'text',
-        value: twoCol('Payment', pmLabel),
-        style: { fontSize: '11px', fontFamily: 'monospace', marginTop: '2px' }
-      });
-
-      // Show M-Pesa ref if available
-      if ((paymentType === 'mpesa' || paymentType === 'both') && paymentData?.mpesaRef) {
-        data.push({
-          type: 'text',
-          value: `Ref: ${paymentData.mpesaRef}`,
-          style: { fontSize: '10px', fontFamily: 'monospace' }
-        });
-      }
-
-      // Show change if cash
-      if (paymentType === 'cash' && paymentData?.cashReceived) {
-        const cashReceived = Number(paymentData.cashReceived || 0);
-        const change       = Math.max(0, cashReceived - grandTotal);
-        data.push({
-          type: 'text',
-          value: twoCol('Cash', `KES ${formatCurrency(cashReceived)}`),
-          style: { fontSize: '11px', fontFamily: 'monospace' }
-        });
-        data.push({
-          type: 'text',
-          value: twoCol('Change', `KES ${formatCurrency(change)}`),
-          style: { fontSize: '11px', fontFamily: 'monospace' }
-        });
-      }
-    }
-
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    // Barcode for order ID
-    data.push({
-      type: 'barCode',
-      value: orderId,
-      height: 36,
-      width: 2,
-      displayValue: true,
-      position: 'center',
-      fontSize: 9
-    });
-
-    // Footer message
-    data.push({
-      type: 'text',
-      value: DIVIDER,
-      style: { textAlign: 'center', fontSize: '11px', fontFamily: 'monospace' }
-    });
-
-    if (store.footer) {
-      data.push({
-        type: 'text',
-        value: store.footer,
-        style: { fontSize: '11px', textAlign: 'center', fontWeight: '700', margin: '4px 0' }
-      });
-    }
-
-    // App promo
-    data.push({
-      type: 'text',
-      value: 'Download Arpella on Google Play',
-      style: { fontSize: '10px', textAlign: 'center', fontWeight: '700', marginTop: '4px' }
-    });
-    data.push({
-      type: 'text',
-      value: 'Get discounts & order for delivery!',
-      style: { fontSize: '10px', textAlign: 'center' }
-    });
-
-    // Play Store QR
-    data.push({
-      type: 'qrCode',
-      value: store.playStore,
-      height: 70,
-      width: 70,
-      position: 'center'
-    });
-
-    data.push({
-      type: 'text',
-      value: `Printed: ${now.toLocaleString('en-KE')}`,
-      style: { fontSize: '9px', textAlign: 'center', marginTop: '4px' }
-    });
-    data.push({
-      type: 'text',
-      value: 'Powered by Arpella POS',
-      style: { fontSize: '9px', textAlign: 'center', marginBottom: '8px' }
-    });
-
-    // ── Print options ──────────────────────────────────────────────────────
-    const options = {
-      preview: false,
-      silent: true,
-      margin: '0 5 0 5',
-      timeOutPerLine: store.timeout,
-      pageSize: store.pageSize,
-      copies: store.copies
-    };
-    if (printerName && String(printerName).trim()) {
-      options.printerName = String(printerName).trim();
-    }
-
-    log.info('Sending receipt to printer:', options.printerName || 'default', '| items:', cart.length, '| total:', grandTotal);
-    await PosPrinter.print(data, options);
-
-    log.info('Receipt printed successfully');
-    return { success: true, message: 'Receipt printed successfully' };
-
-  } catch (error) {
-    log.error('Print receipt failed:', error);
-    return {
-      success: false,
-      message: `Print failed: ${error?.message || error?.toString() || 'Unknown error'}`
-    };
-  }
-});
-
-ipcMain.handle('check-printer-status', async (event, printerName) => {
+ipcMain.handle('check-printer-status', async (_event, printerName) => {
   try {
     const printers = await getAllAvailablePrinters();
     if (!printerName) return { available: printers.length > 0, printers, count: printers.length };
@@ -756,39 +251,472 @@ ipcMain.handle('check-printer-status', async (event, printerName) => {
       available: !!found,
       printers,
       printer: found,
-      status: found ? found.status : 'not_found'
+      status:  found ? found.status : 'not_found',
     };
-  } catch (error) {
-    log.error('Failed to check printer status:', error);
-    return { available: false, printers: [], error: error.message };
+  } catch (err) {
+    log.error('check-printer-status failed:', err);
+    return { available: false, printers: [], error: err.message };
   }
 });
 
-ipcMain.handle('get-printer-capabilities', async (event, printerName) => {
+ipcMain.handle('get-printer-capabilities', async (_event, printerName) => {
   try {
     const printers = await getAllAvailablePrinters();
-    const printer = printers.find(p => p.name === printerName);
+    const printer  = printers.find(p => p.name === printerName);
     if (!printer) return { success: false, message: 'Printer not found' };
-    const capabilities = {
-      name: printer.name,
-      status: printer.status,
-      isDefault: printer.isDefault || false,
-      canPrint: printer.status === 'idle',
-      supportsThermal:
-        printer.name.toLowerCase().includes('thermal') ||
-        printer.name.toLowerCase().includes('pos') ||
-        printer.name.toLowerCase().includes('epson') ||
-        printer.name.toLowerCase().includes('star'),
-      ...printer.options
+    const n = printer.name.toLowerCase();
+    return {
+      success: true,
+      capabilities: {
+        name:             printer.name,
+        status:           printer.status,
+        isDefault:        printer.isDefault || false,
+        canPrint:         printer.status === 'idle',
+        supportsThermal:  n.includes('thermal') || n.includes('pos') || n.includes('epson') || n.includes('star'),
+        ...printer.options,
+      },
     };
-    log.info('Printer capabilities for', printerName, ':', capabilities);
-    return { success: true, capabilities };
-  } catch (error) {
-    log.error('Failed to get printer capabilities:', error);
-    return { success: false, message: error.message };
+  } catch (err) {
+    log.error('get-printer-capabilities failed:', err);
+    return { success: false, message: err.message };
   }
 });
 
+// ─── IPC: test print ─────────────────────────────────────────────────────────
+ipcMain.handle('test-thermal-printer', async (_event, printerName) => {
+  if (!PosPrinter) return { success: false, message: 'Thermal printer library not available' };
+
+  try {
+    const options = buildPrintOptions(printerName, { pageSize: '80mm', copies: 1, timeout: 400 });
+
+    const data = [
+      { type: 'divider' },
+      {
+        type: 'text',
+        value: 'PRINTER TEST',
+        style: { fontWeight: '700', textAlign: 'center', fontSize: '16px', margin: '4px 0' },
+      },
+      {
+        type: 'text',
+        value: 'Arpella POS — OK',
+        style: { textAlign: 'center', fontSize: '12px' },
+      },
+      { type: 'divider' },
+    ];
+
+    await PosPrinter.print(data, options);
+    log.info('Test print OK for:', printerName || 'default');
+    return { success: true, message: 'Test print successful' };
+  } catch (err) {
+    log.error('Test print failed:', err);
+    return { success: false, message: `Print failed: ${err.message}` };
+  }
+});
+
+// ─── Formatting helpers ──────────────────────────────────────────────────────
+const fmt = (amount) =>
+  Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const maskPhone = (raw) => {
+  if (!raw) return 'Walk-in';
+  const s = String(raw).trim();
+  if (s.toLowerCase().startsWith('walk-in')) return 'Walk-in';
+  if (s.length < 6) return s;
+  return s.slice(0, s.length - 6) + '***' + s.slice(-3);
+};
+
+// Shared table cell styles
+const CELL_L = { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' };
+const CELL_R = { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace', textAlign: 'right' };
+const HEADER_STYLE = { backgroundColor: '#ffffff', color: '#000000' };
+const FOOTER_STYLE = { backgroundColor: '#ffffff', color: '#000000' };
+const BODY_STYLE   = { border: 'none' };
+
+/** Build a two-column table row */
+const row = (left, right, bold = false) => [
+  { type: 'text', value: String(left),  style: bold ? { ...CELL_L, fontWeight: '700' } : CELL_L },
+  { type: 'text', value: String(right), style: bold ? { ...CELL_R, fontWeight: '700' } : CELL_R },
+];
+
+/** Build print options object */
+function buildPrintOptions(printerName, store) {
+  const opts = {
+    preview:       false,
+    silent:        true,
+    margin:        '0 5 0 5',
+    timeOutPerLine: store.timeout || 400,
+    pageSize:      store.pageSize || '80mm',
+    copies:        store.copies   || 1,
+  };
+  if (printerName && String(printerName).trim())
+    opts.printerName = String(printerName).trim();
+  return opts;
+}
+
+// ─── IPC: print receipt ───────────────────────────────────────────────────────
+ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, storeSettingsArg) => {
+  log.info('PRINT RECEIPT called');
+
+  if (!PosPrinter)
+    return { success: false, message: 'Thermal printer library not available' };
+
+  try {
+    const {
+      cart          = [],
+      paymentType   = '',
+      paymentData   = {},
+      orderNumber   = '',
+      customerPhone = '',
+      user:     orderUser    = {},
+      cashier:  orderCashier = {},
+      buyerPin  = '',
+    } = orderData || {};
+
+    const userObj = (orderUser && Object.keys(orderUser).length > 0) ? orderUser : orderCashier;
+
+    // ── Resolve store settings ──────────────────────────────────────────────
+    const ss =
+      (typeof storeSettingsArg === 'object' && storeSettingsArg !== null)
+        ? storeSettingsArg
+        : (typeof orderData?.storeSettings === 'object' && orderData.storeSettings !== null)
+        ? orderData.storeSettings
+        : {};
+
+    const store = {
+      name:      String(ss.storeName    || ss.store_name    || 'ARPELLA STORE LIMITED').trim(),
+      address:   String(ss.storeAddress || ss.store_address || 'Ngong, Matasia').trim(),
+      phone:     String(ss.storePhone   || ss.store_phone   || '+254 704 288 802').trim(),
+      pin:       String(ss.pin          || ss.taxPin        || ss.tax_pin || 'P052336649L').trim(),
+      footer:    String(ss.receiptFooter || ss.receipt_footer || 'Thank you for shopping with us!').trim(),
+      taxRate:   typeof ss.taxRate      === 'number' ? ss.taxRate      : (typeof ss.tax_rate      === 'number' ? ss.tax_rate      : 0),
+      discount:  typeof ss.discountAmount === 'number' ? ss.discountAmount : (typeof ss.discount_amount === 'number' ? ss.discount_amount : 0),
+      playStore: String(ss.playStoreUrl || 'https://play.google.com/store/apps/details?id=com.mgachanja.Arpella').trim(),
+      pageSize:  ss.pageSize || ss.page_size || '80mm',
+      copies:    ss.copies   || 1,
+      timeout:   ss.timeOutPerLine || 400,
+    };
+
+    // ── Cashier name ────────────────────────────────────────────────────────
+    const getCashierName = () => {
+      if (!userObj || !Object.keys(userObj).length) return 'Staff';
+      const candidates = [
+        userObj.fullName,
+        userObj.full_name,
+        userObj.name,
+        userObj.firstName
+          ? `${userObj.firstName || userObj.first_name || ''} ${userObj.lastName || userObj.last_name || ''}`.trim()
+          : null,
+        userObj.userName,
+        userObj.username,
+        userObj.email,
+      ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
+      return candidates[0] || 'Staff';
+    };
+    const cashierName = getCashierName();
+
+    if (!Array.isArray(cart) || cart.length === 0)
+      return { success: false, message: 'Cart is empty or invalid' };
+
+    // ── Timestamps & IDs ────────────────────────────────────────────────────
+    const now     = new Date();
+    const orderId = orderNumber || `ORD-${String(Date.now()).slice(-8)}`;
+    const dateStr = now.toLocaleDateString('en-GB');
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const customerPhoneVal =
+      (paymentType === 'mpesa' || paymentType === 'both')
+        ? (paymentData?.mpesaPhone || '').trim() || customerPhone || ''
+        : customerPhone || '';
+
+    // ── Logo ────────────────────────────────────────────────────────────────
+    const logoCandidates = [
+      path.join(__dirname, 'src', 'assets', 'logo.png'),
+      path.join(__dirname, 'src', 'assets', 'logo.jpeg'),
+      path.join(__dirname, 'public', 'logo.png'),
+    ];
+    let logoPath = null;
+    for (const p of logoCandidates) { if (fs.existsSync(p)) { logoPath = p; break; } }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Build receipt data
+    // ════════════════════════════════════════════════════════════════════════
+    const data = [];
+
+    // ── Logo ─────────────────────────────────────────────────────────────
+    if (logoPath) {
+      data.push({
+        type:     'image',
+        path:     logoPath,
+        position: 'center',
+        width:    '140px',
+        height:   '55px',
+      });
+    }
+
+    // ── Store header ──────────────────────────────────────────────────────
+    data.push({
+      type:  'text',
+      value: store.name.toUpperCase(),
+      style: { fontWeight: '700', textAlign: 'center', fontSize: '15px', marginBottom: '2px' },
+    });
+    data.push({
+      type:  'text',
+      value: store.address,
+      style: { textAlign: 'center', fontSize: '10px' },
+    });
+    data.push({
+      type:  'text',
+      value: `Tel: ${store.phone}`,
+      style: { textAlign: 'center', fontSize: '10px' },
+    });
+    data.push({
+      type:  'text',
+      value: `PIN: ${store.pin}`,
+      style: { textAlign: 'center', fontSize: '10px', marginBottom: '4px' },
+    });
+
+    data.push({ type: 'divider' });
+
+    // ── Receipt title ─────────────────────────────────────────────────────
+    data.push({
+      type:  'text',
+      value: 'SALES RECEIPT',
+      style: { fontWeight: '700', textAlign: 'center', fontSize: '14px', margin: '3px 0' },
+    });
+
+    data.push({ type: 'divider' });
+
+    // ── Order meta (table) ────────────────────────────────────────────────
+    const metaRows = [
+      row(`Date: ${dateStr}`, timeStr),
+      row(`Receipt #`, orderId),
+      row('Cashier', cashierName),
+      row('Customer', maskPhone(customerPhoneVal)),
+    ];
+    if (buyerPin && buyerPin.trim() && buyerPin.trim() !== 'N/A') {
+      metaRows.push(row('Cust. PIN', buyerPin.trim()));
+    }
+
+    data.push({
+      type:             'table',
+      style:            { border: 'none', width: '100%' },
+      tableHeader:      [{ type: 'text', value: '' }, { type: 'text', value: '' }],
+      tableBody:        metaRows,
+      tableFooter:      [],
+      tableHeaderStyle: HEADER_STYLE,
+      tableBodyStyle:   BODY_STYLE,
+      tableFooterStyle: FOOTER_STYLE,
+      tableHeaderCellStyle: { padding: '0', display: 'none' },
+      tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+      tableFooterCellStyle: { padding: '0' },
+    });
+
+    data.push({ type: 'divider' });
+
+    // ── Items header ──────────────────────────────────────────────────────
+    data.push({
+      type:  'table',
+      style: { border: 'none', width: '100%' },
+      tableHeader: [
+        { type: 'text', value: 'ITEM' },
+        { type: 'text', value: 'AMOUNT' },
+      ],
+      tableBody:        [],
+      tableFooter:      [],
+      tableHeaderStyle: { backgroundColor: '#000', color: '#fff' },
+      tableBodyStyle:   BODY_STYLE,
+      tableFooterStyle: FOOTER_STYLE,
+      tableHeaderCellStyle: { padding: '2px 4px', fontSize: '11px', fontFamily: 'monospace' },
+      tableBodyCellStyle:   { padding: '0' },
+      tableFooterCellStyle: { padding: '0' },
+    });
+
+    // ── Line items ────────────────────────────────────────────────────────
+    let subtotal = 0;
+    const itemRows = [];
+
+    for (const item of cart) {
+      const nameRaw = String(item.name || item.productName || 'Item');
+      const qty     = Number(item.quantity || item.qty || 1);
+      const unit    = Number(item.salePrice || item.unitPrice || item.price || 0);
+      const line    = +(qty * unit).toFixed(2);
+      subtotal     += line;
+
+      const maxName    = 22;
+      const displayName = nameRaw.length > maxName ? nameRaw.slice(0, maxName - 1) + '…' : nameRaw;
+
+      // Name row
+      itemRows.push([
+        { type: 'text', value: displayName,               style: { ...CELL_L, fontWeight: '600' } },
+        { type: 'text', value: `KES ${fmt(line)}`,        style: { ...CELL_R, fontWeight: '600' } },
+      ]);
+
+      // Qty × unit row
+      itemRows.push([
+        { type: 'text', value: `  ${qty} × ${fmt(unit)}`, style: { ...CELL_L, fontSize: '10px', color: '#555' } },
+        { type: 'text', value: '',                         style: CELL_R },
+      ]);
+    }
+
+    data.push({
+      type:             'table',
+      style:            { border: 'none', width: '100%' },
+      tableHeader:      [{ type: 'text', value: '' }, { type: 'text', value: '' }],
+      tableBody:        itemRows,
+      tableFooter:      [],
+      tableHeaderStyle: HEADER_STYLE,
+      tableBodyStyle:   BODY_STYLE,
+      tableFooterStyle: FOOTER_STYLE,
+      tableHeaderCellStyle: { padding: '0', display: 'none' },
+      tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+      tableFooterCellStyle: { padding: '0' },
+    });
+
+    // ── Totals ────────────────────────────────────────────────────────────
+    data.push({ type: 'divider' });
+
+    const taxAmount  = +(subtotal * (store.taxRate || 0)).toFixed(2);
+    const afterTax   = subtotal + taxAmount;
+    const grandTotal = +(Math.max(0, afterTax - (store.discount || 0))).toFixed(2);
+
+    const totalRows = [
+      row('Sub-total', `KES ${fmt(subtotal)}`),
+    ];
+    if (store.taxRate && taxAmount > 0) {
+      totalRows.push(row(`Tax (${(store.taxRate * 100).toFixed(0)}%)`, `KES ${fmt(taxAmount)}`));
+    }
+    if (store.discount && store.discount > 0) {
+      totalRows.push(row('Discount', `- KES ${fmt(store.discount)}`));
+    }
+
+    data.push({
+      type:             'table',
+      style:            { border: 'none', width: '100%' },
+      tableHeader:      [{ type: 'text', value: '' }, { type: 'text', value: '' }],
+      tableBody:        totalRows,
+      tableFooter:      [row('TOTAL', `KES ${fmt(grandTotal)}`, true)],
+      tableHeaderStyle: HEADER_STYLE,
+      tableBodyStyle:   BODY_STYLE,
+      tableFooterStyle: { backgroundColor: '#fff', color: '#000' },
+      tableHeaderCellStyle: { padding: '0', display: 'none' },
+      tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+      tableFooterCellStyle: { padding: '2px 4px', fontSize: '14px', fontFamily: 'monospace', fontWeight: '700' },
+    });
+
+    // ── Payment details ───────────────────────────────────────────────────
+    if (paymentType) {
+      data.push({ type: 'divider' });
+
+      const pmLabel =
+        paymentType === 'mpesa' ? 'M-Pesa'
+        : paymentType === 'cash' ? 'Cash'
+        : paymentType === 'both' ? 'Cash + M-Pesa'
+        : paymentType.charAt(0).toUpperCase() + paymentType.slice(1);
+
+      const payRows = [row('Payment Method', pmLabel)];
+
+      if ((paymentType === 'mpesa' || paymentType === 'both') && paymentData?.mpesaRef) {
+        payRows.push(row('M-Pesa Ref', paymentData.mpesaRef));
+      }
+
+      if (paymentType === 'cash' && paymentData?.cashReceived) {
+        const cashReceived = Number(paymentData.cashReceived || 0);
+        const change       = Math.max(0, cashReceived - grandTotal);
+        payRows.push(row('Cash Received', `KES ${fmt(cashReceived)}`));
+        payRows.push(row('Change',        `KES ${fmt(change)}`));
+      }
+
+      data.push({
+        type:             'table',
+        style:            { border: 'none', width: '100%' },
+        tableHeader:      [{ type: 'text', value: '' }, { type: 'text', value: '' }],
+        tableBody:        payRows,
+        tableFooter:      [],
+        tableHeaderStyle: HEADER_STYLE,
+        tableBodyStyle:   BODY_STYLE,
+        tableFooterStyle: FOOTER_STYLE,
+        tableHeaderCellStyle: { padding: '0', display: 'none' },
+        tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+        tableFooterCellStyle: { padding: '0' },
+      });
+    }
+
+    // ── Barcode ───────────────────────────────────────────────────────────
+    data.push({ type: 'divider' });
+
+    data.push({
+      type:         'barCode',
+      value:        orderId,
+      height:       36,
+      width:        2,
+      displayValue: true,
+      position:     'center',
+      fontSize:     9,
+    });
+
+    // ── Footer message ────────────────────────────────────────────────────
+    data.push({ type: 'divider' });
+
+    if (store.footer) {
+      data.push({
+        type:  'text',
+        value: store.footer,
+        style: { fontSize: '11px', textAlign: 'center', fontWeight: '700', margin: '4px 0' },
+      });
+    }
+
+    // ── App promo ─────────────────────────────────────────────────────────
+    data.push({
+      type:  'text',
+      value: 'Download Arpella on Google Play',
+      style: { fontSize: '10px', textAlign: 'center', fontWeight: '700', marginTop: '4px' },
+    });
+    data.push({
+      type:  'text',
+      value: 'Get discounts & order for delivery!',
+      style: { fontSize: '10px', textAlign: 'center' },
+    });
+
+    data.push({
+      type:     'qrCode',
+      value:    store.playStore,
+      height:   70,
+      width:    70,
+      position: 'center',
+      style:    { margin: '4px auto' },
+    });
+
+    // ── Print timestamp ───────────────────────────────────────────────────
+    data.push({
+      type:  'text',
+      value: `Printed: ${now.toLocaleString('en-KE')}`,
+      style: { fontSize: '9px', textAlign: 'center', marginTop: '4px' },
+    });
+    data.push({
+      type:  'text',
+      value: 'Powered by Arpella POS',
+      style: { fontSize: '9px', textAlign: 'center', marginBottom: '8px' },
+    });
+
+    // ── Fire the print job ────────────────────────────────────────────────
+    const options = buildPrintOptions(printerName, store);
+    log.info('Printing receipt →', options.printerName || 'default', '| items:', cart.length, '| total:', grandTotal);
+
+    await PosPrinter.print(data, options);
+
+    log.info('Receipt printed successfully');
+    return { success: true, message: 'Receipt printed successfully' };
+
+  } catch (err) {
+    log.error('print-receipt failed:', err);
+    return {
+      success: false,
+      message: `Print failed: ${err?.message || err?.toString() || 'Unknown error'}`,
+    };
+  }
+});
+
+// ─── App lifecycle ───────────────────────────────────────────────────────────
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -810,5 +738,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-ipcMain.on('log', (ev, msg) => log.info('Renderer log:', msg));
-ipcMain.on('open-devtools', () => mainWindow && mainWindow.webContents.openDevTools());
+// ─── Misc IPC ─────────────────────────────────────────────────────────────────
+ipcMain.on('log',          (_ev, msg) => log.info('Renderer:', msg));
+ipcMain.on('open-devtools', ()        => mainWindow?.webContents.openDevTools());

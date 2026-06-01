@@ -343,7 +343,7 @@ function buildPrintOptions(printerName, store) {
   const opts = {
     preview:       false,
     silent:        true,
-    margin:        '0 5 0 5',
+    margin:        '0 0 0 0',
     timeOutPerLine: store.timeout || 400,
     pageSize:      store.pageSize || '80mm',
     copies:        store.copies   || 1,
@@ -482,6 +482,19 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
       type:  'text',
       value: 'SALES RECEIPT',
       style: { fontWeight: '700', textAlign: 'center', fontSize: '14px', margin: '3px 0' },
+    });
+
+    data.push({ type: 'divider' });
+
+    // ── Order ID barcode ──────────────────────────────────────────────────
+    data.push({
+      type:         'barCode',
+      value:        orderId,
+      height:       36,
+      width:        2,
+      displayValue: true,
+      position:     'center',
+      fontSize:     9,
     });
 
     data.push({ type: 'divider' });
@@ -640,19 +653,6 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
         tableFooterCellStyle: { padding: '0' },
       });
     }
-
-    // ── Barcode ───────────────────────────────────────────────────────────
-    data.push({ type: 'divider' });
-
-    data.push({
-      type:         'barCode',
-      value:        orderId,
-      height:       36,
-      width:        2,
-      displayValue: true,
-      position:     'center',
-      fontSize:     9,
-    });
 
     // ── Footer message ────────────────────────────────────────────────────
     data.push({ type: 'divider' });

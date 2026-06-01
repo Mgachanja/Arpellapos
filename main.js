@@ -326,8 +326,8 @@ const maskPhone = (raw) => {
 };
 
 // Shared table cell styles
-const CELL_L = { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' };
-const CELL_R = { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace', textAlign: 'right' };
+const CELL_L = { padding: '1px 0', fontSize: '11px', fontFamily: 'monospace' };
+const CELL_R = { padding: '1px 0', fontSize: '11px', fontFamily: 'monospace', textAlign: 'right' };
 const HEADER_STYLE = { backgroundColor: '#ffffff', color: '#000000' };
 const FOOTER_STYLE = { backgroundColor: '#ffffff', color: '#000000' };
 const BODY_STYLE   = { border: 'none' };
@@ -520,7 +520,7 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
       tableBodyStyle:   BODY_STYLE,
       tableFooterStyle: FOOTER_STYLE,
       tableHeaderCellStyle: { padding: '0', display: 'none' },
-      tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+      tableBodyCellStyle:   { padding: '1px 0', fontSize: '11px', fontFamily: 'monospace' },
       tableFooterCellStyle: { padding: '0' },
     });
 
@@ -539,7 +539,7 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
       tableHeaderStyle: { backgroundColor: '#000', color: '#fff' },
       tableBodyStyle:   BODY_STYLE,
       tableFooterStyle: FOOTER_STYLE,
-      tableHeaderCellStyle: { padding: '2px 4px', fontSize: '11px', fontFamily: 'monospace' },
+      tableHeaderCellStyle: { padding: '2px 0', fontSize: '11px', fontFamily: 'monospace' },
       tableBodyCellStyle:   { padding: '0' },
       tableFooterCellStyle: { padding: '0' },
     });
@@ -581,7 +581,7 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
       tableBodyStyle:   BODY_STYLE,
       tableFooterStyle: FOOTER_STYLE,
       tableHeaderCellStyle: { padding: '0', display: 'none' },
-      tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+      tableBodyCellStyle:   { padding: '1px 0', fontSize: '11px', fontFamily: 'monospace' },
       tableFooterCellStyle: { padding: '0' },
     });
 
@@ -612,8 +612,8 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
       tableBodyStyle:   BODY_STYLE,
       tableFooterStyle: { backgroundColor: '#fff', color: '#000' },
       tableHeaderCellStyle: { padding: '0', display: 'none' },
-      tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
-      tableFooterCellStyle: { padding: '2px 4px', fontSize: '14px', fontFamily: 'monospace', fontWeight: '700' },
+      tableBodyCellStyle:   { padding: '1px 0', fontSize: '11px', fontFamily: 'monospace' },
+      tableFooterCellStyle: { padding: '2px 0', fontSize: '14px', fontFamily: 'monospace', fontWeight: '700' },
     });
 
     // ── Payment details ───────────────────────────────────────────────────
@@ -649,7 +649,7 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
         tableBodyStyle:   BODY_STYLE,
         tableFooterStyle: FOOTER_STYLE,
         tableHeaderCellStyle: { padding: '0', display: 'none' },
-        tableBodyCellStyle:   { padding: '1px 2px', fontSize: '11px', fontFamily: 'monospace' },
+        tableBodyCellStyle:   { padding: '1px 0', fontSize: '11px', fontFamily: 'monospace' },
         tableFooterCellStyle: { padding: '0' },
       });
     }

@@ -463,20 +463,15 @@ const StockManagement = () => {
   const [allProducts, setAllProducts] = useState([]);
 
   useEffect(() => {
-    // 1. Sync products on mount
-    dispatch(fetchAndIndexAllProducts({ pageSize: 200, force: false }))
-      .unwrap()
-      .then(() => {
-        // 2. Load data from IDB
-        loadDataFromIDB();
-      })
-      .catch((err) => {
-        console.error("Sync failed", err);
-        // still try to load what we have
-        loadDataFromIDB();
-      });
+    // Immediately populate from IDB cache, then sync from network in background
+    loadDataFromIDB();
     fetchData();
     setActiveView("stocks");
+
+    dispatch(fetchAndIndexAllProducts({ pageSize: 200, force: false }))
+      .unwrap()
+      .then(() => loadDataFromIDB())
+      .catch((err) => console.error("Background sync failed", err));
   }, [dispatch]);
 
   const loadDataFromIDB = async () => {
@@ -2402,6 +2397,10 @@ const StockManagement = () => {
               </Form.Group>
               <Form.Group className="mb-3">
                 <Form.Label>Offer Price (KES)</Form.Label>
+                <Alert variant="info" className="py-2 px-3 small">
+                  <i className="bi bi-info-circle me-1"></i>
+                  <strong>Note:</strong> Enter the <strong>final total buying price</strong> here, NOT the amount to be deducted from the normal price (unlike the bulk offers section).
+                </Alert>
                 <Form.Control
                   type="number"
                   min="0"

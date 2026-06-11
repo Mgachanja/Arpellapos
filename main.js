@@ -399,18 +399,18 @@ ipcMain.handle('print-receipt', async (_event, orderData = {}, printerName, stor
     // ── Cashier name ────────────────────────────────────────────────────────
     const getCashierName = () => {
       if (!userObj || !Object.keys(userObj).length) return 'Staff';
+      const firstName = String(userObj.firstName || userObj.first_name || '').trim();
+      if (firstName) return firstName;
       const candidates = [
         userObj.fullName,
         userObj.full_name,
         userObj.name,
-        userObj.firstName
-          ? `${userObj.firstName || userObj.first_name || ''} ${userObj.lastName || userObj.last_name || ''}`.trim()
-          : null,
         userObj.userName,
         userObj.username,
         userObj.email,
       ].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
-      return candidates[0] || 'Staff';
+      const chosen = candidates[0] || 'Staff';
+      return (chosen.split(/\s+/)[0] || chosen).trim() || 'Staff';
     };
     const cashierName = getCashierName();
 

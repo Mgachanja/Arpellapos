@@ -937,6 +937,7 @@ export default function POS() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
     dispatch(fetchAndIndexAllProducts({ pageSize: 200, force: false }))
       .unwrap()
       .then(async () => {
@@ -948,7 +949,7 @@ export default function POS() {
         console.error('[POS] failed to sync products', err);
         toast.error('Failed to sync products');
       });
-  }, [dispatch]);
+  }, [dispatch, user]);
 
   useEffect(() => {
     return () => {
@@ -1125,13 +1126,7 @@ export default function POS() {
   }, [handleBarcodeScanned]);
 
   useEffect(() => {
-    if (navigator?.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (p) => setCoords({ lat: p.coords.latitude, lng: p.coords.longitude }),
-        () => {},
-        { timeout: 3000 }
-      );
-    }
+    setCoords({ lat: -1.3636, lng: 36.7449 });
   }, []);
 
   useEffect(() => {

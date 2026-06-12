@@ -100,7 +100,13 @@ jobs:
           let constants = fs.readFileSync('src/app/constants/index.jsx', 'utf8');
           constants = constants.replace('https://api.arpellastore.com', 'https://api2.arpellastore.com');
           fs.writeFileSync('src/app/constants/index.jsx', constants);
+          
+          // 3. Allow pre-releases in autoUpdater for test builds
+          let mainJs = fs.readFileSync('main.js', 'utf8');
+          mainJs = mainJs.replace('autoUpdater.autoDownload = true;', 'autoUpdater.autoDownload = true;\\n  autoUpdater.allowPrerelease = true;');
+          fs.writeFileSync('main.js', mainJs);
           "
+
 
       - name: Generate icons
         run: npm run make-icons

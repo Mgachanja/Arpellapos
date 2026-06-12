@@ -9,6 +9,7 @@ import { Form, Button, Container, Row, Col, InputGroup, Spinner } from 'react-bo
 import { AiOutlineEye, AiOutlineEyeInvisible, AiOutlinePhone, AiOutlineLock, AiOutlineShop } from 'react-icons/ai';
 import logo from '../../assets/logo.jpeg';
 import ForgotPasswordModal from './ForgotPasswordModal';
+import { isTestEnv } from '../constants';
 
 export default function LoginPage() {
   const dispatch = useDispatch();
@@ -184,6 +185,24 @@ export default function LoginPage() {
               </h3>
               <p className="text-muted mb-0">Sign in to your account</p>
             </div>
+
+            {isTestEnv && (
+              <div 
+                className="mb-4 text-center p-3 shadow-sm" 
+                style={{
+                  background: 'rgba(255, 193, 7, 0.15)',
+                  border: '1px solid rgba(255, 193, 7, 0.3)',
+                  borderRadius: '10px',
+                  color: '#856404'
+                }}
+              >
+                <div className="fw-bold d-flex justify-content-center align-items-center mb-1">
+                  <span style={{ fontSize: '1.2em', marginRight: '8px' }}>⚠️</span> 
+                  TEST APPLICATION ENVIRONMENT
+                </div>
+                <small>Data and transactions here are for testing purposes only.</small>
+              </div>
+            )}
 
             <Form onSubmit={handleSubmit}>
               <Form.Group className="mb-4">

@@ -3,6 +3,7 @@
 // API Configuration
  export const baseUrl = "https://api.arpellastore.com";
 //export const baseUrl = "https://api2.arpellastore.com";
+export const isTestEnv = baseUrl.includes("api2");
 export const apiTimeout = 30000; // 30 seconds
 
 

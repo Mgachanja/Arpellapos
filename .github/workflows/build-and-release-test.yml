@@ -80,10 +80,10 @@ jobs:
           // 1. Modify package.json
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           pkg.name = 'arpellapos-test';
-          pkg.productName = 'Arpella POS test';
+          pkg.productName = 'Arpella POS (TEST)';
           if (!pkg.build) pkg.build = {};
           pkg.build.appId = 'com.arpella.pos.test';
-          pkg.build.productName = 'Arpella POS test';
+          pkg.build.productName = 'Arpella POS (TEST)';
           
           const refName = process.env.GITHUB_REF_NAME || '';
           const refType = process.env.GITHUB_REF_TYPE || '';
@@ -237,7 +237,7 @@ jobs:
           cd release-files || exit 1
           for file in *.exe; do
             if [ -f "$file" ]; then
-              newname="Arpella-POS-Setup-${VERSION}.exe"
+              newname="Arpella-POS-(TEST)-Setup-${VERSION}.exe"
               if [ "$file" != "$newname" ]; then
                 mv "$file" "$newname"
                 echo "Renamed: $file -> $newname"
@@ -270,6 +270,6 @@ jobs:
             This is an automated test build. It points to `api2.arpellastore.com`.
             
             ### Installation Notes
-            - **Windows**: Run the `.exe` installer. It will be installed as **Arpella POS test**.
+            - **Windows**: Run the `.exe` installer. It will be installed as **Arpella POS (TEST)**.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

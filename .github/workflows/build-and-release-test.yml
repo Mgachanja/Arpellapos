@@ -3,7 +3,6 @@ name: Build and Release Test Arpella POS
 on:
   push:
     branches: [ development ]
-    tags: [ 'v*.*.*.*' ]
   pull_request:
     branches: [ development ]
 
@@ -85,14 +84,7 @@ jobs:
           pkg.build.appId = 'com.arpella.pos.test';
           pkg.build.productName = 'Arpella POS (TEST)';
           
-          const refName = process.env.GITHUB_REF_NAME || '';
-          const refType = process.env.GITHUB_REF_TYPE || '';
-          
-          if (refType === 'tag' && refName.startsWith('v')) {
-            pkg.version = refName.substring(1);
-          } else {
-            pkg.version = pkg.version + '-test';
-          }
+          pkg.version = pkg.version + '-test';
           
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           
@@ -101,9 +93,9 @@ jobs:
           constants = constants.replace('https://api.arpellastore.com', 'https://api2.arpellastore.com');
           fs.writeFileSync('src/app/constants/index.jsx', constants);
           
-          // 3. Allow pre-releases in autoUpdater for test builds
+          // 3. Allow pre-releases and enforce 'test' channel in autoUpdater for test builds
           let mainJs = fs.readFileSync('main.js', 'utf8');
-          mainJs = mainJs.replace('autoUpdater.autoDownload = true;', 'autoUpdater.autoDownload = true;\\n  autoUpdater.allowPrerelease = true;');
+          mainJs = mainJs.replace('autoUpdater.autoDownload = true;', 'autoUpdater.autoDownload = true;\\n  autoUpdater.channel = "test";\\n  autoUpdater.allowPrerelease = true;');
           fs.writeFileSync('main.js', mainJs);
           "
 
@@ -128,7 +120,7 @@ jobs:
           path: |
             dist/*.exe
             dist/*.nsis.*
-            dist/latest*.yml
+            dist/*test*.yml
             dist/*.zip
 
   test-autoupdate:
@@ -171,14 +163,7 @@ jobs:
           node -e "
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const refName = process.env.GITHUB_REF_NAME || '';
-          const refType = process.env.GITHUB_REF_TYPE || '';
-          
-          if (refType === 'tag' && refName.startsWith('v')) {
-            pkg.version = refName.substring(1);
-          } else {
-            pkg.version = pkg.version + '-test';
-          }
+          pkg.version = pkg.version + '-test';
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           "
 
@@ -211,7 +196,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/development'
 
     steps:
       - name: Checkout code (fetch tags)
@@ -228,17 +213,13 @@ jobs:
         run: |
           set -e
           
-          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == v* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION=$(node -p "require('./package.json').version")
-            VERSION="${VERSION}-test"
-          fi
+          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${VERSION}-test"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
           
           mkdir -p release-files
-          # Copy relevant artifacts
-          find artifacts/ -type f \( -iname "*.exe" -o -iname "*.zip" -o -iname "latest*.yml" -o -iname "*.nsis.*" \) -exec cp {} release-files/ \;
+          # Copy relevant artifacts (test.yml instead of latest.yml)
+          find artifacts/ -type f \( -iname "*.exe" -o -iname "*.zip" -o -iname "*test*.yml" -o -iname "*.nsis.*" \) -exec cp {} release-files/ \;
           # Rename .exe to canonical installer name
           cd release-files || exit 1
           for file in *.exe; do
@@ -264,8 +245,8 @@ jobs:
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Test Release ${{ github.ref_name }}
+          tag_name: test-v${{ env.VERSION }}
+          name: Test Release test-v${{ env.VERSION }}
           files: release-files/*
           generate_release_notes: true
           draft: false

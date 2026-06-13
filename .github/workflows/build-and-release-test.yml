@@ -95,7 +95,7 @@ jobs:
           
           // 3. Allow pre-releases and enforce 'test' channel in autoUpdater for test builds
           let mainJs = fs.readFileSync('main.js', 'utf8');
-          mainJs = mainJs.replace('autoUpdater.autoDownload = true;', 'autoUpdater.autoDownload = true;\\n  autoUpdater.channel = "test";\\n  autoUpdater.allowPrerelease = true;');
+          mainJs = mainJs.replace('autoUpdater.autoDownload = true;', 'autoUpdater.autoDownload = true;\\n  autoUpdater.channel = \\"test\\";\\n  autoUpdater.allowPrerelease = true;');
           fs.writeFileSync('main.js', mainJs);
           "
 
